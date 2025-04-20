@@ -2,36 +2,61 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { AlertTriangle, Sliders } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
+import { useWebSocket } from "@/hooks/use-websocket"
+import { fetchModelMetrics } from "@/lib/api"
 
-// Mock data for model performance
-const modelData = {
-  model1: {
-    rmse: { value: 0.42, change: -0.05, threshold: 0.5, warning: false },
-    mse: { value: 0.18, change: -0.03, threshold: 0.25, warning: false },
-    mae: { value: 0.36, change: -0.02, threshold: 0.4, warning: false },
-    r2: { value: 0.87, change: 0.03, threshold: 0.8, warning: false },
-  },
-  model2: {
-    rmse: { value: 0.38, change: -0.02, threshold: 0.5, warning: false },
-    mse: { value: 0.14, change: -0.01, threshold: 0.25, warning: false },
-    mae: { value: 0.32, change: -0.03, threshold: 0.4, warning: false },
-    r2: { value: 0.89, change: 0.01, threshold: 0.8, warning: false },
-  },
-  model3: {
-    rmse: { value: 0.55, change: 0.02, threshold: 0.5, warning: true },
-    mse: { value: 0.3, change: 0.01, threshold: 0.25, warning: true },
-    mae: { value: 0.39, change: 0.03, threshold: 0.4, warning: false },
-    r2: { value: 0.78, change: -0.02, threshold: 0.8, warning: true },
-  },
-}
-
+// Replace mock data with real data fetching
 export function ModelPerformance() {
   const { toast } = useToast()
   const [activeModel, setActiveModel] = useState("model1")
+  const [modelData, setModelData] = useState<any>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // WebSocket connection for real-time updates
+  const { lastMessage } = useWebSocket("ws://localhost:8000/ws/metrics")
+
+  // Fetch initial data
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+        const metrics = await fetchModelMetrics()
+        setModelData(metrics)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to fetch model metrics")
+        toast({
+          title: "Error",
+          description: "Failed to fetch model metrics",
+          variant: "destructive",
+        })
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  // Handle real-time updates
+  useEffect(() => {
+    if (lastMessage) {
+      const update = JSON.parse(lastMessage.data)
+      if (update.type === "metrics_update") {
+        setModelData(prev => ({
+          ...prev,
+          [update.model_id]: {
+            ...prev[update.model_id],
+            ...update.metrics
+          }
+        }))
+      }
+    }
+  }, [lastMessage])
 
   const handleManageThresholds = () => {
     // In a real app, this would navigate to the threshold management page
@@ -47,6 +72,31 @@ export function ModelPerformance() {
   const hasWarnings = (modelKey: string) => {
     const model = modelData[modelKey as keyof typeof modelData]
     return Object.values(model).some((metric) => metric.warning)
+  }
+
+  if (loading) {
+    return (
+      <Card className="shadow-md">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card className="shadow-md">
+        <CardContent className="p-6">
+          <div className="text-red-500 text-center">
+            <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
+            <p>{error}</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (

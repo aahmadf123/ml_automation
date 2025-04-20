@@ -6,13 +6,18 @@ Monitoring utilities with Prometheus instrumentation:
   - Records DAG runtime
   - Records memory metrics
   - Exposes /metrics on port 8000
+  - Provides WebSocket server for real-time dashboard updates
   - Updates the monitoring process to include the new UI components and endpoints
 """
 
 import logging
 import time
+import json
+import asyncio
+import websockets
 import psutil
 from prometheus_client import start_http_server, Gauge
+from typing import Dict, Set, Any
 
 # Attempt to start Prometheus metrics server once
 try:
@@ -42,6 +47,63 @@ memory_percent_gauge = Gauge(
     "homeowner_memory_usage_percent",
     "Percentage of system memory in use"
 )
+
+# WebSocket server state
+connected_clients: Set[websockets.WebSocketServerProtocol] = set()
+metrics_history: Dict[str, Dict[str, Any]] = {}
+
+async def register(websocket: websockets.WebSocketServerProtocol):
+    """Register a new WebSocket client."""
+    connected_clients.add(websocket)
+    logging.info(f"WebSocket client connected. Total clients: {len(connected_clients)}")
+    
+    # Send current metrics history to the new client
+    if metrics_history:
+        await websocket.send(json.dumps({
+            "type": "metrics_history",
+            "data": metrics_history
+        }))
+
+async def unregister(websocket: websockets.WebSocketServerProtocol):
+    """Unregister a WebSocket client."""
+    connected_clients.remove(websocket)
+    logging.info(f"WebSocket client disconnected. Total clients: {len(connected_clients)}")
+
+async def broadcast(message: str):
+    """Broadcast a message to all connected WebSocket clients."""
+    if connected_clients:
+        await asyncio.gather(
+            *[client.send(message) for client in connected_clients],
+            return_exceptions=True
+        )
+
+async def websocket_handler(websocket: websockets.WebSocketServerProtocol, path: str):
+    """Handle WebSocket connections."""
+    await register(websocket)
+    try:
+        async for message in websocket:
+            # Handle incoming messages if needed
+            try:
+                data = json.loads(message)
+                if data.get("type") == "ping":
+                    await websocket.send(json.dumps({"type": "pong"}))
+            except json.JSONDecodeError:
+                logging.warning(f"Received invalid JSON: {message}")
+    except websockets.exceptions.ConnectionClosed:
+        pass
+    finally:
+        await unregister(websocket)
+
+async def start_websocket_server():
+    """Start the WebSocket server."""
+    server = await websockets.serve(
+        websocket_handler,
+        "localhost",
+        8000,
+        path="/ws/metrics"
+    )
+    logging.info("WebSocket server started on ws://localhost:8000/ws/metrics")
+    return server
 
 def record_system_metrics(runtime: float = None, memory_usage: str = None) -> None:
     """
@@ -78,10 +140,58 @@ def record_system_metrics(runtime: float = None, memory_usage: str = None) -> No
         f"Total: {total_mb:.2f}MB, "
         f"Usage: {vm.percent:.1f}%"
     )
+    
+    # Broadcast system metrics to WebSocket clients
+    system_metrics = {
+        "type": "system_metrics",
+        "data": {
+            "runtime": runtime if runtime is not None else now,
+            "memory": {
+                "available_mb": avail_mb,
+                "used_mb": used_mb,
+                "total_mb": total_mb,
+                "percent": vm.percent
+            }
+        }
+    }
+    asyncio.run(broadcast(json.dumps(system_metrics)))
+
+def update_metrics_history(model_id: str, metrics: Dict[str, Any]):
+    """
+    Update the metrics history for a model and broadcast to WebSocket clients.
+    
+    Args:
+        model_id (str): The ID of the model.
+        metrics (Dict[str, Any]): The metrics data.
+    """
+    if model_id not in metrics_history:
+        metrics_history[model_id] = {}
+    
+    metrics_history[model_id].update(metrics)
+    
+    # Broadcast the updated metrics
+    message = {
+        "type": "metrics_update",
+        "model_id": model_id,
+        "metrics": metrics
+    }
+    asyncio.run(broadcast(json.dumps(message)))
 
 def update_monitoring_with_ui_components():
     """
-    Placeholder function to update the monitoring process with new UI components and endpoints.
+    Update the monitoring process with new UI components and endpoints.
     """
     logging.info("Updating monitoring process with new UI components and endpoints.")
-    # Placeholder for actual implementation
+    
+    # Start WebSocket server in a separate thread
+    import threading
+    def run_websocket_server():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        server = loop.run_until_complete(start_websocket_server())
+        loop.run_forever()
+    
+    websocket_thread = threading.Thread(target=run_websocket_server, daemon=True)
+    websocket_thread.start()
+    
+    logging.info("WebSocket server started for real-time dashboard updates.")

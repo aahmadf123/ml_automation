@@ -11,6 +11,7 @@ tasks/training.py  – Unified trainer + explainability
  • Auto‑register & promote in MLflow Model Registry
  • Sends Slack notifications on skip/retrain and completion
  • Supports manual_override from Airflow Variables
+ • Emits WebSocket events for real-time dashboard updates
 """
 
 import os
@@ -19,6 +20,8 @@ import logging
 import tempfile
 import time
 import joblib
+import websockets
+import asyncio
 from typing import Dict, Optional, Tuple, Any
 
 import numpy as np
@@ -68,6 +71,7 @@ EXPERIMENT           = Variable.get("MLFLOW_EXPERIMENT_NAME", default_var="Homeo
 MAX_EVALS            = int(os.getenv("HYPEROPT_MAX_EVALS", Variable.get("HYPEROPT_MAX_EVALS", 20)))
 SHAP_SAMPLE_ROWS     = int(os.getenv("SHAP_SAMPLE_ROWS", 200))
 DRIFT_RMSE_THRESHOLD = float(os.getenv("DRIFT_RMSE_THRESHOLD", Variable.get("DRIFT_RMSE_THRESHOLD", default_var="0.1")))
+WEBSOCKET_URI        = os.getenv("WEBSOCKET_URI", "ws://localhost:8000/ws/metrics")
 
 # Monotone constraints map
 try:
@@ -79,6 +83,32 @@ except Exception:
 mlflow.set_tracking_uri(MLFLOW_URI)
 mlflow.set_experiment(EXPERIMENT)
 client = MlflowClient()
+
+
+async def send_websocket_update(model_id: str, metrics: Dict[str, float], status: str = "update"):
+    """
+    Send metrics update to WebSocket server for real-time dashboard updates.
+    """
+    try:
+        async with websockets.connect(WEBSOCKET_URI) as websocket:
+            message = {
+                "type": "metrics_update",
+                "model_id": model_id,
+                "metrics": metrics,
+                "status": status,
+                "timestamp": time.time()
+            }
+            await websocket.send(json.dumps(message))
+            LOGGER.info(f"WebSocket update sent for {model_id}: {metrics}")
+    except Exception as e:
+        LOGGER.error(f"WebSocket error: {e}")
+
+
+def send_websocket_update_sync(model_id: str, metrics: Dict[str, float], status: str = "update"):
+    """
+    Synchronous wrapper for send_websocket_update.
+    """
+    asyncio.run(send_websocket_update(model_id, metrics, status))
 
 
 def _train_val_split(X: pd.DataFrame, y: pd.Series) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -143,6 +173,16 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
         preds_prev = prev_model.predict(X_val)
         prev_rmse = np.sqrt(mean_squared_error(y_val, preds_prev))
         LOGGER.info(f"Baseline {model_id} RMSE={prev_rmse:.4f}")
+        
+        # Send WebSocket update for baseline metrics
+        baseline_metrics = {
+            "rmse": prev_rmse,
+            "mse": mean_squared_error(y_val, preds_prev),
+            "mae": mean_absolute_error(y_val, preds_prev),
+            "r2": r2_score(y_val, preds_prev)
+        }
+        send_websocket_update_sync(model_id, baseline_metrics, "baseline")
+        
         if prev_rmse <= DRIFT_RMSE_THRESHOLD:
             slack_msg(
                 channel="#alerts",
@@ -150,6 +190,8 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
                 details=f"Baseline RMSE {prev_rmse:.4f} ≤ threshold {DRIFT_RMSE_THRESHOLD}",
                 urgency="low",
             )
+            # Send WebSocket update for skipped training
+            send_websocket_update_sync(model_id, baseline_metrics, "skipped")
             return
     except Exception as e:
         LOGGER.info(f"Baseline load skipped/error: {e}")
@@ -224,6 +266,15 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
         mlflow.log_artifact(avsp_key, artifact_path="avs_pred")
         run_id = run.info.run_id
 
+    # Send WebSocket update for final metrics
+    final_metrics = {
+        "rmse": rmse,
+        "mse": mse,
+        "mae": mae,
+        "r2": r2
+    }
+    send_websocket_update_sync(model_id, final_metrics, "final")
+
     # Auto‑register & create version
     try:
         client.create_registered_model(model_id)
@@ -248,42 +299,26 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
             stage="Production",
             archive_existing_versions=True,
         )
-        status = "PROMOTED"
-    else:
-        status = "UNCHANGED"
+        # Send WebSocket update for production promotion
+        send_websocket_update_sync(model_id, final_metrics, "production")
+        
+    # Save model to S3
+    model_file = f"/tmp/{model_id}.joblib"
+    joblib.dump(final_model, model_file)
+    s3_upload(model_file, f"models/{model_id}.joblib")
 
-    # Slack notification
+    # Notify completion
     slack_msg(
         channel="#alerts",
-        title=f"📊 {model_id} RMSE {rmse:.4f} | {status}",
-        details=(
-            f"MSE={mse:.4f}, MAE={mae:.4f}, R²={r2:.4f}\n"
-            f"SHAP:  s3://{BUCKET}/{shap_key}\n"
-            f"AVSP:  s3://{BUCKET}/{avsp_key}"
-        ),
+        title=f"✅ {model_id} training complete",
+        details=f"RMSE={rmse:.4f}, R²={r2:.4f}",
         urgency="low",
     )
-
-    LOGGER.info(
-        "%s finished in %.1fs — RMSE %.4f, MSE %.4f, MAE %.4f, R² %.4f (%s)",
-        model_id, time.time() - start, rmse, mse, mae, r2, status
-    )
-
-    # Integrate new UI components and endpoints
-    try:
-        handle_function_call({
-            "function": {
-                "name": "integrate_ui_components",
-                "arguments": json.dumps({
-                    "channel": "#agent_logs",
-                    "title": "🔗 Integrating UI Components",
-                    "details": "Integrating new UI components and endpoints.",
-                    "urgency": "low"
-                })
-            }
-        })
-    except Exception as e:
-        LOGGER.warning(f"UI components integration failed: {e}")
+    
+    # Send WebSocket update for completion
+    send_websocket_update_sync(model_id, final_metrics, "complete")
+    
+    return run_id
 
 # backward‑compatibility alias
 train_xgboost_hyperopt = train_and_compare_fn
