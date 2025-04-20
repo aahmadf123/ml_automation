@@ -1,0 +1,227 @@
+import * as cdk from 'aws-cdk-lib';
+import * as mwaa from 'aws-cdk-lib/aws-mwaa';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as sagemaker from 'aws-cdk-lib/aws-sagemaker';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import { Construct } from 'constructs';
+
+export class MlAutomationStack extends cdk.Stack {
+  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    super(scope, id, props);
+
+    // Create S3 bucket for DAGs
+    const dagsBucket = new s3.Bucket(this, 'DagsBucket', {
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+    });
+
+    // Create S3 bucket for model artifacts
+    const modelBucket = new s3.Bucket(this, 'ModelBucket', {
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+    });
+
+    // Create secrets for Airflow
+    const airflowSecrets = new secretsmanager.Secret(this, 'AirflowSecrets', {
+      secretName: 'airflow-secrets',
+      description: 'Secrets for Airflow environment',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({
+          MLFLOW_TRACKING_URI: '',
+          S3_BUCKET: dagsBucket.bucketName,
+          SLACK_WEBHOOK_URL: '',
+        }),
+        generateStringKey: 'password',
+      },
+    });
+
+    // Create secrets for dashboard
+    const dashboardSecrets = new secretsmanager.Secret(this, 'DashboardSecrets', {
+      secretName: 'dashboard-secrets',
+      description: 'Secrets for dashboard',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({
+          NEXT_PUBLIC_WEBSOCKET_URL: '',
+          NEXT_PUBLIC_API_URL: '',
+        }),
+        generateStringKey: 'password',
+      },
+    });
+
+    // Create MWAA environment
+    const mwaaEnvironment = new mwaa.CfnEnvironment(this, 'MwaaEnvironment', {
+      name: 'ml-automation-environment',
+      airflowVersion: '2.7.1',
+      sourceBucketArn: dagsBucket.bucketArn,
+      executionRoleArn: this.createMwaaRole().roleArn,
+      webserverAccessMode: 'PUBLIC_ONLY',
+      loggingConfiguration: {
+        dagProcessingLogs: {
+          enabled: true,
+          logLevel: 'INFO',
+        },
+        schedulerLogs: {
+          enabled: true,
+          logLevel: 'INFO',
+        },
+        taskLogs: {
+          enabled: true,
+          logLevel: 'INFO',
+        },
+        webserverLogs: {
+          enabled: true,
+          logLevel: 'INFO',
+        },
+        workerLogs: {
+          enabled: true,
+          logLevel: 'INFO',
+        },
+      },
+    });
+
+    // Create WebSocket API
+    const api = new apigateway.RestApi(this, 'WebSocketApi', {
+      restApiName: 'ML Automation WebSocket API',
+      description: 'WebSocket API for real-time updates',
+    });
+
+    // Create WebSocket routes
+    const connectIntegration = new apigateway.LambdaIntegration(
+      new lambda.Function(this, 'ConnectFunction', {
+        runtime: lambda.Runtime.PYTHON_3_9,
+        handler: 'index.handler',
+        code: lambda.Code.fromAsset('lambda/connect'),
+      })
+    );
+
+    const disconnectIntegration = new apigateway.LambdaIntegration(
+      new lambda.Function(this, 'DisconnectFunction', {
+        runtime: lambda.Runtime.PYTHON_3_9,
+        handler: 'index.handler',
+        code: lambda.Code.fromAsset('lambda/disconnect'),
+      })
+    );
+
+    const driftEventIntegration = new apigateway.LambdaIntegration(
+      new lambda.Function(this, 'DriftEventFunction', {
+        runtime: lambda.Runtime.PYTHON_3_9,
+        handler: 'index.handler',
+        code: lambda.Code.fromAsset('lambda/drift-event'),
+      })
+    );
+
+    // Add WebSocket routes
+    api.root.addResource('$connect').addMethod('POST', connectIntegration);
+    api.root.addResource('$disconnect').addMethod('POST', disconnectIntegration);
+    api.root.addResource('driftEvent').addMethod('POST', driftEventIntegration);
+
+    // Create SNS topic for alerts
+    const alertTopic = new sns.Topic(this, 'AlertTopic', {
+      displayName: 'ML Automation Alerts',
+    });
+
+    // Add Slack subscription
+    alertTopic.addSubscription(
+      new subscriptions.UrlSubscription('YOUR_SLACK_WEBHOOK_URL')
+    );
+
+    // Create CloudWatch dashboard
+    const dashboard = new cloudwatch.Dashboard(this, 'MLAutomationDashboard', {
+      dashboardName: 'ML-Automation-Dashboard',
+    });
+
+    // Add metrics to dashboard
+    dashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: 'Model Performance',
+        left: [
+          new cloudwatch.Metric({
+            namespace: 'MLAutomation',
+            metricName: 'RMSE',
+            statistic: 'Average',
+            period: cdk.Duration.minutes(5),
+          }),
+        ],
+      }),
+      new cloudwatch.GraphWidget({
+        title: 'Data Drift',
+        left: [
+          new cloudwatch.Metric({
+            namespace: 'MLAutomation',
+            metricName: 'DriftRate',
+            statistic: 'Average',
+            period: cdk.Duration.minutes(5),
+          }),
+        ],
+      })
+    );
+
+    // Output important values
+    new cdk.CfnOutput(this, 'MwaaWebserverUrl', {
+      value: `https://${mwaaEnvironment.attrWebserverUrl}`,
+      description: 'MWAA Web Server URL',
+    });
+
+    new cdk.CfnOutput(this, 'WebSocketApiUrl', {
+      value: api.url,
+      description: 'WebSocket API URL',
+    });
+  }
+
+  private createMwaaRole(): iam.Role {
+    const role = new iam.Role(this, 'MwaaExecutionRole', {
+      assumedBy: new iam.ServicePrincipal('airflow-env.amazonaws.com'),
+    });
+
+    // Add permissions for S3
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          's3:ListBucket',
+          's3:GetObject',
+          's3:PutObject',
+          's3:DeleteObject',
+        ],
+        resources: ['arn:aws:s3:::ml-automation-*/*'],
+      })
+    );
+
+    // Add permissions for CloudWatch
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'cloudwatch:PutMetricData',
+          'logs:CreateLogStream',
+          'logs:CreateLogGroup',
+          'logs:PutLogEvents',
+          'logs:GetLogEvents',
+          'logs:GetLogRecord',
+          'logs:GetLogGroupFields',
+          'logs:GetQueryResults',
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Add permissions for Secrets Manager
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: ['arn:aws:secretsmanager:*:*:secret:airflow-secrets-*'],
+      })
+    );
+
+    return role;
+  }
+} 

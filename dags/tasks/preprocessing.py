@@ -25,6 +25,12 @@ from ydata_profiling import ProfileReport
 from airflow.models import Variable
 from tasks.schema_validation import validate_schema
 from agent_actions import handle_function_call
+import numpy as np
+from datetime import datetime
+from utils.storage import download as s3_download
+from utils.storage import upload as s3_upload
+from utils.slack import post as send_message
+from data_quality import DataQualityMonitor
 
 # configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -40,6 +46,11 @@ DECAY_PREFIXES = {
     "model5": ["lhdwc_5y_4d_"],  # slow decay
 }
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
+# Initialize data quality monitor
+quality_monitor = DataQualityMonitor()
 
 def load_data_to_dataframe(parquet_path: str) -> pd.DataFrame:
     """
@@ -164,69 +175,113 @@ def generate_profile_report(df: pd.DataFrame, output_path: str = PROFILE_REPORT_
         logging.warning(f"Slack notification failed: {e}")
 
 
-def preprocess_data(
-    parquet_path: str,
-    strategy: str = "mean",
-    missing_threshold: float = 0.3
-) -> pd.DataFrame:
+def preprocess_data(data_path, output_path):
     """
-    Full preprocessing pipeline (expects Parquet input):
-      1. Load Parquet
-      2. Handle missing values
-      3. Detect & cap outliers
-      4. Categorical encoding
-      5. Compute pure_premium & sample_weight
-      6. Pandera schema validation
-      7. Model‑specific feature selection
-      8. Profiling & Slack notification
-      9. Integration of new UI components and endpoints
+    Preprocess the data and perform quality checks.
     """
-    # 1) Load data
-    df = load_data_to_dataframe(parquet_path)
-
-    # 2) Missing data
-    df = handle_missing_data(df, strategy, missing_threshold)
-
-    # 3) Detect & cap outliers
-    _ = detect_outliers_iqr(df)
-    for col in df.select_dtypes(include="number"):
-        df = cap_outliers(df, col)
-
-    # 4) Encode categoricals
-    df = encode_categoricals(df)
-
-    # 5) Compute target & weight
-    if "pure_premium" not in df.columns:
-        if {"il_total", "eey"}.issubset(df.columns):
-            df["pure_premium"]  = df["il_total"] / df["eey"]
-            df["sample_weight"] = df["eey"]
-            logging.info("Computed pure_premium & sample_weight")
-        else:
-            raise ValueError("Columns 'il_total' and 'eey' required to compute pure_premium")
-
-    # 6) Schema validation
-    df = validate_schema(df)
-
-    # 7) Feature selection
-    df = select_model_features(df)
-
-    # 8) Profiling & notify
-    generate_profile_report(df)
-
-    # 9) Integrate UI
     try:
-        handle_function_call({
-            "function": {
-                "name": "integrate_ui_components",
-                "arguments": json.dumps({
-                    "channel": "#agent_logs",
-                    "title": "🔗 Integrating UI Components",
-                    "details": "Integrating new UI components and endpoints.",
-                    "urgency": "low"
-                })
-            }
-        })
+        # Load data
+        data = pd.read_parquet(data_path)
+        
+        # Perform initial quality check
+        quality_report = quality_monitor.monitor_data(data)
+        if quality_report['issues']:
+            send_message(
+                channel="#alerts",
+                title="⚠️ Data Quality Issues Detected",
+                details=f"Quality report: {quality_report}",
+                urgency="medium"
+            )
+        
+        # Basic preprocessing
+        data = handle_missing_data(data)
+        data = handle_outliers(data)
+        data = encode_categorical_variables(data)
+        data = scale_numeric_features(data)
+        
+        # Final quality check after preprocessing
+        final_quality_report = quality_monitor.monitor_data(data)
+        if final_quality_report['issues']:
+            send_message(
+                channel="#alerts",
+                title="⚠️ Post-Preprocessing Quality Issues",
+                details=f"Quality report: {final_quality_report}",
+                urgency="medium"
+            )
+        
+        # Save preprocessed data
+        data.to_parquet(output_path)
+        
+        # Save quality reports
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        quality_reports = {
+            'initial': quality_report,
+            'final': final_quality_report,
+            'timestamp': timestamp
+        }
+        
+        # Upload quality reports
+        reports_path = f"quality_reports/{os.path.basename(data_path)}_{timestamp}.json"
+        s3_upload(quality_reports, reports_path)
+        
+        return output_path, quality_reports
+        
     except Exception as e:
-        logging.warning(f"UI components integration failed: {e}")
+        logger.error(f"Error in preprocess_data: {str(e)}")
+        send_message(
+            channel="#alerts",
+            title="❌ Preprocessing Error",
+            details=str(e),
+            urgency="high"
+        )
+        raise
 
-    return df
+def handle_missing_values(data):
+    """
+    Handle missing values in the dataset.
+    """
+    # For numeric columns, fill with median
+    numeric_cols = data.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        data[col].fillna(data[col].median(), inplace=True)
+    
+    # For categorical columns, fill with mode
+    categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+    for col in categorical_cols:
+        data[col].fillna(data[col].mode()[0], inplace=True)
+    
+    return data
+
+def handle_outliers(data, threshold=3):
+    """
+    Handle outliers using z-score method.
+    """
+    numeric_cols = data.select_dtypes(include=[np.number]).columns
+    
+    for col in numeric_cols:
+        z_scores = np.abs((data[col] - data[col].mean()) / data[col].std())
+        data.loc[z_scores > threshold, col] = data[col].mean()
+    
+    return data
+
+def encode_categorical_variables(data):
+    """
+    Encode categorical variables.
+    """
+    categorical_cols = data.select_dtypes(include=['object', 'category']).columns
+    
+    for col in categorical_cols:
+        data[col] = pd.Categorical(data[col]).codes
+    
+    return data
+
+def scale_numeric_features(data):
+    """
+    Scale numeric features using min-max scaling.
+    """
+    numeric_cols = data.select_dtypes(include=[np.number]).columns
+    
+    for col in numeric_cols:
+        data[col] = (data[col] - data[col].min()) / (data[col].max() - data[col].min())
+    
+    return data

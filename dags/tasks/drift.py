@@ -21,24 +21,41 @@ import pandas as pd
 import numpy as np
 from airflow.models import Variable
 from tenacity import retry, stop_after_attempt, wait_fixed
+import json
+import boto3
+from datetime import datetime
+from utils.slack import post as send_message
+from utils.storage import download as s3_download
+from utils.storage import upload as s3_upload
 
-from utils.storage import upload
 from utils.config import S3_BUCKET, REFERENCE_KEY_PREFIX
 
 # Setup logging
-t=logging.getLogger()
+logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 # Local path for the reference means CSV
 REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
 
-# Drift threshold loaded from Airflow Variable or default 0.1
-try:
-    DRIFT_THRESHOLD = float(Variable.get("DRIFT_THRESHOLD", default_var="0.1"))
-except Exception:
-    DRIFT_THRESHOLD = 0.1
-    logging.warning(f"Using default drift threshold {DRIFT_THRESHOLD}")
+# Initialize AWS clients
+cloudwatch = boto3.client('cloudwatch')
+lambda_client = boto3.client('lambda')
+ssm = boto3.client('ssm')
+secretsmanager = boto3.client('secretsmanager')
 
+# Get drift threshold from SSM Parameter Store or use default
+try:
+    drift_threshold_param = ssm.get_parameter(Name='/ml-automation/drift/threshold')
+    DRIFT_THRESHOLD = float(drift_threshold_param['Parameter']['Value'])
+    logger.info(f"Using drift threshold from SSM: {DRIFT_THRESHOLD}")
+except Exception as e:
+    logger.warning(f"Failed to get drift threshold from SSM: {e}")
+    try:
+        DRIFT_THRESHOLD = float(Variable.get("DRIFT_THRESHOLD", default_var="0.1"))
+        logger.info(f"Using drift threshold from Airflow Variable: {DRIFT_THRESHOLD}")
+    except Exception:
+        DRIFT_THRESHOLD = 0.1
+        logger.warning(f"Using default drift threshold {DRIFT_THRESHOLD}")
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def generate_reference_means(
@@ -66,10 +83,171 @@ def generate_reference_means(
 
     ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     s3_key = f"{REFERENCE_KEY_PREFIX}/reference_means_{ts}.csv"
-    upload(local_ref, s3_key)
-    logging.info(f"Uploaded reference means to s3://{S3_BUCKET}/{s3_key}")
+    s3_upload(local_ref, s3_key)
+    logger.info(f"Uploaded reference means to s3://{S3_BUCKET}/{s3_key}")
+    
+    # Log reference means generation to CloudWatch
+    cloudwatch.put_metric_data(
+        Namespace='MLAutomation',
+        MetricData=[
+            {
+                'MetricName': 'ReferenceMeansGenerated',
+                'Value': 1,
+                'Unit': 'Count',
+                'Timestamp': datetime.now()
+            }
+        ]
+    )
+    
     return local_ref
 
+def calculate_drift(current_data, reference_data, columns):
+    """
+    Calculate drift metrics for specified columns.
+    """
+    drift_metrics = {}
+    
+    for col in columns:
+        if col in current_data.columns and col in reference_data.columns:
+            current_mean = current_data[col].mean()
+            reference_mean = reference_data[col].mean()
+            
+            drift_metrics[col] = {
+                'current_mean': current_mean,
+                'reference_mean': reference_mean,
+                'drift': abs(current_mean - reference_mean) / reference_mean if reference_mean != 0 else 0
+            }
+    
+    return drift_metrics
+
+def detect_drift(current_data_path, reference_data_path, drift_threshold=0.1):
+    """
+    Detect data drift between current and reference datasets.
+    """
+    try:
+        # Load datasets
+        current_data = pd.read_parquet(current_data_path)
+        reference_data = pd.read_parquet(reference_data_path)
+        
+        # Calculate drift for numeric columns
+        numeric_cols = current_data.select_dtypes(include=[np.number]).columns
+        drift_metrics = calculate_drift(current_data, reference_data, numeric_cols)
+        
+        # Identify significant drift
+        significant_drift = {
+            col: metrics for col, metrics in drift_metrics.items()
+            if metrics['drift'] > drift_threshold
+        }
+        
+        # Prepare drift report
+        drift_report = {
+            'timestamp': datetime.now().isoformat(),
+            'metrics': drift_metrics,
+            'significant_drift': significant_drift,
+            'threshold': drift_threshold
+        }
+        
+        # Save drift report
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = f"drift_reports/drift_{timestamp}.json"
+        s3_upload(drift_report, report_path)
+        
+        # Log drift metrics to CloudWatch
+        for col, metrics in drift_metrics.items():
+            cloudwatch.put_metric_data(
+                Namespace='MLAutomation',
+                MetricData=[
+                    {
+                        'MetricName': 'FeatureDrift',
+                        'Value': metrics['drift'],
+                        'Unit': 'None',
+                        'Timestamp': datetime.now(),
+                        'Dimensions': [
+                            {
+                                'Name': 'Feature',
+                                'Value': col
+                            }
+                        ]
+                    }
+                ]
+            )
+        
+        # Log significant drift count
+        cloudwatch.put_metric_data(
+            Namespace='MLAutomation',
+            MetricData=[
+                {
+                    'MetricName': 'SignificantDriftCount',
+                    'Value': len(significant_drift),
+                    'Unit': 'Count',
+                    'Timestamp': datetime.now()
+                }
+            ]
+        )
+        
+        # Trigger WebSocket notification if significant drift detected
+        if significant_drift:
+            # Get WebSocket API endpoint from SSM
+            try:
+                websocket_endpoint = ssm.get_parameter(Name='/ml-automation/websocket/endpoint')['Parameter']['Value']
+                lambda_client.invoke(
+                    FunctionName='notify_websocket',
+                    InvocationType='Event',
+                    Payload=json.dumps({
+                        'type': 'drift_alert',
+                        'data': drift_report,
+                        'endpoint': websocket_endpoint
+                    })
+                )
+            except Exception as e:
+                logger.error(f"Failed to trigger WebSocket notification: {e}")
+            
+            # Send Slack notification
+            send_message(
+                channel="#alerts",
+                title="⚠️ Significant Data Drift Detected",
+                details=f"Drift report: {json.dumps(drift_report, indent=2)}",
+                urgency="high"
+            )
+            
+            # Log alert to CloudWatch
+            cloudwatch.put_metric_data(
+                Namespace='MLAutomation',
+                MetricData=[
+                    {
+                        'MetricName': 'DriftAlert',
+                        'Value': 1,
+                        'Unit': 'Count',
+                        'Timestamp': datetime.now()
+                    }
+                ]
+            )
+        
+        return drift_report
+        
+    except Exception as e:
+        logger.error(f"Error in detect_drift: {str(e)}")
+        send_message(
+            channel="#alerts",
+            title="❌ Drift Detection Error",
+            details=str(e),
+            urgency="high"
+        )
+        raise
+
+def should_retrain(drift_report, retrain_threshold=0.2):
+    """
+    Determine if model retraining is needed based on drift metrics.
+    """
+    if not drift_report.get('significant_drift'):
+        return False
+    
+    # Check if any feature has drift above retrain threshold
+    for metrics in drift_report['significant_drift'].values():
+        if metrics['drift'] > retrain_threshold:
+            return True
+    
+    return False
 
 def detect_data_drift(
     current_data_path: str,
@@ -123,6 +301,20 @@ def self_healing() -> str:
         A marker string once self‑healing completes.
     """
     logging.info("Drift detected: starting self‑healing (await manual approval)...")
+    
+    # Log self-healing event to CloudWatch
+    cloudwatch.put_metric_data(
+        Namespace='MLAutomation',
+        MetricData=[
+            {
+                'MetricName': 'SelfHealingTriggered',
+                'Value': 1,
+                'Unit': 'Count',
+                'Timestamp': datetime.now()
+            }
+        ]
+    )
+    
     time.sleep(5)
     logging.info("Self‑healing complete; manual override confirmed.")
     return "override_done"

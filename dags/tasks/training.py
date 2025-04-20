@@ -46,9 +46,102 @@ from airflow.models import Variable
 from utils.slack import post as slack_msg
 from utils.storage import upload as s3_upload, download as s3_download
 
-LOGGER = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+import boto3
+from datetime import datetime
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
+# Initialize AWS clients
+sagemaker = boto3.client('sagemaker')
+cloudwatch = boto3.client('cloudwatch')
+
+def log_metrics_to_cloudwatch(metrics, model_id):
+    """
+    Log metrics to CloudWatch.
+    """
+    try:
+        cloudwatch.put_metric_data(
+            Namespace='MLAutomation',
+            MetricData=[
+                {
+                    'MetricName': metric_name,
+                    'Value': value,
+                    'Unit': 'Count',
+                    'Timestamp': datetime.now(),
+                    'Dimensions': [
+                        {
+                            'Name': 'ModelId',
+                            'Value': model_id
+                        }
+                    ]
+                }
+                for metric_name, value in metrics.items()
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Error logging metrics to CloudWatch: {str(e)}")
+
+def register_model_with_sagemaker(model, model_id, metrics, mlflow_run):
+    """
+    Register model with SageMaker Model Registry.
+    """
+    try:
+        # Save model artifacts
+        model_path = f"/tmp/{model_id}_model.json"
+        model.save_model(model_path)
+        
+        # Upload model to S3
+        s3_model_path = f"s3://{os.environ['S3_BUCKET']}/models/{model_id}/{datetime.now().strftime('%Y%m%d_%H%M%S')}/model.json"
+        s3_upload(model_path, s3_model_path)
+        
+        # Create model package
+        model_package_name = f"{model_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        
+        response = sagemaker.create_model_package(
+            ModelPackageName=model_package_name,
+            ModelPackageGroupName=model_id,
+            ModelPackageDescription=f"Model package for {model_id}",
+            InferenceSpecification={
+                'Containers': [
+                    {
+                        'Image': os.environ['SAGEMAKER_IMAGE'],
+                        'ModelDataUrl': s3_model_path,
+                        'Environment': {
+                            'MLFLOW_RUN_ID': mlflow_run.info.run_id,
+                            'MODEL_ID': model_id
+                        }
+                    }
+                ],
+                'SupportedTransformJobs': ['feature-transform'],
+                'SupportedContentTypes': ['text/csv'],
+                'SupportedResponseMIMETypes': ['text/csv']
+            },
+            ValidationSpecification={
+                'ValidationRole': os.environ['SAGEMAKER_ROLE'],
+                'ValidationProfiles': [
+                    {
+                        'ProfileName': 'default',
+                        'TransformJobDefinition': {
+                            'MaxConcurrentTransforms': 1,
+                            'MaxPods': 1,
+                            'Environment': {
+                                'MLFLOW_RUN_ID': mlflow_run.info.run_id,
+                                'MODEL_ID': model_id
+                            }
+                        }
+                    }
+                ]
+            }
+        )
+        
+        # Log metrics to CloudWatch
+        log_metrics_to_cloudwatch(metrics, model_id)
+        
+        return response['ModelPackageArn']
+    except Exception as e:
+        logger.error(f"Error registering model with SageMaker: {str(e)}")
+        raise
 
 def manual_override() -> Optional[Dict[str, Any]]:
     """
@@ -58,10 +151,10 @@ def manual_override() -> Optional[Dict[str, Any]]:
     try:
         if Variable.get("MANUAL_OVERRIDE", default_var="False").lower() == "true":
             params = json.loads(Variable.get("CUSTOM_HYPERPARAMS", default_var="{}"))
-            LOGGER.info("manual_override: using custom hyperparameters %s", params)
+            logger.info("manual_override: using custom hyperparameters %s", params)
             return params
     except Exception as e:
-        LOGGER.error("manual_override() error: %s", e)
+        logger.error("manual_override() error: %s", e)
     return None
 
 # ─── ENV / AIRFLOW VARIABLES ─────────────────────────────────────────────────
@@ -99,9 +192,9 @@ async def send_websocket_update(model_id: str, metrics: Dict[str, float], status
                 "timestamp": time.time()
             }
             await websocket.send(json.dumps(message))
-            LOGGER.info(f"WebSocket update sent for {model_id}: {metrics}")
+            logger.info(f"WebSocket update sent for {model_id}: {metrics}")
     except Exception as e:
-        LOGGER.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}")
 
 
 def send_websocket_update_sync(model_id: str, metrics: Dict[str, float], status: str = "update"):
@@ -116,10 +209,10 @@ def _train_val_split(X: pd.DataFrame, y: pd.Series) -> Tuple[np.ndarray, np.ndar
     try:
         tscv = TimeSeriesSplit(n_splits=5)
         train_idx, val_idx = next(tscv.split(X))
-        LOGGER.info("Using TimeSeriesSplit (n_splits=5)")
+        logger.info("Using TimeSeriesSplit (n_splits=5)")
         return X.iloc[train_idx], X.iloc[val_idx], y.iloc[train_idx], y.iloc[val_idx]
     except Exception as e:
-        LOGGER.warning("TimeSeriesSplit failed; fallback train_test_split: %s", e)
+        logger.warning("TimeSeriesSplit failed; fallback train_test_split: %s", e)
         return train_test_split(X, y, test_size=0.2, random_state=42)
 
 
@@ -172,7 +265,7 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
         prev_model = joblib.load(prev_file)
         preds_prev = prev_model.predict(X_val)
         prev_rmse = np.sqrt(mean_squared_error(y_val, preds_prev))
-        LOGGER.info(f"Baseline {model_id} RMSE={prev_rmse:.4f}")
+        logger.info(f"Baseline {model_id} RMSE={prev_rmse:.4f}")
         
         # Send WebSocket update for baseline metrics
         baseline_metrics = {
@@ -194,7 +287,7 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
             send_websocket_update_sync(model_id, baseline_metrics, "skipped")
             return
     except Exception as e:
-        LOGGER.info(f"Baseline load skipped/error: {e}")
+        logger.info(f"Baseline load skipped/error: {e}")
 
     # HyperOpt search space
     space = {
