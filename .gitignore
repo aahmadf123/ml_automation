@@ -1,8 +1,34 @@
+#  ─── Python virtual envs ───────────────────────────────────────────
 airflowenv/
 mlflowenv/
-logs/
-mlruns/
-*.pyc
-__pycache__/
-.DS_Store
+venv/
 .env
+
+#  ─── Airflow runtime & metadata ────────────────────────────────────
+*.pid
+airflow.db
+airflow-webserver.pid
+airflow-scheduler.pid
+
+#  ─── Logs & MLflow runs ────────────────────────────────────────────
+logs/
+*.log
+mlruns/
+
+#  ─── Python cache/artifacts ────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+
+#  ─── Jupyter ───────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+#  ─── IDE / OS files ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sw?
+.DS_Store
+
+#  ─── Other local files to ignore ───────────────────────────────────
+*.save
+
