@@ -16,7 +16,7 @@ This project implements a production-ready ML pipeline with the following key fe
 
 ## Architecture
 
-The system consists of several interconnected components:
+### Components
 
 1. **Airflow DAGs**: Orchestrate the entire ML pipeline
 2. **Data Quality Monitor**: Tracks data quality metrics and detects anomalies
@@ -25,17 +25,49 @@ The system consists of several interconnected components:
 5. **WebSocket Server**: Provides real-time updates to the dashboard
 6. **MLflow Integration**: Tracks experiments and model metrics
 
+### AWS Infrastructure
+
+1. **Amazon MWAA**: Managed Apache Airflow service
+   - DAGs stored in S3
+   - Automatic high availability
+   - IAM integration
+
+2. **SageMaker Model Registry**: Model versioning and deployment
+   - Automated model promotion
+   - Version control
+   - Secure deployment hooks
+
+3. **AWS Amplify**: Dashboard hosting
+   - Automatic builds on main branch
+   - HTTPS and custom domain
+   - Environment variable management
+
+4. **API Gateway + Lambda**: Real-time updates
+   - WebSocket API
+   - Serverless architecture
+   - Auto-scaling
+
+5. **AWS Secrets Manager**: Secure configuration
+   - Centralized secrets storage
+   - IAM-based access control
+   - Encrypted at rest
+
+6. **CloudWatch + SNS**: Monitoring and alerts
+   - Centralized logging
+   - Custom metrics
+   - Slack integration
+
 ## Setup
 
 ### Prerequisites
 
 - Python 3.12+
-- Apache Airflow 2.7.1+
-- PostgreSQL
-- Redis
-- MLflow
+- Node.js 18+
+- AWS CLI configured
+- GitHub account
+- AWS account with appropriate permissions
 
-### Installation
+### Local Development
 
 1. Clone the repository:
    ```bash
@@ -60,49 +92,37 @@ The system consists of several interconnected components:
    # Edit .env with your configuration
    ```
 
-5. Initialize Airflow:
+### AWS Deployment
+
+1. **Infrastructure Setup**:
    ```bash
-   airflow db init
-   airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
+   # Install AWS CDK
+   npm install -g aws-cdk
+
+   # Deploy infrastructure
+   cd infrastructure
+   cdk deploy
    ```
 
-### Configuration
+2. **MWAA Environment**:
+   - Create S3 bucket for DAGs
+   - Configure MWAA environment
+   - Set up IAM roles
 
-1. **S3 Configuration**:
-   - Set `S3_BUCKET` in `.env`
-   - Configure AWS credentials
+3. **Model Registry**:
+   - Configure SageMaker Model Registry
+   - Set up model promotion workflow
+   - Configure deployment hooks
 
-2. **MLflow Configuration**:
-   - Set `MLFLOW_TRACKING_URI` in `.env`
-   - Initialize MLflow server
+4. **Dashboard Deployment**:
+   - Connect GitHub repository to Amplify
+   - Configure build settings
+   - Set up environment variables
 
-3. **Slack Integration**:
-   - Set `SLACK_WEBHOOK_URL` in `.env`
-   - Configure notification channels
-
-## Usage
-
-### Starting the Pipeline
-
-1. Start Airflow:
-   ```bash
-   airflow webserver -p 8080
-   airflow scheduler
-   ```
-
-2. Start the WebSocket server:
-   ```bash
-   python websocket_server.py
-   ```
-
-3. Access the dashboard at `http://localhost:3000`
-
-### Monitoring
-
-- **Data Quality**: View data quality metrics and alerts in the dashboard
-- **Model Performance**: Track model metrics and drift detection
-- **A/B Testing**: Monitor test results and model comparisons
-- **System Health**: View system metrics and pipeline status
+5. **WebSocket API**:
+   - Deploy API Gateway WebSocket API
+   - Configure Lambda functions
+   - Set up connections
 
 ## Development
 
@@ -114,23 +134,40 @@ ml_automation/
 │   ├── tasks/              # Task implementations
 │   └── utils/              # Utility functions
 ├── loss-history-dashboard/ # React dashboard
+├── infrastructure/         # AWS CDK code
 ├── tests/                  # Test files
 ├── requirements.txt        # Python dependencies
 └── .env.template          # Environment template
 ```
 
-### Adding New Features
+### CI/CD Pipeline
 
-1. Create new task modules in `dags/tasks/`
-2. Update the DAG in `dags/homeowner_dag.py`
-3. Add corresponding UI components in `loss-history-dashboard/`
-4. Update tests in `tests/`
+1. **GitHub Actions Workflow**:
+   - Run tests on PR
+   - Deploy infrastructure
+   - Update MWAA environment
+   - Deploy dashboard
+
+2. **Infrastructure as Code**:
+   - AWS CDK for infrastructure
+   - Automated deployments
+   - Environment management
+
+3. **Monitoring**:
+   - CloudWatch metrics
+   - SNS notifications
+   - Slack integration
 
 ## Testing
 
 Run the test suite:
 ```bash
+# Backend tests
 pytest tests/
+
+# Frontend tests
+cd loss-history-dashboard
+npm test
 ```
 
 ## Contributing
