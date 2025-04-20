@@ -25,7 +25,7 @@ A unified MLOps project that powers a daily homeowner loss‑history pipeline wi
    - Fallback from TimeSeriesSplit → train_test_split  
    - Log RMSE, MSE, MAE, R² to MLflow  
    - Generate & upload SHAP summary & Actual vs Predicted plots  
-   - Auto‑promote to “Production” in MLflow Registry
+   - Auto‑promote to "Production" in MLflow Registry
 4. **Dashboard & API**  
    - Next.js frontend served on Vercel or EC2  
    - WebSocket updates for live metrics & drift alerts
@@ -56,8 +56,8 @@ A unified MLOps project that powers a daily homeowner loss‑history pipeline wi
    - Copy `.env.example` to `.env` and fill in keys (Slack, AWS, Airflow, MLflow, WebSocket URL)
 3. **Install dependencies**:
    ```bash
-   # For Airflow DAGs
-   cd dags && pip install -r requirements.txt
+   # For Airflow DAGs and backend
+   pip install -r requirements.txt
 
    # For Dashboard
    cd loss-history-dashboard && npm install
@@ -90,35 +90,56 @@ ml_automation/
 │   └── tasks/                   # Ingestion, preprocessing, drift, training, etc.
 ├── loss-history-dashboard/      # Next.js frontend & WebSocket client
 ├── mlflow-export-import/        # Optional MLflow registry scripts
+├── tests/                       # Test files
+│   ├── test_api_endpoints.js    # API endpoint tests
+│   ├── test_websocket.js        # WebSocket functionality tests
+│   └── test_preprocessing.py    # Preprocessing module tests
 ├── .env.example                 # Example environment variables
 ├── .gitignore
 ├── airflow.cfg                  # Airflow configuration on EC2
 ├── webserver_config.py          # Airflow webserver settings
+├── requirements.txt             # Python dependencies
+├── package.json                 # JavaScript/TypeScript dependencies
 └── README.md                    # Project overview & instructions
 ```
 
 ---
 
-## 📦 Usage
+## 📊 Dashboard Components
 
-1. **Trigger the pipeline**:
-   - **Auto**: runs daily at 10 AM (Airflow schedule)
-   - **Manual**: `airflow dags trigger homeowner_loss_history_full_pipeline`
-2. **Monitor MLflow**: `http://<EC2_PUBLIC_IP>:5000`
-3. **View Dashboard**: `http://<EC2_PUBLIC_IP>:3000` or your Vercel URL
-4. **Check Alerts**: Slack channel `#alerts`
+The dashboard consists of several key components:
 
----
+1. **System Metrics**: Real-time monitoring of CPU, memory, disk, and network usage
+2. **Model Performance**: Visualization of model metrics (RMSE, MSE, MAE, R²) over time
+3. **Data Drift Alerts**: Detection and visualization of feature drift
+4. **Pipeline Health**: Status of DAG execution and success rates
+5. **Model Explainability**: SHAP values and actual vs. predicted comparisons
+6. **Slack Notifications**: Configuration and history of alerts sent to Slack
 
-## 🤝 Contributing
+## 🔄 WebSocket Communication
 
-1. Fork & checkout `main`  
-2. Create feature branch & implement changes  
-3. Update `.env.example` if env vars change  
-4. Submit PR & pass CI checks
+The dashboard uses WebSockets for real-time updates. The WebSocket server runs on port 8000 and provides the following message types:
 
----
+- `connection`: Confirmation of successful connection
+- `system_metrics`: CPU, memory, disk, and network usage
+- `model_metrics`: Model performance metrics (RMSE, MSE, MAE, R²)
+- `data_drift_alert`: Alerts for feature drift detection
+- `pipeline_status`: DAG execution status and progress
 
-## ⚖️ License
+## 🧪 Testing
 
-=
+### Backend Tests
+
+```bash
+pytest
+```
+
+### Frontend Tests
+
+```bash
+npm test
+```
+
+## 📝 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
