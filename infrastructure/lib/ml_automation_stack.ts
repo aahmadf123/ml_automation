@@ -2,7 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as mwaa from 'aws-cdk-lib/aws-mwaa';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sagemaker from 'aws-cdk-lib/aws-sagemaker';
@@ -88,40 +88,95 @@ export class MlAutomationStack extends cdk.Stack {
     });
 
     // Create WebSocket API
-    const api = new apigateway.RestApi(this, 'WebSocketApi', {
-      restApiName: 'ML Automation WebSocket API',
+    const api = new apigatewayv2.WebSocketApi(this, 'WebSocketApi', {
+      apiName: 'ML Automation WebSocket API',
       description: 'WebSocket API for real-time updates',
+      connectRouteOptions: { integration: new apigatewayv2.WebSocketLambdaIntegration('ConnectIntegration', connectFunction) },
+      disconnectRouteOptions: { integration: new apigatewayv2.WebSocketLambdaIntegration('DisconnectIntegration', disconnectFunction) },
+      defaultRouteOptions: { integration: new apigatewayv2.WebSocketLambdaIntegration('DefaultIntegration', defaultFunction) }
     });
 
-    // Create WebSocket routes
-    const connectIntegration = new apigateway.LambdaIntegration(
-      new lambda.Function(this, 'ConnectFunction', {
-        runtime: lambda.Runtime.PYTHON_3_9,
-        handler: 'index.handler',
-        code: lambda.Code.fromAsset('lambda/connect'),
-      })
-    );
+    // Add custom route for drift events
+    api.addRoute('driftEvent', {
+      integration: new apigatewayv2.WebSocketLambdaIntegration('DriftEventIntegration', driftEventFunction)
+    });
 
-    const disconnectIntegration = new apigateway.LambdaIntegration(
-      new lambda.Function(this, 'DisconnectFunction', {
-        runtime: lambda.Runtime.PYTHON_3_9,
-        handler: 'index.handler',
-        code: lambda.Code.fromAsset('lambda/disconnect'),
-      })
-    );
+    // Create WebSocket Stage
+    const stage = new apigatewayv2.WebSocketStage(this, 'WebSocketStage', {
+      webSocketApi: api,
+      stageName: 'prod',
+      autoDeploy: true
+    });
 
-    const driftEventIntegration = new apigateway.LambdaIntegration(
-      new lambda.Function(this, 'DriftEventFunction', {
-        runtime: lambda.Runtime.PYTHON_3_9,
-        handler: 'index.handler',
-        code: lambda.Code.fromAsset('lambda/drift-event'),
-      })
-    );
+    // Create Lambda functions
+    const connectFunction = new lambda.Function(this, 'ConnectFunction', {
+      runtime: lambda.Runtime.PYTHON_3_9,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/connect'),
+      environment: {
+        LOG_GROUP: '/ml-automation/websocket-connections'
+      }
+    });
 
-    // Add WebSocket routes
-    api.root.addResource('$connect').addMethod('POST', connectIntegration);
-    api.root.addResource('$disconnect').addMethod('POST', disconnectIntegration);
-    api.root.addResource('driftEvent').addMethod('POST', driftEventIntegration);
+    const disconnectFunction = new lambda.Function(this, 'DisconnectFunction', {
+      runtime: lambda.Runtime.PYTHON_3_9,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/disconnect'),
+      environment: {
+        LOG_GROUP: '/ml-automation/websocket-connections'
+      }
+    });
+
+    const driftEventFunction = new lambda.Function(this, 'DriftEventFunction', {
+      runtime: lambda.Runtime.PYTHON_3_9,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/drift-event'),
+      environment: {
+        LOG_GROUP: '/ml-automation/websocket-connections',
+        DRIFT_LOG_GROUP: '/ml-automation/drift-events'
+      }
+    });
+
+    const defaultFunction = new lambda.Function(this, 'DefaultFunction', {
+      runtime: lambda.Runtime.PYTHON_3_9,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/default'),
+      environment: {
+        LOG_GROUP: '/ml-automation/websocket-connections'
+      }
+    });
+
+    // Grant permissions to Lambda functions
+    connectFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'logs:CreateLogGroup',
+        'logs:CreateLogStream',
+        'logs:PutLogEvents'
+      ],
+      resources: ['*']
+    }));
+
+    disconnectFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'logs:CreateLogGroup',
+        'logs:CreateLogStream',
+        'logs:PutLogEvents'
+      ],
+      resources: ['*']
+    }));
+
+    driftEventFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'logs:CreateLogGroup',
+        'logs:CreateLogStream',
+        'logs:PutLogEvents',
+        'cloudwatch:PutMetricData'
+      ],
+      resources: ['*']
+    }));
 
     // Create SNS topic for alerts
     const alertTopic = new sns.Topic(this, 'AlertTopic', {
@@ -171,8 +226,8 @@ export class MlAutomationStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'WebSocketApiUrl', {
-      value: api.url,
-      description: 'WebSocket API URL',
+      value: stage.url,
+      description: 'WebSocket API URL'
     });
   }
 
