@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from airflow.models import Variable
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from utils.slack import post_message
+from utils.slack import post as post_message
 from utils.storage import upload
 from utils.config import S3_BUCKET, ARCHIVE_FOLDER as S3_ARCHIVE_FOLDER
 
@@ -67,9 +67,16 @@ def notify_success(channel: str = "#alerts") -> dict:
     Returns:
         dict: Slack API response.
     """
-    return send_message(
+    return post_message(
         channel=channel,
         title="✅ Pipeline Completed",
         details="The homeowner DAG ran successfully.",
         urgency="low"
     )
+
+def update_notification_process_with_ui_components():
+    """
+    Placeholder function to update the notification process with new UI components and endpoints.
+    """
+    logging.info("Updating notification process with new UI components and endpoints.")
+    # Placeholder for actual implementation

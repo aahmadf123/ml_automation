@@ -19,7 +19,7 @@ Dependencies:
 
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError
 
@@ -66,7 +66,7 @@ def get_local_last_modified(local_path: str) -> datetime:
         logging.info(f"Local file {local_path} does not exist.")
         return None
     timestamp = os.path.getmtime(local_path)
-    last_modified = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    last_modified = datetime.fromtimestamp(timestamp)
     logging.info(f"Local file {local_path} last modified on {last_modified}")
     return last_modified
 
@@ -175,3 +175,22 @@ def cache_function_output(cache_file: str, func, *args, **kwargs):
             f.write(output)
         logging.info(f"Output cached to {cache_file}.")
         return output
+
+if __name__ == "__main__":
+    # Example usage (for testing only)
+    test_bucket = "grange-seniordesign-bucket"
+    test_key = "raw-data/ut_loss_history_1.csv"
+    test_local = "/tmp/homeowner_data.csv"
+
+    # Check cache validity
+    valid = is_cache_valid(test_bucket, test_key, test_local)
+    print(f"Cache valid: {valid}")
+
+    # If not valid, update cache
+    if not valid:
+        update_cache(test_bucket, test_key, test_local)
+        print("Cache updated.")
+    
+    # Optionally clear cache (uncomment for testing cleanup)
+    # clear_cache(test_local)
+    # print("Cache cleared.")

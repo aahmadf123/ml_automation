@@ -3,7 +3,7 @@
 preprocessing.py
 
 Handles:
-  - Data loading from CSV
+  - Data loading from Parquet
   - Handling missing values
   - Outlier detection and capping
   - Categorical encoding
@@ -11,6 +11,7 @@ Handles:
   - Pandera schema validation (after pure_premium exists)
   - Selecting the correct loss-history features per MODEL_ID
   - Data profiling report + Slack notification via agent_actions
+  - Integration of new UI components and endpoints
 """
 
 import os
@@ -40,12 +41,12 @@ DECAY_PREFIXES = {
 }
 
 
-def load_data_to_dataframe(csv_path: str) -> pd.DataFrame:
+def load_data_to_dataframe(parquet_path: str) -> pd.DataFrame:
     """
-    Read CSV from local path into DataFrame.
+    Read Parquet from local path into DataFrame.
     """
-    df = pd.read_csv(csv_path)
-    logging.info(f"Loaded data from {csv_path}, shape={df.shape}")
+    df = pd.read_parquet(parquet_path)
+    logging.info(f"Loaded data from {parquet_path}, shape={df.shape}")
     return df
 
 
@@ -132,7 +133,7 @@ def select_model_features(df: pd.DataFrame) -> pd.DataFrame:
 
     keep_cols = [
         col for col in df.columns
-        if (any(col.startswith(p) for p in keep_prefixes) or not is_loss_col(col))
+        if any(col.startswith(p) for p in keep_prefixes) or not is_loss_col(col)
     ]
     removed = [col for col in df.columns if col not in keep_cols]
     logging.info(f"Dropped loss‑history cols for {model_id}: {removed}")
@@ -141,7 +142,7 @@ def select_model_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def generate_profile_report(df: pd.DataFrame, output_path: str = PROFILE_REPORT_PATH) -> None:
     """
-    Generate a minimal profiling report, write to HTML, and notify via agent_actions.
+    Generate a minimal profiling report, write to HTML, and notify Slack.
     """
     profile = ProfileReport(df, title="Homeowner Data Profile", minimal=True)
     profile.to_file(output_path)
@@ -164,13 +165,13 @@ def generate_profile_report(df: pd.DataFrame, output_path: str = PROFILE_REPORT_
 
 
 def preprocess_data(
-    csv_path: str,
+    parquet_path: str,
     strategy: str = "mean",
     missing_threshold: float = 0.3
 ) -> pd.DataFrame:
     """
-    Full preprocessing pipeline:
-      1. Load CSV
+    Full preprocessing pipeline (expects Parquet input):
+      1. Load Parquet
       2. Handle missing values
       3. Detect & cap outliers
       4. Categorical encoding
@@ -178,9 +179,10 @@ def preprocess_data(
       6. Pandera schema validation
       7. Model‑specific feature selection
       8. Profiling & Slack notification
+      9. Integration of new UI components and endpoints
     """
-    # 1) Load CSV
-    df = load_data_to_dataframe(csv_path)
+    # 1) Load data
+    df = load_data_to_dataframe(parquet_path)
 
     # 2) Missing data
     df = handle_missing_data(df, strategy, missing_threshold)
@@ -202,13 +204,29 @@ def preprocess_data(
         else:
             raise ValueError("Columns 'il_total' and 'eey' required to compute pure_premium")
 
-    # 6) Now that pure_premium exists, validate against schema
+    # 6) Schema validation
     df = validate_schema(df)
 
-    # 7) Select only the features needed for this MODEL_ID
+    # 7) Feature selection
     df = select_model_features(df)
 
-    # 8) Profile & notify
+    # 8) Profiling & notify
     generate_profile_report(df)
+
+    # 9) Integrate UI
+    try:
+        handle_function_call({
+            "function": {
+                "name": "integrate_ui_components",
+                "arguments": json.dumps({
+                    "channel": "#agent_logs",
+                    "title": "🔗 Integrating UI Components",
+                    "details": "Integrating new UI components and endpoints.",
+                    "urgency": "low"
+                })
+            }
+        })
+    except Exception as e:
+        logging.warning(f"UI components integration failed: {e}")
 
     return df
