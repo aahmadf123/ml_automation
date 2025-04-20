@@ -3,18 +3,22 @@
 homeowner_dag.py
 
 Home‑owner Loss‑History full pipeline DAG
-• Ingest → Preprocess → Drift‑Check → (Self‑Heal ⧸ Manual‑Override → Train)
+• Ingest → Preprocess → Data Quality → Drift‑Check → (Self‑Heal ⧸ Manual‑Override → Train)
 • Human‑in‑the‑Loop hooks for manual override
 • Metrics, Notifications, Archive
 • MLflow integration for experiment tracking
 • WebSocket events for real-time dashboard updates
 • Retraining triggers from dashboard
+• Data quality monitoring and alerts
+• Model explainability tracking
+• A/B testing for model promotion
 """
 
 import os
 import logging
 import time
 import json
+import pandas as pd
 
 from datetime import datetime, timedelta
 from airflow.decorators import dag, task
@@ -26,25 +30,35 @@ from airflow.models import Variable
 from tasks.ingestion import ingest_data_from_s3
 from tasks.preprocessing import preprocess_data
 from tasks.schema_validation import validate_schema, snapshot_schema
+from tasks.data_quality import DataQualityMonitor
 from tasks.drift import (
     generate_reference_means,
     detect_data_drift,
     self_healing as drift_self_heal
 )
 from tasks.monitoring import record_system_metrics, update_monitoring_with_ui_components
+from tasks.model_explainability import ModelExplainabilityTracker
+from tasks.ab_testing import ABTestingPipeline
 from tasks.training import train_and_compare_fn, manual_override
 from utils.slack import post as send_message
 from utils.storage import upload as upload_to_s3
+from dags.utils.logging_config import get_logger, setup_logging
+from dags.utils.config import Config
+from dags.utils.security import SecurityMiddleware, require_auth, validate_input
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-log = logging.getLogger(__name__)
+setup_logging()
+log = get_logger(__name__)
 
 # Constants
 LOCAL_PROCESSED_PATH = "/tmp/homeowner_processed.parquet"
 REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
-MODEL_IDS = ["model1", "model2", "model3", "model4", "model5"]
+MODEL_IDS = Config.MODEL_IDS  # Use model IDs from config
 
+# Initialize monitors
+data_quality_monitor = DataQualityMonitor()
+model_explainability_tracker = ModelExplainabilityTracker("model1")  # Will be updated per model
+ab_testing_pipeline = ABTestingPipeline("model1", test_duration_days=7)  # Will be updated per model
 
 def _default_args():
     return {
@@ -80,6 +94,26 @@ def homeowner_pipeline():
         return LOCAL_PROCESSED_PATH
     processed_path = _preprocess(raw_path)
 
+    # 2a Data Quality Check
+    @task()
+    def check_data_quality(path: str) -> str:
+        df = pd.read_parquet(path)
+        quality_report = data_quality_monitor.monitor_data_quality(df, is_baseline=True)
+        
+        if quality_report['issues']:
+            send_message(
+                channel="#alerts",
+                title="🔍 Data Quality Issues Detected",
+                details="\n".join([
+                    f"{issue['type']}: {len(issue.get('details', []))} issues found"
+                    for issue in quality_report['issues']
+                ]),
+                urgency="medium"
+            )
+        
+        return path
+    quality_checked_path = check_data_quality(processed_path)
+
     # 3️⃣ Drift‑check: existing reference?
     @task.branch()
     def _branch(path: str) -> str:
@@ -88,7 +122,7 @@ def homeowner_pipeline():
             flag = detect_data_drift(path, ref)
             return "healing_task" if flag == "self_healing" else "override_or_train"
         return "override_or_train"
-    branch = _branch(processed_path)
+    branch = _branch(quality_checked_path)
 
     # 3a Self‑healing path
     @task(task_id="healing_task")
@@ -181,7 +215,13 @@ def homeowner_pipeline():
         PythonOperator(
             task_id=f"train_compare_{m}",
             python_callable=train_and_compare_fn,
-            op_kwargs={"model_id": m, "processed_path": LOCAL_PROCESSED_PATH},
+            op_kwargs={
+                "model_id": m,
+                "processed_path": LOCAL_PROCESSED_PATH,
+                "data_quality_monitor": data_quality_monitor,
+                "model_explainability_tracker": ModelExplainabilityTracker(m),
+                "ab_testing_pipeline": ABTestingPipeline(m, test_duration_days=7)
+            },
         ).set_downstream(join_after_training)
     
     # Wire the training branch
@@ -190,7 +230,13 @@ def homeowner_pipeline():
         training_branch() >> PythonOperator(
             task_id=f"train_compare_{m}_direct",
             python_callable=train_and_compare_fn,
-            op_kwargs={"model_id": m, "processed_path": LOCAL_PROCESSED_PATH},
+            op_kwargs={
+                "model_id": m,
+                "processed_path": LOCAL_PROCESSED_PATH,
+                "data_quality_monitor": data_quality_monitor,
+                "model_explainability_tracker": ModelExplainabilityTracker(m),
+                "ab_testing_pipeline": ABTestingPipeline(m, test_duration_days=7)
+            },
         ).set_downstream(join_after_training)
 
     # wire drift → heal → override/train → training
@@ -200,44 +246,51 @@ def homeowner_pipeline():
     override_branch() >> start_training >> training_branch()
     override_branch() >> retrain_model() >> training_branch()
 
-    # 6️⃣ Metrics, Notify, Archive
+    # 6️⃣ Record metrics and notify
     @task()
     def record_metrics_task():
-        record_system_metrics(runtime=time.time())
+        record_system_metrics()
+        update_monitoring_with_ui_components()
 
     @task()
     def notify_complete():
         send_message(
             channel="#alerts",
             title="✅ Pipeline Complete",
-            details="Training & SHAP logging finished.",
+            details="All models trained and evaluated successfully.",
             urgency="low",
         )
 
+    # 7️⃣ Archive artifacts
     @task()
     def archive():
-        upload_to_s3("/home/airflow/logs/homeowner_dag.log", "logs/homeowner_dag.log")
-        upload_to_s3(LOCAL_PROCESSED_PATH, "archive/homeowner_processed.parquet")
-        for f in (LOCAL_PROCESSED_PATH, REFERENCE_MEANS_PATH):
-            try:
-                os.remove(f)
-            except OSError:
-                pass
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_path = f"archive/{timestamp}"
+        
+        # Archive processed data
+        upload_to_s3(LOCAL_PROCESSED_PATH, f"{archive_path}/processed.parquet")
+        
+        # Archive reference means if exists
+        if os.path.exists(REFERENCE_MEANS_PATH):
+            upload_to_s3(REFERENCE_MEANS_PATH, f"{archive_path}/reference_means.csv")
+        
+        # Archive data quality report
+        quality_summary = data_quality_monitor.get_quality_summary()
+        if quality_summary:
+            with open("/tmp/quality_summary.json", "w") as f:
+                json.dump(quality_summary, f)
+            upload_to_s3("/tmp/quality_summary.json", f"{archive_path}/quality_summary.json")
 
-    join_after_training >> record_metrics_task() >> notify_complete() >> archive()
-
-    # 7️⃣ Start WebSocket server for real-time updates
+    # 8️⃣ Start WebSocket server for real-time updates
     @task()
     def start_websocket_server():
         update_monitoring_with_ui_components()
-        send_message(
-            channel="#alerts",
-            title="🔄 WebSocket Server Started",
-            details="WebSocket server started for real-time dashboard updates",
-            urgency="low",
-        )
 
-    # Define dependencies for new tasks
+    # Set up task dependencies
+    join_after_training >> record_metrics_task() >> notify_complete() >> archive()
     join_after_training >> start_websocket_server()
 
+    return homeowner_pipeline()
+
+# Create DAG instance
 dag = homeowner_pipeline()

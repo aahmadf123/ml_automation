@@ -5,6 +5,7 @@ load_dotenv()
 
 import os
 from airflow.models import Variable
+from typing import Dict, Any
 
 # ─── S3 CONFIG ────────────────────────────────────────────────────────────────
 S3_BUCKET           = os.getenv("S3_BUCKET") or Variable.get("S3_BUCKET")
@@ -203,3 +204,115 @@ UI_COMPONENTS = {
         "audit_trail": True
     }
 }
+
+class Config:
+    """Centralized configuration management."""
+    
+    # S3 Configuration
+    S3_BUCKET = os.getenv("S3_BUCKET", Variable.get("S3_BUCKET", default_var="grange-seniordesign-bucket"))
+    S3_DATA_FOLDER = "raw-data"
+    S3_ARCHIVE_FOLDER = "archive"
+    S3_REFERENCE_KEY_PREFIX = "reference"
+    
+    # MLflow Configuration
+    MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", Variable.get("MLFLOW_TRACKING_URI", default_var="http://localhost:5000"))
+    MLFLOW_EXPERIMENT_NAME = "homeowner_loss_history"
+    
+    # Model Configuration
+    MODEL_IDS = ["model1", "model2", "model3", "model4", "model5"]
+    MODEL_METRICS = ["rmse", "mse", "mae", "r2"]
+    MODEL_THRESHOLDS = {
+        "rmse": float(Variable.get("RMSE_THRESHOLD", default_var="0.1")),
+        "drift": float(Variable.get("DRIFT_THRESHOLD", default_var="0.1")),
+        "correlation": float(Variable.get("CORRELATION_THRESHOLD", default_var="0.7"))
+    }
+    
+    # Data Quality Configuration
+    DATA_QUALITY_CONFIG = {
+        "missing_threshold": float(Variable.get("MISSING_THRESHOLD", default_var="0.05")),
+        "outlier_threshold": float(Variable.get("OUTLIER_THRESHOLD", default_var="3.0")),
+        "drift_threshold": float(Variable.get("DRIFT_THRESHOLD", default_var="0.1")),
+        "correlation_threshold": float(Variable.get("CORRELATION_THRESHOLD", default_var="0.7"))
+    }
+    
+    # WebSocket Configuration
+    WS_HOST = os.getenv("WS_HOST", "localhost")
+    WS_PORT = int(os.getenv("WS_PORT", "8765"))
+    WS_PING_INTERVAL = int(os.getenv("WS_PING_INTERVAL", "30"))
+    
+    # API Configuration
+    API_HOST = os.getenv("API_HOST", "localhost")
+    API_PORT = int(os.getenv("API_PORT", "3000"))
+    API_RATE_LIMIT = int(os.getenv("API_RATE_LIMIT", "100"))
+    
+    # Security Configuration
+    SECURITY_CONFIG = {
+        "jwt_secret": os.getenv("JWT_SECRET", Variable.get("JWT_SECRET", default_var="your-secret-key")),
+        "jwt_expiry": int(os.getenv("JWT_EXPIRY", "3600")),
+        "cors_origins": os.getenv("CORS_ORIGINS", "*").split(","),
+        "rate_limit_window": int(os.getenv("RATE_LIMIT_WINDOW", "3600")),
+        "rate_limit_max_requests": int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "1000"))
+    }
+    
+    # Slack Configuration
+    SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", Variable.get("SLACK_WEBHOOK_URL"))
+    SLACK_CHANNELS = {
+        "alerts": "#alerts",
+        "logs": "#agent_logs",
+        "metrics": "#metrics"
+    }
+    
+    # Airflow Configuration
+    AIRFLOW_CONFIG = {
+        "api_url": os.getenv("AIRFLOW_API_URL", Variable.get("AIRFLOW_API_URL", default_var="http://localhost:8080")),
+        "username": os.getenv("AIRFLOW_USERNAME", Variable.get("AIRFLOW_USERNAME", default_var="admin")),
+        "password": os.getenv("AIRFLOW_PASSWORD", Variable.get("AIRFLOW_PASSWORD", default_var="admin")),
+        "dag_folder": os.getenv("AIRFLOW_DAG_FOLDER", "/opt/airflow/dags")
+    }
+    
+    # Feature Configuration
+    FEATURE_CONFIG = {
+        "raw_prefixes": ["num_loss_3yr_", "num_loss_yrs45_", "num_loss_free_yrs_"],
+        "decay_prefixes": {
+            "model2": ["lhdwc_5y_1d_"],  # equal
+            "model3": ["lhdwc_5y_2d_"],  # linear decay
+            "model4": ["lhdwc_5y_3d_"],  # fast decay
+            "model5": ["lhdwc_5y_4d_"]   # slow decay
+        }
+    }
+    
+    @classmethod
+    def get_model_config(cls, model_id: str) -> Dict[str, Any]:
+        """Get configuration for a specific model."""
+        return {
+            "id": model_id,
+            "metrics": cls.MODEL_METRICS,
+            "thresholds": cls.MODEL_THRESHOLDS,
+            "features": cls.FEATURE_CONFIG["decay_prefixes"].get(model_id, [])
+        }
+    
+    @classmethod
+    def validate_config(cls) -> None:
+        """Validate configuration values."""
+        required_vars = [
+            "S3_BUCKET",
+            "MLFLOW_TRACKING_URI",
+            "SLACK_WEBHOOK_URL"
+        ]
+        
+        missing_vars = [var for var in required_vars if not getattr(cls, var)]
+        if missing_vars:
+            raise ValueError(f"Missing required configuration variables: {', '.join(missing_vars)}")
+        
+        # Validate numeric thresholds
+        for threshold_name, threshold_value in cls.MODEL_THRESHOLDS.items():
+            if not isinstance(threshold_value, (int, float)) or threshold_value <= 0:
+                raise ValueError(f"Invalid threshold value for {threshold_name}: {threshold_value}")
+        
+        # Validate data quality config
+        for key, value in cls.DATA_QUALITY_CONFIG.items():
+            if not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError(f"Invalid data quality config value for {key}: {value}")
+
+# Validate configuration on import
+Config.validate_config()
