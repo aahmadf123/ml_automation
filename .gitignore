@@ -1,0 +1,8 @@
+airflowenv/
+mlflowenv/
+logs/
+mlruns/
+*.pyc
+__pycache__/
+.DS_Store
+.env
