@@ -51,9 +51,9 @@ tenacity>=8.2.3
 
 # Monitoring and Logging
 prometheus-client>=0.17.0
-grafana-api-client>=2.1.0
 python-json-logger>=2.0.7
 structlog>=23.1.0
+grafana-api>=1.0.3
 
 # Testing
 pytest>=7.4.0
