@@ -158,13 +158,13 @@ export function SlackNotifications() {
   const getNotificationIcon = (type: string) => {
     switch (type) {
       case "success":
-        return <CheckCircle className="h-4 w-4 text-green-500" />
+        return <CheckCircle className="h-4 w-4 text-emerald-600" />
       case "warning":
-        return <AlertCircle className="h-4 w-4 text-yellow-500" />
+        return <AlertCircle className="h-4 w-4 text-amber-600" />
       case "error":
-        return <AlertCircle className="h-4 w-4 text-red-500" />
+        return <AlertCircle className="h-4 w-4 text-rose-600" />
       default:
-        return <Bell className="h-4 w-4 text-blue-500" />
+        return <Bell className="h-4 w-4 text-sky-600" />
     }
   }
 
@@ -172,15 +172,15 @@ export function SlackNotifications() {
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case "critical":
-        return "bg-red-500/20 text-red-500"
+        return "bg-rose-500/15 text-rose-600"
       case "high":
-        return "bg-orange-500/20 text-orange-500"
+        return "bg-orange-500/15 text-orange-600"
       case "medium":
-        return "bg-yellow-500/20 text-yellow-500"
+        return "bg-amber-500/15 text-amber-600"
       case "low":
-        return "bg-green-500/20 text-green-500"
+        return "bg-emerald-500/15 text-emerald-600"
       default:
-        return "bg-gray-500/20 text-gray-500"
+        return "bg-gray-500/15 text-gray-600"
     }
   }
 
@@ -188,13 +188,13 @@ export function SlackNotifications() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "sent":
-        return "bg-green-500/20 text-green-500"
+        return "bg-emerald-500/15 text-emerald-600"
       case "pending":
-        return "bg-yellow-500/20 text-yellow-500"
+        return "bg-amber-500/15 text-amber-600"
       case "failed":
-        return "bg-red-500/20 text-red-500"
+        return "bg-rose-500/15 text-rose-600"
       default:
-        return "bg-gray-500/20 text-gray-500"
+        return "bg-gray-500/15 text-gray-600"
     }
   }
 
@@ -213,9 +213,9 @@ export function SlackNotifications() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-gradient-to-b from-gray-50 to-gray-100 p-6 rounded-lg">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Slack Notifications</h2>
+        <h2 className="text-2xl font-bold text-gray-800">Slack Notifications</h2>
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
             <Switch 
@@ -223,42 +223,42 @@ export function SlackNotifications() {
               checked={notificationsEnabled} 
               onCheckedChange={setNotificationsEnabled} 
             />
-            <Label htmlFor="notifications-enabled">Enable Notifications</Label>
+            <Label htmlFor="notifications-enabled" className="text-gray-700">Enable Notifications</Label>
           </div>
-          <Button variant="outline" size="sm">
-            <Settings className="h-4 w-4 mr-2" />
+          <Button variant="outline" size="sm" className="border-gray-300 hover:bg-gray-100">
+            <Settings className="h-4 w-4 mr-2 text-gray-600" />
             Settings
           </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
+        <Card className="bg-white shadow-sm border border-gray-200">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Total Notifications</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-700">Total Notifications</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{notificationCounts.all}</div>
+            <div className="text-2xl font-bold text-gray-800">{notificationCounts.all}</div>
             <p className="text-xs text-gray-500">Last 24 hours</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-white shadow-sm border border-gray-200">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Critical Alerts</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-700">Critical Alerts</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-500">
+            <div className="text-2xl font-bold text-rose-600">
               {notifications.filter(n => n.priority === "critical").length}
             </div>
             <p className="text-xs text-gray-500">Requires immediate attention</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-white shadow-sm border border-gray-200">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Delivery Rate</CardTitle>
+            <CardTitle className="text-sm font-medium text-gray-700">Delivery Rate</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-bold text-gray-800">
               {Math.round((notifications.filter(n => n.status === "sent").length / notifications.length) * 100)}%
             </div>
             <p className="text-xs text-gray-500">Successfully delivered</p>
@@ -331,10 +331,10 @@ export function SlackNotifications() {
         </div>
       </div>
 
-      <Card>
+      <Card className="bg-white shadow-sm border border-gray-200">
         <CardHeader>
-          <CardTitle>Notification History</CardTitle>
-          <CardDescription>Recent Slack notifications sent from the ML pipeline</CardDescription>
+          <CardTitle className="text-gray-800">Notification History</CardTitle>
+          <CardDescription className="text-gray-500">Recent Slack notifications sent from the ML pipeline</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -345,15 +345,15 @@ export function SlackNotifications() {
               </div>
             ) : (
               filteredNotifications.map(notification => (
-                <div key={notification.id} className="border rounded-lg p-4 space-y-2">
+                <div key={notification.id} className="border border-gray-200 rounded-lg p-4 space-y-2 bg-white shadow-sm">
                   <div className="flex items-start justify-between">
                     <div className="flex items-start space-x-3">
                       <div className="mt-1">
                         {getNotificationIcon(notification.type)}
                       </div>
                       <div>
-                        <h3 className="font-medium">{notification.title}</h3>
-                        <p className="text-sm text-gray-500">{notification.message}</p>
+                        <h3 className="font-medium text-gray-800">{notification.title}</h3>
+                        <p className="text-sm text-gray-600">{notification.message}</p>
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
@@ -383,7 +383,7 @@ export function SlackNotifications() {
                   {notification.status === "pending" && (
                     <div className="mt-2">
                       <div className="w-full bg-gray-200 rounded-full h-1.5">
-                        <div className="bg-blue-500 h-1.5 rounded-full w-1/3 animate-pulse"></div>
+                        <div className="bg-sky-500 h-1.5 rounded-full w-1/3 animate-pulse"></div>
                       </div>
                     </div>
                   )}
@@ -394,45 +394,45 @@ export function SlackNotifications() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="bg-white shadow-sm border border-gray-200">
         <CardHeader>
-          <CardTitle>Notification Settings</CardTitle>
-          <CardDescription>Configure which events trigger Slack notifications</CardDescription>
+          <CardTitle className="text-gray-800">Notification Settings</CardTitle>
+          <CardDescription className="text-gray-500">Configure which events trigger Slack notifications</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium">Data Drift Alerts</h3>
-                <p className="text-sm text-gray-500">Send notifications when data drift is detected</p>
+                <h3 className="font-medium text-gray-800">Data Drift Alerts</h3>
+                <p className="text-sm text-gray-600">Send notifications when data drift is detected</p>
               </div>
               <Switch defaultChecked />
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium">Model Performance Alerts</h3>
-                <p className="text-sm text-gray-500">Send notifications when model metrics degrade</p>
+                <h3 className="font-medium text-gray-800">Model Performance Alerts</h3>
+                <p className="text-sm text-gray-600">Send notifications when model metrics degrade</p>
               </div>
               <Switch defaultChecked />
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium">Pipeline Status Updates</h3>
-                <p className="text-sm text-gray-500">Send notifications for pipeline stage transitions</p>
+                <h3 className="font-medium text-gray-800">Pipeline Status Updates</h3>
+                <p className="text-sm text-gray-600">Send notifications for pipeline stage transitions</p>
               </div>
               <Switch defaultChecked />
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium">System Resource Alerts</h3>
-                <p className="text-sm text-gray-500">Send notifications for high resource usage</p>
+                <h3 className="font-medium text-gray-800">System Resource Alerts</h3>
+                <p className="text-sm text-gray-600">Send notifications for high resource usage</p>
               </div>
               <Switch defaultChecked />
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium">Training Completion</h3>
-                <p className="text-sm text-gray-500">Send notifications when model training completes</p>
+                <h3 className="font-medium text-gray-800">Training Completion</h3>
+                <p className="text-sm text-gray-600">Send notifications when model training completes</p>
               </div>
               <Switch defaultChecked />
             </div>

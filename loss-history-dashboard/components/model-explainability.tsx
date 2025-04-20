@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircle, BarChart3, LineChart, PieChart } from "lucide-react"
+import { AlertCircle, BarChart3, LineChart, PieChart, CheckCircle, AlertTriangle, Activity, Clock } from "lucide-react"
 
 // Define types for our explainability data
 interface ShapValue {
@@ -127,240 +127,215 @@ export function ModelExplainability() {
     accurate: predictionComparisons.filter(pred => Math.abs(pred.difference) < averageError * 0.1).length
   }
 
+  // Helper function to get status badge color
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "healthy":
+        return "bg-emerald-500/15 text-emerald-600"
+      case "warning":
+        return "bg-amber-500/15 text-amber-600"
+      case "critical":
+        return "bg-rose-500/15 text-rose-600"
+      case "running":
+        return "bg-sky-500/15 text-sky-600"
+      case "completed":
+        return "bg-emerald-500/15 text-emerald-600"
+      case "failed":
+        return "bg-rose-500/15 text-rose-600"
+      case "idle":
+        return "bg-gray-500/15 text-gray-600"
+      default:
+        return "bg-gray-500/15 text-gray-600"
+    }
+  }
+
+  // Helper function to get status icon
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "healthy":
+      case "completed":
+        return <CheckCircle className="h-4 w-4 text-emerald-600" />
+      case "warning":
+        return <AlertCircle className="h-4 w-4 text-amber-600" />
+      case "critical":
+      case "failed":
+        return <AlertTriangle className="h-4 w-4 text-rose-600" />
+      case "running":
+        return <Activity className="h-4 w-4 text-sky-600" />
+      case "idle":
+        return <Clock className="h-4 w-4 text-gray-600" />
+      default:
+        return <Clock className="h-4 w-4 text-gray-600" />
+    }
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-gradient-to-b from-gray-50 to-gray-100 p-6 rounded-lg">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Model Explainability</h2>
-        <div className="flex items-center space-x-2">
-          <span className="text-sm text-gray-500">Model:</span>
-          <Select value={selectedModel} onValueChange={setSelectedModel}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Select model" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="model1">Gradient Boosting</SelectItem>
-              <SelectItem value="model2">Random Forest</SelectItem>
-              <SelectItem value="model3">XGBoost</SelectItem>
-              <SelectItem value="model4">Neural Network</SelectItem>
-              <SelectItem value="model5">LightGBM</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <h2 className="text-2xl font-bold text-gray-800">Model Explainability</h2>
+        <Select value={selectedModel} onValueChange={setSelectedModel}>
+          <SelectTrigger className="w-[200px] bg-white border-gray-200">
+            <SelectValue placeholder="Select model" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="gradient-boosting">Gradient Boosting</SelectItem>
+            <SelectItem value="random-forest">Random Forest</SelectItem>
+            <SelectItem value="xgboost">XGBoost</SelectItem>
+            <SelectItem value="lightgbm">LightGBM</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid grid-cols-3 mb-4">
-          <TabsTrigger value="shap">SHAP Values</TabsTrigger>
-          <TabsTrigger value="predictions">Actual vs. Predicted</TabsTrigger>
-          <TabsTrigger value="feature-importance">Feature Importance</TabsTrigger>
+        <TabsList className="grid grid-cols-3 mb-4 bg-white border border-gray-200">
+          <TabsTrigger value="shap" className="text-gray-700 data-[state=active]:text-gray-900">SHAP Values</TabsTrigger>
+          <TabsTrigger value="predictions" className="text-gray-700 data-[state=active]:text-gray-900">Predictions</TabsTrigger>
+          <TabsTrigger value="features" className="text-gray-700 data-[state=active]:text-gray-900">Feature Importance</TabsTrigger>
         </TabsList>
 
         <TabsContent value="shap" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>SHAP Values</CardTitle>
-              <CardDescription>Feature impact on model predictions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {shapValues.map((item, index) => (
-                  <div key={item.feature} className="space-y-1">
-                    <div className="flex justify-between">
-                      <span className="font-medium">{item.feature}</span>
-                      <span className="text-sm text-gray-500">Impact: {item.impact.toFixed(4)}</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2.5">
-                      <div 
-                        className={`h-2.5 rounded-full ${
-                          item.impact > 0.1 ? "bg-blue-500" : 
-                          item.impact > 0.05 ? "bg-green-500" : "bg-gray-500"
-                        }`} 
-                        style={{ width: `${item.impact * 100}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>SHAP Summary</CardTitle>
-              <CardDescription>Overall feature importance based on SHAP values</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-64 flex items-center justify-center">
-                <div className="text-center">
-                  <BarChart3 className="h-12 w-12 mx-auto text-gray-400" />
-                  <p className="mt-2 text-sm text-gray-500">SHAP summary visualization would appear here</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="predictions" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="bg-white shadow-sm border border-gray-200">
               <CardHeader>
-                <CardTitle>Average Error</CardTitle>
-                <CardDescription>Mean absolute difference</CardDescription>
+                <CardTitle className="text-gray-800">SHAP Values</CardTitle>
+                <CardDescription className="text-gray-500">Feature impact on predictions</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">${averageError.toFixed(2)}</div>
-                <div className="text-sm text-gray-500 mt-1">
-                  {averageError < 50 ? "Excellent accuracy" : averageError < 100 ? "Good accuracy" : "Needs improvement"}
+                <div className="space-y-4">
+                  {shapValues.map((value, index) => (
+                    <div key={index} className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-700">{value.feature}</span>
+                        <span className={`font-medium ${
+                          value.impact > 0 ? "text-emerald-600" : "text-rose-600"
+                        }`}>
+                          {value.impact > 0 ? "+" : ""}{value.impact.toFixed(4)}
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2.5">
+                        <div 
+                          className={`h-2.5 rounded-full ${
+                            value.impact > 0 ? "bg-emerald-500" : "bg-rose-500"
+                          }`} 
+                          style={{ width: `${Math.abs(value.impact) * 100}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="bg-white shadow-sm border border-gray-200">
               <CardHeader>
-                <CardTitle>Error Distribution</CardTitle>
-                <CardDescription>Prediction accuracy breakdown</CardDescription>
+                <CardTitle className="text-gray-800">Feature Values</CardTitle>
+                <CardDescription className="text-gray-500">Current feature values</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span>Underpredicted</span>
-                    <Badge variant="outline" className="bg-red-500/10 text-red-500">
-                      {errorDistribution.underpredicted}
-                    </Badge>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Overpredicted</span>
-                    <Badge variant="outline" className="bg-blue-500/10 text-blue-500">
-                      {errorDistribution.overpredicted}
-                    </Badge>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Accurate</span>
-                    <Badge variant="outline" className="bg-green-500/10 text-green-500">
-                      {errorDistribution.accurate}
-                    </Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Prediction Trend</CardTitle>
-                <CardDescription>Recent prediction accuracy</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-32 flex items-center justify-center">
-                  <div className="text-center">
-                    <LineChart className="h-12 w-12 mx-auto text-gray-400" />
-                    <p className="mt-2 text-sm text-gray-500">Prediction trend visualization would appear here</p>
-                  </div>
+                <div className="space-y-4">
+                  {shapValues.map((value, index) => (
+                    <div key={index} className="flex justify-between items-center">
+                      <span className="text-gray-700">{value.feature}</span>
+                      <span className="text-gray-800">{value.value.toFixed(4)}</span>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
           </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Predictions</CardTitle>
-              <CardDescription>Actual vs. predicted values with feature contributions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2">Timestamp</th>
-                      <th className="text-right py-2">Actual</th>
-                      <th className="text-right py-2">Predicted</th>
-                      <th className="text-right py-2">Difference</th>
-                      <th className="text-right py-2">Accuracy</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {predictionComparisons.map((pred, index) => (
-                      <tr key={index} className="border-b">
-                        <td className="py-2">{pred.timestamp.toLocaleTimeString()}</td>
-                        <td className="text-right">${pred.actual.toFixed(2)}</td>
-                        <td className="text-right">${pred.predicted.toFixed(2)}</td>
-                        <td className={`text-right ${pred.difference > 0 ? "text-red-500" : "text-green-500"}`}>
-                          {pred.difference > 0 ? "+" : ""}{pred.difference.toFixed(2)}
-                        </td>
-                        <td className="text-right">
-                          <Badge 
-                            variant="outline" 
-                            className={
-                              Math.abs(pred.difference) < averageError * 0.1 ? "bg-green-500/10 text-green-500" :
-                              Math.abs(pred.difference) < averageError * 0.5 ? "bg-yellow-500/10 text-yellow-500" :
-                              "bg-red-500/10 text-red-500"
-                            }
-                          >
-                            {Math.abs(pred.difference) < averageError * 0.1 ? "Excellent" :
-                             Math.abs(pred.difference) < averageError * 0.5 ? "Good" : "Poor"}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
-        <TabsContent value="feature-importance" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Feature Importance</CardTitle>
-              <CardDescription>Relative importance of features in model predictions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-64 flex items-center justify-center">
-                <div className="text-center">
-                  <PieChart className="h-12 w-12 mx-auto text-gray-400" />
-                  <p className="mt-2 text-sm text-gray-500">Feature importance visualization would appear here</p>
+        <TabsContent value="predictions" className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="bg-white shadow-sm border border-gray-200">
+              <CardHeader>
+                <CardTitle className="text-gray-800">Prediction Error</CardTitle>
+                <CardDescription className="text-gray-500">Average error: {averageError.toFixed(4)}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-gray-700">Error Distribution</span>
+                      <span className="text-gray-800">{errorDistribution.toFixed(2)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                      <div 
+                        className={`h-2.5 rounded-full ${
+                          errorDistribution > 80 ? "bg-rose-500" : 
+                          errorDistribution > 60 ? "bg-amber-500" : "bg-emerald-500"
+                        }`} 
+                        style={{ width: `${errorDistribution}%` }}
+                      ></div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <Card>
+            <Card className="bg-white shadow-sm border border-gray-200">
+              <CardHeader>
+                <CardTitle className="text-gray-800">Recent Predictions</CardTitle>
+                <CardDescription className="text-gray-500">Last 5 predictions</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {predictionComparisons.slice(0, 5).map((prediction, index) => (
+                    <div key={index} className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-700">Prediction {index + 1}</span>
+                        <span className={`font-medium ${
+                          Math.abs(prediction.difference) < 0.1 ? "text-emerald-600" : 
+                          Math.abs(prediction.difference) < 0.3 ? "text-amber-600" : "text-rose-600"
+                        }`}>
+                          {prediction.difference > 0 ? "+" : ""}{prediction.difference.toFixed(4)}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <span className="text-gray-500">Actual: </span>
+                          <span className="text-gray-800">{prediction.actual.toFixed(4)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Predicted: </span>
+                          <span className="text-gray-800">{prediction.predicted.toFixed(4)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="features" className="space-y-4">
+          <Card className="bg-white shadow-sm border border-gray-200">
             <CardHeader>
-              <CardTitle>Feature Correlations</CardTitle>
-              <CardDescription>Correlation between features and predictions</CardDescription>
+              <CardTitle className="text-gray-800">Feature Importance</CardTitle>
+              <CardDescription className="text-gray-500">Relative importance of each feature</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2">Feature</th>
-                      <th className="text-right py-2">Correlation</th>
-                      <th className="text-right py-2">Impact</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {shapValues.map((item, index) => (
-                      <tr key={item.feature} className="border-b">
-                        <td className="py-2">{item.feature}</td>
-                        <td className="text-right">
-                          <Badge 
-                            variant="outline" 
-                            className={
-                              item.impact > 0.1 ? "bg-blue-500/10 text-blue-500" :
-                              item.impact > 0.05 ? "bg-green-500/10 text-green-500" :
-                              "bg-gray-500/10 text-gray-500"
-                            }
-                          >
-                            {item.impact > 0.1 ? "Strong" :
-                             item.impact > 0.05 ? "Moderate" : "Weak"}
-                          </Badge>
-                        </td>
-                        <td className="text-right">{item.impact.toFixed(4)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-4">
+                {Object.entries(featureImportance)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([feature, importance], index) => (
+                    <div key={index} className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-700">{feature}</span>
+                        <span className="text-gray-800">{(importance * 100).toFixed(2)}%</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2.5">
+                        <div 
+                          className={`h-2.5 rounded-full ${
+                            importance > 0.8 ? "bg-violet-500" : 
+                            importance > 0.5 ? "bg-indigo-500" : "bg-sky-500"
+                          }`} 
+                          style={{ width: `${importance * 100}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  ))}
               </div>
             </CardContent>
           </Card>

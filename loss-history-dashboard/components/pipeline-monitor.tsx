@@ -192,21 +192,21 @@ export function PipelineMonitor() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "healthy":
-        return "bg-green-500/20 text-green-500"
+        return "bg-emerald-500/15 text-emerald-600"
       case "warning":
-        return "bg-yellow-500/20 text-yellow-500"
+        return "bg-amber-500/15 text-amber-600"
       case "critical":
-        return "bg-red-500/20 text-red-500"
+        return "bg-rose-500/15 text-rose-600"
       case "running":
-        return "bg-blue-500/20 text-blue-500"
+        return "bg-sky-500/15 text-sky-600"
       case "completed":
-        return "bg-green-500/20 text-green-500"
+        return "bg-emerald-500/15 text-emerald-600"
       case "failed":
-        return "bg-red-500/20 text-red-500"
+        return "bg-rose-500/15 text-rose-600"
       case "idle":
-        return "bg-gray-500/20 text-gray-500"
+        return "bg-gray-500/15 text-gray-600"
       default:
-        return "bg-gray-500/20 text-gray-500"
+        return "bg-gray-500/15 text-gray-600"
     }
   }
 
@@ -215,36 +215,36 @@ export function PipelineMonitor() {
     switch (status) {
       case "healthy":
       case "completed":
-        return <CheckCircle className="h-4 w-4" />
+        return <CheckCircle className="h-4 w-4 text-emerald-600" />
       case "warning":
-        return <AlertCircle className="h-4 w-4" />
+        return <AlertCircle className="h-4 w-4 text-amber-600" />
       case "critical":
       case "failed":
-        return <AlertTriangle className="h-4 w-4" />
+        return <AlertTriangle className="h-4 w-4 text-rose-600" />
       case "running":
-        return <Activity className="h-4 w-4" />
+        return <Activity className="h-4 w-4 text-sky-600" />
       case "idle":
-        return <Clock className="h-4 w-4" />
+        return <Clock className="h-4 w-4 text-gray-600" />
       default:
-        return <Clock className="h-4 w-4" />
+        return <Clock className="h-4 w-4 text-gray-600" />
     }
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-gradient-to-b from-gray-50 to-gray-100 p-6 rounded-lg">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Loss History Pipeline Monitor</h2>
-        <Badge variant="outline" className="px-3 py-1">
+        <h2 className="text-2xl font-bold text-gray-800">Loss History Pipeline Monitor</h2>
+        <Badge variant="outline" className="px-3 py-1 border-gray-300 text-gray-700">
           Real-time monitoring
         </Badge>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid grid-cols-4 mb-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="models">Model Metrics</TabsTrigger>
-          <TabsTrigger value="drift">Data Drift</TabsTrigger>
-          <TabsTrigger value="system">System Telemetry</TabsTrigger>
+        <TabsList className="grid grid-cols-4 mb-4 bg-white border border-gray-200">
+          <TabsTrigger value="overview" className="text-gray-700 data-[state=active]:text-gray-900">Overview</TabsTrigger>
+          <TabsTrigger value="models" className="text-gray-700 data-[state=active]:text-gray-900">Model Metrics</TabsTrigger>
+          <TabsTrigger value="drift" className="text-gray-700 data-[state=active]:text-gray-900">Data Drift</TabsTrigger>
+          <TabsTrigger value="system" className="text-gray-700 data-[state=active]:text-gray-900">System Telemetry</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -253,7 +253,7 @@ export function PipelineMonitor() {
               title="Pipeline Status"
               value={Object.values(pipelineStatus).filter(status => status === "running").length}
               unit=" active"
-              gradient="from-blue-500/20 via-indigo-500/20 to-purple-500/20"
+              gradient="from-sky-500/20 via-indigo-500/20 to-violet-500/20"
               glowColor="rgba(99, 102, 241, 0.5)"
               badge={{
                 text: pipelineStatus.training === "running" ? "Training" : "Idle",
@@ -264,7 +264,7 @@ export function PipelineMonitor() {
               title="Active Alerts"
               value={dataDriftAlerts.filter(alert => alert.status === "active").length}
               unit=" alerts"
-              gradient="from-amber-500/20 via-orange-500/20 to-red-500/20"
+              gradient="from-amber-500/20 via-orange-500/20 to-rose-500/20"
               glowColor="rgba(245, 158, 11, 0.5)"
               badge={{
                 text: dataDriftAlerts.some(alert => alert.severity === "critical") ? "Critical" : "Warning",
@@ -295,10 +295,10 @@ export function PipelineMonitor() {
             />
           </div>
 
-          <Card>
+          <Card className="bg-white shadow-sm border border-gray-200">
             <CardHeader>
-              <CardTitle>Pipeline Data Flow</CardTitle>
-              <CardDescription>Real-time visualization of data movement through the pipeline</CardDescription>
+              <CardTitle className="text-gray-800">Pipeline Data Flow</CardTitle>
+              <CardDescription className="text-gray-500">Real-time visualization of data movement through the pipeline</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="h-80">
@@ -308,17 +308,17 @@ export function PipelineMonitor() {
           </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card>
+            <Card className="bg-white shadow-sm border border-gray-200">
               <CardHeader>
-                <CardTitle>Recent Alerts</CardTitle>
-                <CardDescription>Latest data drift and system alerts</CardDescription>
+                <CardTitle className="text-gray-800">Recent Alerts</CardTitle>
+                <CardDescription className="text-gray-500">Latest data drift and system alerts</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
                 {dataDriftAlerts.slice(0, 3).map(alert => (
-                  <Alert key={alert.id} variant={alert.severity === "critical" ? "destructive" : "default"}>
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>{alert.feature} Drift Detected</AlertTitle>
-                    <AlertDescription>
+                  <Alert key={alert.id} variant={alert.severity === "critical" ? "destructive" : "default"} className="border border-gray-200">
+                    <AlertCircle className="h-4 w-4 text-amber-600" />
+                    <AlertTitle className="text-gray-800">{alert.feature} Drift Detected</AlertTitle>
+                    <AlertDescription className="text-gray-600">
                       Current value: {alert.currentValue.toFixed(2)} (threshold: {alert.threshold.toFixed(2)})
                     </AlertDescription>
                   </Alert>
@@ -326,18 +326,18 @@ export function PipelineMonitor() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="bg-white shadow-sm border border-gray-200">
               <CardHeader>
-                <CardTitle>Pipeline Stages</CardTitle>
-                <CardDescription>Current status of each pipeline stage</CardDescription>
+                <CardTitle className="text-gray-800">Pipeline Stages</CardTitle>
+                <CardDescription className="text-gray-500">Current status of each pipeline stage</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
                 {Object.entries(pipelineStatus)
                   .filter(([key]) => key !== "lastUpdated")
                   .map(([stage, status]) => (
-                    <div key={stage} className="flex items-center justify-between py-2 border-b last:border-0">
+                    <div key={stage} className="flex items-center justify-between py-2 border-b border-gray-200 last:border-0">
                       <div className="flex items-center space-x-2">
-                        <span className="capitalize">{stage}</span>
+                        <span className="capitalize text-gray-700">{stage}</span>
                         <Badge className={getStatusColor(status)}>
                           {getStatusIcon(status)}
                           <span className="ml-1">{status}</span>
@@ -351,33 +351,33 @@ export function PipelineMonitor() {
         </TabsContent>
 
         <TabsContent value="models" className="space-y-4">
-          <Card>
+          <Card className="bg-white shadow-sm border border-gray-200">
             <CardHeader>
-              <CardTitle>Model Performance Metrics</CardTitle>
-              <CardDescription>Real-time metrics for all deployed models</CardDescription>
+              <CardTitle className="text-gray-800">Model Performance Metrics</CardTitle>
+              <CardDescription className="text-gray-500">Real-time metrics for all deployed models</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2">Model</th>
-                      <th className="text-right py-2">RMSE</th>
-                      <th className="text-right py-2">MSE</th>
-                      <th className="text-right py-2">MAE</th>
-                      <th className="text-right py-2">R²</th>
-                      <th className="text-right py-2">Status</th>
-                      <th className="text-right py-2">Last Updated</th>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-2 text-gray-700">Model</th>
+                      <th className="text-right py-2 text-gray-700">RMSE</th>
+                      <th className="text-right py-2 text-gray-700">MSE</th>
+                      <th className="text-right py-2 text-gray-700">MAE</th>
+                      <th className="text-right py-2 text-gray-700">R²</th>
+                      <th className="text-right py-2 text-gray-700">Status</th>
+                      <th className="text-right py-2 text-gray-700">Last Updated</th>
                     </tr>
                   </thead>
                   <tbody>
                     {modelMetrics.map(model => (
-                      <tr key={model.modelId} className="border-b">
-                        <td className="py-2">{model.modelName}</td>
-                        <td className="text-right">{model.rmse.toFixed(4)}</td>
-                        <td className="text-right">{model.mse.toFixed(4)}</td>
-                        <td className="text-right">{model.mae.toFixed(4)}</td>
-                        <td className="text-right">{model.r2.toFixed(4)}</td>
+                      <tr key={model.modelId} className="border-b border-gray-200">
+                        <td className="py-2 text-gray-800">{model.modelName}</td>
+                        <td className="text-right text-gray-800">{model.rmse.toFixed(4)}</td>
+                        <td className="text-right text-gray-800">{model.mse.toFixed(4)}</td>
+                        <td className="text-right text-gray-800">{model.mae.toFixed(4)}</td>
+                        <td className="text-right text-gray-800">{model.r2.toFixed(4)}</td>
                         <td className="text-right">
                           <Badge className={getStatusColor(model.status)}>
                             {getStatusIcon(model.status)}
@@ -397,30 +397,30 @@ export function PipelineMonitor() {
         </TabsContent>
 
         <TabsContent value="drift" className="space-y-4">
-          <Card>
+          <Card className="bg-white shadow-sm border border-gray-200">
             <CardHeader>
-              <CardTitle>Data Drift Alerts</CardTitle>
-              <CardDescription>Features with detected distribution shifts</CardDescription>
+              <CardTitle className="text-gray-800">Data Drift Alerts</CardTitle>
+              <CardDescription className="text-gray-500">Features with detected distribution shifts</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b">
-                      <th className="text-left py-2">Feature</th>
-                      <th className="text-right py-2">Current Value</th>
-                      <th className="text-right py-2">Threshold</th>
-                      <th className="text-right py-2">Severity</th>
-                      <th className="text-right py-2">Status</th>
-                      <th className="text-right py-2">Detected At</th>
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left py-2 text-gray-700">Feature</th>
+                      <th className="text-right py-2 text-gray-700">Current Value</th>
+                      <th className="text-right py-2 text-gray-700">Threshold</th>
+                      <th className="text-right py-2 text-gray-700">Severity</th>
+                      <th className="text-right py-2 text-gray-700">Status</th>
+                      <th className="text-right py-2 text-gray-700">Detected At</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dataDriftAlerts.map(alert => (
-                      <tr key={alert.id} className="border-b">
-                        <td className="py-2">{alert.feature}</td>
-                        <td className="text-right">{alert.currentValue.toFixed(4)}</td>
-                        <td className="text-right">{alert.threshold.toFixed(4)}</td>
+                      <tr key={alert.id} className="border-b border-gray-200">
+                        <td className="py-2 text-gray-800">{alert.feature}</td>
+                        <td className="text-right text-gray-800">{alert.currentValue.toFixed(4)}</td>
+                        <td className="text-right text-gray-800">{alert.threshold.toFixed(4)}</td>
                         <td className="text-right">
                           <Badge className={getStatusColor(alert.severity)}>
                             {getStatusIcon(alert.severity)}
@@ -428,7 +428,7 @@ export function PipelineMonitor() {
                           </Badge>
                         </td>
                         <td className="text-right">
-                          <Badge className={alert.status === "active" ? "bg-blue-500/20 text-blue-500" : "bg-gray-500/20 text-gray-500"}>
+                          <Badge className={alert.status === "active" ? "bg-sky-500/15 text-sky-600" : "bg-gray-500/15 text-gray-600"}>
                             {alert.status}
                           </Badge>
                         </td>
@@ -450,14 +450,14 @@ export function PipelineMonitor() {
               title="CPU Usage"
               value={systemTelemetry.cpuUsage}
               unit="%"
-              gradient="from-blue-500/20 via-indigo-500/20 to-purple-500/20"
+              gradient="from-sky-500/20 via-indigo-500/20 to-violet-500/20"
               glowColor="rgba(99, 102, 241, 0.5)"
             />
             <HolographicCard
               title="Memory Usage"
               value={systemTelemetry.memoryUsage}
               unit="%"
-              gradient="from-amber-500/20 via-orange-500/20 to-red-500/20"
+              gradient="from-amber-500/20 via-orange-500/20 to-rose-500/20"
               glowColor="rgba(245, 158, 11, 0.5)"
             />
             <HolographicCard
@@ -483,23 +483,23 @@ export function PipelineMonitor() {
             />
           </div>
 
-          <Card>
+          <Card className="bg-white shadow-sm border border-gray-200">
             <CardHeader>
-              <CardTitle>System Health</CardTitle>
-              <CardDescription>Last updated: {systemTelemetry.timestamp.toLocaleTimeString()}</CardDescription>
+              <CardTitle className="text-gray-800">System Health</CardTitle>
+              <CardDescription className="text-gray-500">Last updated: {systemTelemetry.timestamp.toLocaleTimeString()}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <span>CPU Usage</span>
-                    <span>{systemTelemetry.cpuUsage}%</span>
+                    <span className="text-gray-700">CPU Usage</span>
+                    <span className="text-gray-800">{systemTelemetry.cpuUsage}%</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2.5">
                     <div 
                       className={`h-2.5 rounded-full ${
-                        systemTelemetry.cpuUsage > 80 ? "bg-red-500" : 
-                        systemTelemetry.cpuUsage > 60 ? "bg-yellow-500" : "bg-green-500"
+                        systemTelemetry.cpuUsage > 80 ? "bg-rose-500" : 
+                        systemTelemetry.cpuUsage > 60 ? "bg-amber-500" : "bg-emerald-500"
                       }`} 
                       style={{ width: `${systemTelemetry.cpuUsage}%` }}
                     ></div>
@@ -508,14 +508,14 @@ export function PipelineMonitor() {
                 
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <span>Memory Usage</span>
-                    <span>{systemTelemetry.memoryUsage}%</span>
+                    <span className="text-gray-700">Memory Usage</span>
+                    <span className="text-gray-800">{systemTelemetry.memoryUsage}%</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2.5">
                     <div 
                       className={`h-2.5 rounded-full ${
-                        systemTelemetry.memoryUsage > 80 ? "bg-red-500" : 
-                        systemTelemetry.memoryUsage > 60 ? "bg-yellow-500" : "bg-green-500"
+                        systemTelemetry.memoryUsage > 80 ? "bg-rose-500" : 
+                        systemTelemetry.memoryUsage > 60 ? "bg-amber-500" : "bg-emerald-500"
                       }`} 
                       style={{ width: `${systemTelemetry.memoryUsage}%` }}
                     ></div>
@@ -525,14 +525,14 @@ export function PipelineMonitor() {
                 {systemTelemetry.gpuUsage !== undefined && (
                   <div className="space-y-2">
                     <div className="flex justify-between">
-                      <span>GPU Usage</span>
-                      <span>{systemTelemetry.gpuUsage}%</span>
+                      <span className="text-gray-700">GPU Usage</span>
+                      <span className="text-gray-800">{systemTelemetry.gpuUsage}%</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2.5">
                       <div 
                         className={`h-2.5 rounded-full ${
-                          systemTelemetry.gpuUsage > 80 ? "bg-red-500" : 
-                          systemTelemetry.gpuUsage > 60 ? "bg-yellow-500" : "bg-green-500"
+                          systemTelemetry.gpuUsage > 80 ? "bg-rose-500" : 
+                          systemTelemetry.gpuUsage > 60 ? "bg-amber-500" : "bg-emerald-500"
                         }`} 
                         style={{ width: `${systemTelemetry.gpuUsage}%` }}
                       ></div>
