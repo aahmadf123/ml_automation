@@ -1,145 +1,146 @@
-# ML Automation & Loss‑History Pipeline
+# ML Automation Pipeline
 
-A unified MLOps project that powers a daily homeowner loss‑history pipeline with:
+A comprehensive machine learning automation pipeline for homeowner loss history prediction, featuring real-time monitoring, data quality checks, model explainability, and A/B testing.
 
-- **Data ingestion & preprocessing** via Apache Airflow on EC2  
-- **Drift monitoring & self‑healing** with versioned reference means  
-- **Automated hyperparameter tuning & training** using HyperOpt + XGBoost  
-- **Model tracking & promotion** in MLflow (with metrics, SHAP + Actual‑vs‑Pred plots)  
-- **Real‑time dashboard** (Next.js + WebSockets) for system and model observability  
-- **Notifications & alerts** via Slack integration  
-- **Persistent storage** of data, artifacts, and models on S3
+## Overview
 
----
+This project implements a production-ready ML pipeline with the following key features:
 
-## 🚀 Features
+- **Data Ingestion & Preprocessing**: Automated data ingestion from S3, preprocessing, and schema validation
+- **Data Quality Monitoring**: Continuous monitoring of data quality with anomaly detection
+- **Model Explainability**: SHAP values and feature importance tracking
+- **A/B Testing**: Robust A/B testing framework for model promotion
+- **Real-time Monitoring**: WebSocket-based real-time dashboard updates
+- **Automated Retraining**: Drift detection and automated model retraining
+- **Human-in-the-Loop**: Manual override capabilities for critical decisions
 
-1. **End‑to‑end pipeline**  
-   - Ingest raw CSV from S3 → preprocess (missing data, outliers, encoding) → Parquet  
-   - Validate schema with Pandera → version & snapshot on S3
-2. **Drift detection & self‑healing**  
-   - Compute & upload timestamped reference means  
-   - Compare new data → branch to self‑heal or train
-3. **Automated training & tuning**  
-   - HyperOpt search for best XGBoost hyperparameters  
-   - Fallback from TimeSeriesSplit → train_test_split  
-   - Log RMSE, MSE, MAE, R² to MLflow  
-   - Generate & upload SHAP summary & Actual vs Predicted plots  
-   - Auto‑promote to "Production" in MLflow Registry
-4. **Dashboard & API**  
-   - Next.js frontend served on Vercel or EC2  
-   - WebSocket updates for live metrics & drift alerts
-5. **Alerts & notifications**  
-   - Slack webhooks for drift, profiling, training results
-6. **Version control & collaboration**  
-   - All DAGs, scripts, and dashboard code in a single GitHub repo  
-   - Environment variables isolated in `.env`
+## Architecture
 
----
+The system consists of several interconnected components:
 
-## 🛠️ Getting Started
+1. **Airflow DAGs**: Orchestrate the entire ML pipeline
+2. **Data Quality Monitor**: Tracks data quality metrics and detects anomalies
+3. **Model Explainability Tracker**: Monitors model interpretability
+4. **A/B Testing Pipeline**: Manages model comparison and promotion
+5. **WebSocket Server**: Provides real-time updates to the dashboard
+6. **MLflow Integration**: Tracks experiments and model metrics
+
+## Setup
 
 ### Prerequisites
 
-- AWS account with S3 bucket & IAM credentials  
-- EC2 instance (Ubuntu) running Airflow & MLflow  
-- Node.js (for dashboard) or Vercel account
+- Python 3.12+
+- Apache Airflow 2.7.1+
+- PostgreSQL
+- Redis
+- MLflow
 
-### Setup
+### Installation
 
-1. **Clone repository**:
+1. Clone the repository:
    ```bash
-   git clone git@github.com:YourOrg/ml_automation.git
+   git clone https://github.com/yourusername/ml_automation.git
    cd ml_automation
    ```
-2. **Configure environment**:
-   - Copy `.env.example` to `.env` and fill in keys (Slack, AWS, Airflow, MLflow, WebSocket URL)
-3. **Install dependencies**:
+
+2. Create a virtual environment:
    ```bash
-   # For Airflow DAGs and backend
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```bash
    pip install -r requirements.txt
-
-   # For Dashboard
-   cd loss-history-dashboard && npm install
    ```
-4. **Start services on EC2**:
+
+4. Set up environment variables:
    ```bash
-   # Airflow
-   export AIRFLOW_HOME=~/airflow
-   airflow db init
-   airflow webserver --port 8080 &
-   airflow scheduler &
-
-   # MLflow
-   mlflow server --backend-store-uri sqlite:///mlflow.db \
-     --default-artifact-root s3://$S3_BUCKET/mlruns \
-     --host 0.0.0.0 --port 5000 &
+   cp .env.template .env
+   # Edit .env with your configuration
    ```
-5. **Run Dashboard**:
-   - **Local**: `npm run dev` in `loss-history-dashboard`
-   - **Vercel**: connect `main` branch & configure same env vars
 
----
+5. Initialize Airflow:
+   ```bash
+   airflow db init
+   airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
+   ```
 
-## 📂 Repository Structure
+### Configuration
+
+1. **S3 Configuration**:
+   - Set `S3_BUCKET` in `.env`
+   - Configure AWS credentials
+
+2. **MLflow Configuration**:
+   - Set `MLFLOW_TRACKING_URI` in `.env`
+   - Initialize MLflow server
+
+3. **Slack Integration**:
+   - Set `SLACK_WEBHOOK_URL` in `.env`
+   - Configure notification channels
+
+## Usage
+
+### Starting the Pipeline
+
+1. Start Airflow:
+   ```bash
+   airflow webserver -p 8080
+   airflow scheduler
+   ```
+
+2. Start the WebSocket server:
+   ```bash
+   python websocket_server.py
+   ```
+
+3. Access the dashboard at `http://localhost:3000`
+
+### Monitoring
+
+- **Data Quality**: View data quality metrics and alerts in the dashboard
+- **Model Performance**: Track model metrics and drift detection
+- **A/B Testing**: Monitor test results and model comparisons
+- **System Health**: View system metrics and pipeline status
+
+## Development
+
+### Project Structure
 
 ```
 ml_automation/
-├── dags/                        # Airflow DAGs & task modules
-│   ├── homeowner_dag.py
-│   └── tasks/                   # Ingestion, preprocessing, drift, training, etc.
-├── loss-history-dashboard/      # Next.js frontend & WebSocket client
-├── mlflow-export-import/        # Optional MLflow registry scripts
-├── tests/                       # Test files
-│   ├── test_api_endpoints.js    # API endpoint tests
-│   ├── test_websocket.js        # WebSocket functionality tests
-│   └── test_preprocessing.py    # Preprocessing module tests
-├── .env.example                 # Example environment variables
-├── .gitignore
-├── airflow.cfg                  # Airflow configuration on EC2
-├── webserver_config.py          # Airflow webserver settings
-├── requirements.txt             # Python dependencies
-├── package.json                 # JavaScript/TypeScript dependencies
-└── README.md                    # Project overview & instructions
+├── dags/                    # Airflow DAGs
+│   ├── tasks/              # Task implementations
+│   └── utils/              # Utility functions
+├── loss-history-dashboard/ # React dashboard
+├── tests/                  # Test files
+├── requirements.txt        # Python dependencies
+└── .env.template          # Environment template
 ```
 
----
+### Adding New Features
 
-## 📊 Dashboard Components
+1. Create new task modules in `dags/tasks/`
+2. Update the DAG in `dags/homeowner_dag.py`
+3. Add corresponding UI components in `loss-history-dashboard/`
+4. Update tests in `tests/`
 
-The dashboard consists of several key components:
+## Testing
 
-1. **System Metrics**: Real-time monitoring of CPU, memory, disk, and network usage
-2. **Model Performance**: Visualization of model metrics (RMSE, MSE, MAE, R²) over time
-3. **Data Drift Alerts**: Detection and visualization of feature drift
-4. **Pipeline Health**: Status of DAG execution and success rates
-5. **Model Explainability**: SHAP values and actual vs. predicted comparisons
-6. **Slack Notifications**: Configuration and history of alerts sent to Slack
-
-## 🔄 WebSocket Communication
-
-The dashboard uses WebSockets for real-time updates. The WebSocket server runs on port 8000 and provides the following message types:
-
-- `connection`: Confirmation of successful connection
-- `system_metrics`: CPU, memory, disk, and network usage
-- `model_metrics`: Model performance metrics (RMSE, MSE, MAE, R²)
-- `data_drift_alert`: Alerts for feature drift detection
-- `pipeline_status`: DAG execution status and progress
-
-## 🧪 Testing
-
-### Backend Tests
-
+Run the test suite:
 ```bash
-pytest
+pytest tests/
 ```
 
-### Frontend Tests
+## Contributing
 
-```bash
-npm test
-```
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
-## 📝 License
+## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
