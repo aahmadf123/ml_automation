@@ -295,11 +295,12 @@ export class MlAutomationStack extends cdk.Stack {
       assumedBy: new iam.ServicePrincipal('airflow-env.amazonaws.com'),
     });
 
-    // Add permissions for S3
+    // Add comprehensive S3 permissions
     role.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
+          // Basic S3 operations
           's3:ListBucket',
           's3:GetObject',
           's3:PutObject',
@@ -310,8 +311,39 @@ export class MlAutomationStack extends cdk.Stack {
           's3:GetBucketLocation',
           's3:GetBucketVersioning',
           's3:ListAllMyBuckets',
+          
+          // Public access block permissions
           's3:GetAccountPublicAccessBlock',
-          's3:GetBucketPublicAccessBlock'
+          's3:GetBucketPublicAccessBlock',
+          's3:PutBucketPublicAccessBlock',
+          
+          // Encryption permissions
+          's3:GetEncryptionConfiguration',
+          's3:PutEncryptionConfiguration',
+          
+          // Bucket policy permissions
+          's3:GetBucketPolicy',
+          's3:PutBucketPolicy',
+          
+          // CORS permissions
+          's3:GetBucketCors',
+          's3:PutBucketCors',
+          
+          // Lifecycle permissions
+          's3:GetLifecycleConfiguration',
+          's3:PutLifecycleConfiguration',
+          
+          // Logging permissions
+          's3:GetBucketLogging',
+          's3:PutBucketLogging',
+          
+          // Replication permissions
+          's3:GetBucketReplication',
+          's3:PutBucketReplication',
+          
+          // Tagging permissions
+          's3:GetBucketTagging',
+          's3:PutBucketTagging'
         ],
         resources: [
           'arn:aws:s3:::grange-seniordesign-bucket',
@@ -327,7 +359,12 @@ export class MlAutomationStack extends cdk.Stack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
-          's3:GetAccountPublicAccessBlock'
+          's3:GetAccountPublicAccessBlock',
+          's3:PutAccountPublicAccessBlock',
+          's3:GetAccessPoint',
+          's3:GetAccessPointPolicy',
+          's3:GetAccessPointPolicyStatus',
+          's3:ListAccessPoints'
         ],
         resources: ['*'],
       })
@@ -338,11 +375,33 @@ export class MlAutomationStack extends cdk.Stack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
-          's3:GetBucketPublicAccessBlock'
+          's3:GetBucketPublicAccessBlock',
+          's3:PutBucketPublicAccessBlock',
+          's3:GetBucketPolicy',
+          's3:PutBucketPolicy',
+          's3:GetEncryptionConfiguration',
+          's3:PutEncryptionConfiguration'
         ],
         resources: [
           'arn:aws:s3:::grange-seniordesign-bucket'
         ],
+      })
+    );
+
+    // Add permissions for KMS (if using customer-managed keys)
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'kms:Decrypt',
+          'kms:DescribeKey',
+          'kms:Encrypt',
+          'kms:GenerateDataKey',
+          'kms:ReEncrypt',
+          'kms:ReEncryptFrom',
+          'kms:ReEncryptTo'
+        ],
+        resources: ['*'],
       })
     );
 
