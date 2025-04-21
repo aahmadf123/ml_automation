@@ -11,6 +11,7 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as apigatewayv2_integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
+import { SubscriptionProtocol } from 'aws-cdk-lib/aws-sns';
 
 export class MlAutomationStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -194,7 +195,8 @@ export class MlAutomationStack extends cdk.Stack {
       new subscriptions.UrlSubscription(
         cdk.SecretValue.secretsManager('airflow-secrets', {
           jsonField: 'SLACK_WEBHOOK_URL'
-        }).toString()
+        }).toString(),
+        { protocol: sns.SubscriptionProtocol.HTTPS }
       )
     );
 
