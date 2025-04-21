@@ -87,27 +87,6 @@ export class MlAutomationStack extends cdk.Stack {
       },
     });
 
-    // Create WebSocket API
-    const api = new apigatewayv2.WebSocketApi(this, 'WebSocketApi', {
-      apiName: 'ML Automation WebSocket API',
-      description: 'WebSocket API for real-time updates',
-      connectRouteOptions: { integration: new apigatewayv2.WebSocketLambdaIntegration('ConnectIntegration', connectFunction) },
-      disconnectRouteOptions: { integration: new apigatewayv2.WebSocketLambdaIntegration('DisconnectIntegration', disconnectFunction) },
-      defaultRouteOptions: { integration: new apigatewayv2.WebSocketLambdaIntegration('DefaultIntegration', defaultFunction) }
-    });
-
-    // Add custom route for drift events
-    api.addRoute('driftEvent', {
-      integration: new apigatewayv2.WebSocketLambdaIntegration('DriftEventIntegration', driftEventFunction)
-    });
-
-    // Create WebSocket Stage
-    const stage = new apigatewayv2.WebSocketStage(this, 'WebSocketStage', {
-      webSocketApi: api,
-      stageName: 'prod',
-      autoDeploy: true
-    });
-
     // Create Lambda functions
     const connectFunction = new lambda.Function(this, 'ConnectFunction', {
       runtime: lambda.Runtime.PYTHON_3_9,
@@ -144,6 +123,27 @@ export class MlAutomationStack extends cdk.Stack {
       environment: {
         LOG_GROUP: '/ml-automation/websocket-connections'
       }
+    });
+
+    // Create WebSocket API
+    const api = new apigatewayv2.WebSocketApi(this, 'WebSocketApi', {
+      apiName: 'ML Automation WebSocket API',
+      description: 'WebSocket API for real-time updates',
+      connectRouteOptions: { integration: new apigatewayv2.WebSocketRouteIntegration('ConnectIntegration', connectFunction) },
+      disconnectRouteOptions: { integration: new apigatewayv2.WebSocketRouteIntegration('DisconnectIntegration', disconnectFunction) },
+      defaultRouteOptions: { integration: new apigatewayv2.WebSocketRouteIntegration('DefaultIntegration', defaultFunction) }
+    });
+
+    // Add custom route for drift events
+    api.addRoute('driftEvent', {
+      integration: new apigatewayv2.WebSocketRouteIntegration('DriftEventIntegration', driftEventFunction)
+    });
+
+    // Create WebSocket Stage
+    const stage = new apigatewayv2.WebSocketStage(this, 'WebSocketStage', {
+      webSocketApi: api,
+      stageName: 'prod',
+      autoDeploy: true
     });
 
     // Grant permissions to Lambda functions
