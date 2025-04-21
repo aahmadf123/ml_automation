@@ -310,7 +310,8 @@ export class MlAutomationStack extends cdk.Stack {
           's3:GetBucketLocation',
           's3:GetBucketVersioning',
           's3:ListAllMyBuckets',
-          's3:GetAccountPublicAccessBlock'
+          's3:GetAccountPublicAccessBlock',
+          's3:GetBucketPublicAccessBlock'
         ],
         resources: [
           'arn:aws:s3:::grange-seniordesign-bucket',
@@ -329,6 +330,19 @@ export class MlAutomationStack extends cdk.Stack {
           's3:GetAccountPublicAccessBlock'
         ],
         resources: ['*'],
+      })
+    );
+
+    // Add specific permissions for the bucket
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          's3:GetBucketPublicAccessBlock'
+        ],
+        resources: [
+          'arn:aws:s3:::grange-seniordesign-bucket'
+        ],
       })
     );
 
