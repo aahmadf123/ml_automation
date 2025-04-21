@@ -10,12 +10,26 @@ import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as apigatewayv2_integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 import { SubscriptionProtocol } from 'aws-cdk-lib/aws-sns';
 
 export class MlAutomationStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
+
+    // Create VPC for MWAA
+    const vpc = new ec2.Vpc(this, 'MwaaVpc', {
+      maxAzs: 2,
+      natGateways: 1,
+    });
+
+    // Create security group for MWAA
+    const securityGroup = new ec2.SecurityGroup(this, 'MwaaSecurityGroup', {
+      vpc,
+      description: 'Security group for MWAA environment',
+      allowAllOutbound: true,
+    });
 
     // Create S3 bucket for DAGs
     const dagsBucket = new s3.Bucket(this, 'DagsBucket', {
@@ -52,10 +66,15 @@ export class MlAutomationStack extends cdk.Stack {
     // Create MWAA environment
     const mwaaEnvironment = new mwaa.CfnEnvironment(this, 'MwaaEnvironment', {
       name: 'ml-automation-environment',
-      airflowVersion: '2.7.1',
+      airflowVersion: '2.10.5',
       sourceBucketArn: dagsBucket.bucketArn,
+      dagS3Path: 'dags',  // This is where your DAG files will be stored in S3
       executionRoleArn: this.createMwaaRole().roleArn,
       webserverAccessMode: 'PUBLIC_ONLY',
+      networkConfiguration: {
+        subnetIds: vpc.privateSubnets.map(subnet => subnet.subnetId),
+        securityGroupIds: [securityGroup.securityGroupId],
+      },
       loggingConfiguration: {
         dagProcessingLogs: {
           enabled: true,
