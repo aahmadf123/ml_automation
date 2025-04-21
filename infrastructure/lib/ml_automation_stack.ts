@@ -31,19 +31,10 @@ export class MlAutomationStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
     });
 
-    // Create secrets for Airflow
-    const airflowSecrets = new secretsmanager.Secret(this, 'AirflowSecrets', {
-      secretName: 'airflow-secrets',
-      description: 'Secrets for Airflow environment',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({
-          MLFLOW_TRACKING_URI: '',
-          S3_BUCKET: dagsBucket.bucketName,
-          SLACK_WEBHOOK_URL: '',
-        }),
-        generateStringKey: 'password',
-      },
-    });
+    // Import existing secrets for Airflow
+    const airflowSecrets = secretsmanager.Secret.fromSecretNameV2(
+      this, 'AirflowSecrets', 'airflow-secrets'
+    );
 
     // Create secrets for dashboard
     const dashboardSecrets = new secretsmanager.Secret(this, 'DashboardSecrets', {
@@ -193,7 +184,7 @@ export class MlAutomationStack extends cdk.Stack {
     // Add Slack subscription using the secret value
     alertTopic.addSubscription(
       new subscriptions.UrlSubscription(
-        cdk.SecretValue.secretsManager('airflow-secrets', {
+        cdk.SecretValue.secretsManager(airflowSecrets.secretName, {
           jsonField: 'SLACK_WEBHOOK_URL'
         }).toString(),
         { protocol: sns.SubscriptionProtocol.HTTPS }
