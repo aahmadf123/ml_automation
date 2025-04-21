@@ -42,9 +42,9 @@ from tasks.ab_testing import ABTestingPipeline
 from tasks.training import train_and_compare_fn, manual_override
 from utils.slack import post as send_message
 from utils.storage import upload as upload_to_s3
-from dags.utils.logging_config import get_logger, setup_logging
-from dags.utils.config import Config
-from dags.utils.security import SecurityMiddleware, require_auth, validate_input
+from utils.logging_config import get_logger, setup_logging
+from utils.config import Config
+from utils.security import SecurityMiddleware, require_auth, validate_input
 
 # Setup logging
 setup_logging()
