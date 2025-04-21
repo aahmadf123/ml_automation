@@ -66,7 +66,7 @@ export class MlAutomationStack extends cdk.Stack {
     // Create MWAA environment
     const mwaaEnvironment = new mwaa.CfnEnvironment(this, 'MwaaEnvironment', {
       name: 'ml-automation-environment',
-      airflowVersion: '2.10.5',
+      airflowVersion: '2.10.1',
       sourceBucketArn: dagsBucket.bucketArn,
       dagS3Path: 'dags',  // This is where your DAG files will be stored in S3
       executionRoleArn: this.createMwaaRole().roleArn,
