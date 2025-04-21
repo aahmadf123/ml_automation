@@ -309,13 +309,26 @@ export class MlAutomationStack extends cdk.Stack {
           's3:PutObjectTagging',
           's3:GetBucketLocation',
           's3:GetBucketVersioning',
-          's3:ListAllMyBuckets'
+          's3:ListAllMyBuckets',
+          's3:GetAccountPublicAccessBlock'
         ],
         resources: [
           'arn:aws:s3:::grange-seniordesign-bucket',
           'arn:aws:s3:::grange-seniordesign-bucket/*',
-          'arn:aws:s3:::*'
+          'arn:aws:s3:::*',
+          '*'
         ],
+      })
+    );
+
+    // Add permissions for S3 Control (for account-level operations)
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          's3:GetAccountPublicAccessBlock'
+        ],
+        resources: ['*'],
       })
     );
 
