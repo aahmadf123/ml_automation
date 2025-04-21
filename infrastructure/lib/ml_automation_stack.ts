@@ -31,12 +31,8 @@ export class MlAutomationStack extends cdk.Stack {
       allowAllOutbound: true,
     });
 
-    // Create S3 bucket for DAGs
-    const dagsBucket = new s3.Bucket(this, 'DagsBucket', {
-      versioned: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-    });
+    // Use existing S3 bucket for DAGs
+    const dagsBucket = s3.Bucket.fromBucketName(this, 'ExistingDagsBucket', 'grange-seniordesign-bucket');
 
     // Create S3 bucket for model artifacts
     const modelBucket = new s3.Bucket(this, 'ModelBucket', {
@@ -169,7 +165,13 @@ export class MlAutomationStack extends cdk.Stack {
       actions: [
         'logs:CreateLogGroup',
         'logs:CreateLogStream',
-        'logs:PutLogEvents'
+        'logs:PutLogEvents',
+        'cloudwatch:PutMetricData',
+        'execute-api:ManageConnections',
+        'dynamodb:PutItem',
+        'dynamodb:GetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:DeleteItem'
       ],
       resources: ['*']
     }));
@@ -179,7 +181,13 @@ export class MlAutomationStack extends cdk.Stack {
       actions: [
         'logs:CreateLogGroup',
         'logs:CreateLogStream',
-        'logs:PutLogEvents'
+        'logs:PutLogEvents',
+        'cloudwatch:PutMetricData',
+        'execute-api:ManageConnections',
+        'dynamodb:PutItem',
+        'dynamodb:GetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:DeleteItem'
       ],
       resources: ['*']
     }));
@@ -190,7 +198,36 @@ export class MlAutomationStack extends cdk.Stack {
         'logs:CreateLogGroup',
         'logs:CreateLogStream',
         'logs:PutLogEvents',
-        'cloudwatch:PutMetricData'
+        'cloudwatch:PutMetricData',
+        'execute-api:ManageConnections',
+        's3:GetObject',
+        's3:PutObject',
+        's3:ListBucket',
+        'sns:Publish',
+        'dynamodb:PutItem',
+        'dynamodb:GetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:DeleteItem'
+      ],
+      resources: [
+        'arn:aws:s3:::grange-seniordesign-bucket',
+        'arn:aws:s3:::grange-seniordesign-bucket/*',
+        'arn:aws:sns:*:*:*'
+      ]
+    }));
+
+    defaultFunction.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'logs:CreateLogGroup',
+        'logs:CreateLogStream',
+        'logs:PutLogEvents',
+        'cloudwatch:PutMetricData',
+        'execute-api:ManageConnections',
+        'dynamodb:PutItem',
+        'dynamodb:GetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:DeleteItem'
       ],
       resources: ['*']
     }));
@@ -267,8 +304,18 @@ export class MlAutomationStack extends cdk.Stack {
           's3:GetObject',
           's3:PutObject',
           's3:DeleteObject',
+          's3:GetObjectVersion',
+          's3:GetObjectTagging',
+          's3:PutObjectTagging',
+          's3:GetBucketLocation',
+          's3:GetBucketVersioning',
+          's3:ListAllMyBuckets'
         ],
-        resources: ['arn:aws:s3:::ml-automation-*/*'],
+        resources: [
+          'arn:aws:s3:::grange-seniordesign-bucket',
+          'arn:aws:s3:::grange-seniordesign-bucket/*',
+          'arn:aws:s3:::*'
+        ],
       })
     );
 
@@ -278,6 +325,9 @@ export class MlAutomationStack extends cdk.Stack {
         effect: iam.Effect.ALLOW,
         actions: [
           'cloudwatch:PutMetricData',
+          'cloudwatch:GetMetricData',
+          'cloudwatch:ListMetrics',
+          'cloudwatch:GetMetricStatistics',
           'logs:CreateLogStream',
           'logs:CreateLogGroup',
           'logs:PutLogEvents',
@@ -296,6 +346,78 @@ export class MlAutomationStack extends cdk.Stack {
         effect: iam.Effect.ALLOW,
         actions: ['secretsmanager:GetSecretValue'],
         resources: ['arn:aws:secretsmanager:*:*:secret:airflow-secrets-*'],
+      })
+    );
+
+    // Add permissions for SNS
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'sns:Publish'
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Add permissions for SageMaker
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'sagemaker:CreateModel',
+          'sagemaker:CreateEndpoint',
+          'sagemaker:CreateEndpointConfig',
+          'sagemaker:DeleteEndpoint',
+          'sagemaker:DeleteEndpointConfig',
+          'sagemaker:DescribeEndpoint',
+          'sagemaker:DescribeEndpointConfig',
+          'sagemaker:DescribeModel',
+          'sagemaker:InvokeEndpoint',
+          'sagemaker:ListEndpoints',
+          'sagemaker:ListEndpointConfigs',
+          'sagemaker:ListModels',
+          'sagemaker:UpdateEndpoint',
+          'sagemaker:UpdateEndpointWeightsAndCapacities',
+          'sagemaker:CreateTrainingJob',
+          'sagemaker:DescribeTrainingJob',
+          'sagemaker:StopTrainingJob',
+          'sagemaker:ListTrainingJobs',
+          'sagemaker:CreateHyperParameterTuningJob',
+          'sagemaker:DescribeHyperParameterTuningJob',
+          'sagemaker:StopHyperParameterTuningJob',
+          'sagemaker:ListHyperParameterTuningJobs'
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Add permissions for Step Functions (for workflow orchestration)
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'states:StartExecution',
+          'states:DescribeExecution',
+          'states:StopExecution',
+          'states:GetExecutionHistory'
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Add permissions for EventBridge (for scheduling and event-driven workflows)
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'events:PutEvents',
+          'events:PutRule',
+          'events:PutTargets',
+          'events:DeleteRule',
+          'events:RemoveTargets'
+        ],
+        resources: ['*'],
       })
     );
 
