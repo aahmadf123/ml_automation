@@ -9,6 +9,7 @@ import * as sagemaker from 'aws-cdk-lib/aws-sagemaker';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as apigatewayv2_integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
 
 export class MlAutomationStack extends cdk.Stack {
@@ -126,22 +127,27 @@ export class MlAutomationStack extends cdk.Stack {
     });
 
     // Create WebSocket API
-    const api = new apigatewayv2.WebSocketApi(this, 'WebSocketApi', {
+    const webSocketApi = new apigatewayv2.WebSocketApi(this, 'MLAutomationWebSocketApi', {
       apiName: 'ML Automation WebSocket API',
-      description: 'WebSocket API for real-time updates',
-      connectRouteOptions: { integration: new apigatewayv2.WebSocketRouteIntegration('ConnectIntegration', connectFunction) },
-      disconnectRouteOptions: { integration: new apigatewayv2.WebSocketRouteIntegration('DisconnectIntegration', disconnectFunction) },
-      defaultRouteOptions: { integration: new apigatewayv2.WebSocketRouteIntegration('DefaultIntegration', defaultFunction) }
+      connectRouteOptions: {
+        integration: new apigatewayv2_integrations.WebSocketLambdaIntegration('ConnectIntegration', connectFunction)
+      },
+      disconnectRouteOptions: {
+        integration: new apigatewayv2_integrations.WebSocketLambdaIntegration('DisconnectIntegration', disconnectFunction)
+      },
+      defaultRouteOptions: {
+        integration: new apigatewayv2_integrations.WebSocketLambdaIntegration('DefaultIntegration', defaultFunction)
+      }
     });
 
     // Add custom route for drift events
-    api.addRoute('driftEvent', {
-      integration: new apigatewayv2.WebSocketRouteIntegration('DriftEventIntegration', driftEventFunction)
+    webSocketApi.addRoute('driftEvent', {
+      integration: new apigatewayv2_integrations.WebSocketLambdaIntegration('DriftEventIntegration', driftEventFunction)
     });
 
     // Create WebSocket Stage
     const stage = new apigatewayv2.WebSocketStage(this, 'WebSocketStage', {
-      webSocketApi: api,
+      webSocketApi: webSocketApi,
       stageName: 'prod',
       autoDeploy: true
     });
