@@ -189,9 +189,13 @@ export class MlAutomationStack extends cdk.Stack {
       displayName: 'ML Automation Alerts',
     });
 
-    // Add Slack subscription
+    // Add Slack subscription using the secret value
     alertTopic.addSubscription(
-      new subscriptions.UrlSubscription('YOUR_SLACK_WEBHOOK_URL')
+      new subscriptions.UrlSubscription(
+        cdk.SecretValue.secretsManager('airflow-secrets', {
+          jsonField: 'SLACK_WEBHOOK_URL'
+        }).toString()
+      )
     );
 
     // Create CloudWatch dashboard
