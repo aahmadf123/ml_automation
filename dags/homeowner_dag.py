@@ -220,8 +220,12 @@ def homeowner_pipeline():
     training_branch_task = training_branch()
     
     train_all_models = EmptyOperator(task_id="train_all_models")
+    
+    # Create training tasks for each model
+    training_tasks = {}
     for m in MODEL_IDS:
-        train_task = PythonOperator(
+        # Create task for normal training path
+        training_tasks[m] = PythonOperator(
             task_id=f"train_compare_{m}",
             python_callable=train_and_compare_fn,
             op_kwargs={
@@ -232,26 +236,14 @@ def homeowner_pipeline():
                 "ab_testing_pipeline": ABTestingPipeline(m, test_duration_days=7)
             },
         )
-        train_task.set_downstream(join_after_training)
+        # Set downstream relationship
+        training_tasks[m].set_downstream(join_after_training)
     
     # Wire the training branch
     training_branch_task >> train_all_models
-    for m in MODEL_IDS:
-        train_task = PythonOperator(
-            task_id=f"train_compare_{m}_direct",
-            python_callable=train_and_compare_fn,
-            op_kwargs={
-                "model_id": m,
-                "processed_path": LOCAL_PROCESSED_PATH,
-                "data_quality_monitor": data_quality_monitor,
-                "model_explainability_tracker": ModelExplainabilityTracker(m),
-                "ab_testing_pipeline": ABTestingPipeline(m, test_duration_days=7)
-            },
-        )
-        training_branch_task >> train_task
-        train_task.set_downstream(join_after_training)
-
-    # wire drift → heal → override/train → training
+    train_all_models >> [training_tasks[m] for m in MODEL_IDS]
+    
+    # Wire drift → heal → override/train → training
     branch >> heal >> override_branch()
     branch >> override_branch()
     override_branch() >> apply_override() >> training_branch_task

@@ -3,7 +3,7 @@ from typing import Dict, Any, Callable, Optional
 from functools import wraps
 import jwt
 from datetime import datetime, timedelta
-from .config import Config
+from utils.config import Config
 
 class SecurityUtils:
     """Security utilities for Airflow DAGs."""
