@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 from typing import Any, Dict
 from pythonjsonlogger import jsonlogger
-from structlog import get_logger, configure, processors, stdlib
+from structlog import get_logger as structlog_get_logger, configure, processors, stdlib
 
 class CustomJsonFormatter(jsonlogger.JsonFormatter):
     def add_fields(self, log_record: Dict[str, Any], record: logging.LogRecord, message_dict: Dict[str, Any]) -> None:
@@ -69,7 +69,7 @@ def get_logger(name: str) -> Any:
     Returns:
         A structured logger instance
     """
-    return get_logger(name)
+    return structlog_get_logger(name)
 
 # Example usage:
 # logger = get_logger(__name__)
