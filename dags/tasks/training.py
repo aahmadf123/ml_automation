@@ -97,7 +97,7 @@ def register_model_with_sagemaker(model, model_id, metrics, mlflow_run):
         model.save_model(model_path)
         
         # Upload model to S3
-        s3_model_path = f"s3://{os.environ['S3_BUCKET']}/models/{model_id}/{datetime.now().strftime('%Y%m%d_%H%M%S')}/model.json"
+        s3_model_path = f"s3://{DATA_BUCKET}/models/{model_id}/{datetime.now().strftime('%Y%m%d_%H%M%S')}/model.json"
         s3_upload(model_path, s3_model_path)
         
         # Create model package

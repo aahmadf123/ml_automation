@@ -7,8 +7,9 @@ import pandas as pd
 from airflow.models import Variable
 from tasks.cache import is_cache_valid, update_cache
 from botocore.exceptions import ClientError
+from utils.config import DATA_BUCKET, AWS_REGION
 
-S3_BUCKET = os.environ.get("DATA_BUCKET", Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket"))
+S3_BUCKET = DATA_BUCKET
 S3_DATA_FOLDER = "raw-data"
 LOCAL_CSV_PATH = "/tmp/homeowner_data.csv"
 LOCAL_PARQUET_PATH = "/tmp/homeowner_data.parquet"
