@@ -7,7 +7,7 @@ Send Slack messages via Incoming Webhook, with retries.
 
 import requests
 from tenacity import retry, wait_fixed, stop_after_attempt
-from utils.config import SLACK_WEBHOOK_URL, SLACK_CHANNEL_DEFAULT
+from .config import SLACK_WEBHOOK_URL, SLACK_CHANNEL_DEFAULT
 
 @retry(wait=wait_fixed(2), stop=stop_after_attempt(3))
 def post(

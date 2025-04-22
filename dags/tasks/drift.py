@@ -28,7 +28,7 @@ from utils.slack import post as send_message
 from utils.storage import download as s3_download
 from utils.storage import upload as s3_upload
 from utils.config import (
-    S3_BUCKET, REFERENCE_KEY_PREFIX, AWS_REGION,
+    DATA_BUCKET, REFERENCE_KEY_PREFIX, AWS_REGION,
     DRIFT_THRESHOLD
 )
 
@@ -107,7 +107,7 @@ def generate_reference_means(
     ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     s3_key = f"{REFERENCE_KEY_PREFIX}/reference_means_{ts}.csv"
     s3_upload(local_ref, s3_key)
-    logger.info(f"Uploaded reference means to s3://{S3_BUCKET}/{s3_key}")
+    logger.info(f"Uploaded reference means to s3://{DATA_BUCKET}/{s3_key}")
     
     # Log reference means generation to CloudWatch
     cloudwatch.put_metric_data(

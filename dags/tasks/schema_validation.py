@@ -12,7 +12,7 @@ import pandas as pd
 import pandera as pa
 from pandera import Column, DataFrameSchema, Check
 from utils.storage import upload       # your retrying S3 helper
-from utils.config import S3_BUCKET     # from the new config.py
+from utils.config import DATA_BUCKET     # from the new config.py
 
 # Define the expected schema for your processed data
 homeowner_schema = DataFrameSchema({

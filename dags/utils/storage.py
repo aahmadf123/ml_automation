@@ -7,7 +7,7 @@ Retrying wrappers around common S3 operations.
 
 import boto3
 from tenacity import retry, wait_exponential, stop_after_attempt
-from utils.config import S3_BUCKET
+from .config import DATA_BUCKET
 from typing import Optional
 
 # Reuse a single boto3 client
@@ -22,9 +22,9 @@ def download(key: str, local_path: str, bucket: Optional[str] = None) -> None:
     Args:
         key (str): The S3 object key (path within the bucket).
         local_path (str): Local filesystem path to write the file to.
-        bucket (Optional[str]): S3 bucket name; defaults to S3_BUCKET if None.
+        bucket (Optional[str]): S3 bucket name; defaults to DATA_BUCKET if None.
     """
-    _s3_client.download_file(bucket or S3_BUCKET, key, local_path)
+    _s3_client.download_file(bucket or DATA_BUCKET, key, local_path)
 
 @retry(wait=wait_exponential(multiplier=1, min=2, max=10),
        stop=stop_after_attempt(3))
@@ -35,9 +35,9 @@ def upload(local_path: str, key: str, bucket: Optional[str] = None) -> None:
     Args:
         local_path (str): Path of the local file to upload.
         key (str): The S3 object key under which to store the file.
-        bucket (Optional[str]): S3 bucket name; defaults to S3_BUCKET if None.
+        bucket (Optional[str]): S3 bucket name; defaults to DATA_BUCKET if None.
     """
-    _s3_client.upload_file(local_path, bucket or S3_BUCKET, key)
+    _s3_client.upload_file(local_path, bucket or DATA_BUCKET, key)
 
 def update_storage_process_with_ui_components():
     """

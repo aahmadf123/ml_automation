@@ -18,7 +18,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 import mlflow
 from mlflow.tracking import MlflowClient
 from utils.slack import post as slack_msg
-from utils.config import S3_BUCKET, MODEL_KEY_PREFIX
+from utils.config import DATA_BUCKET, MODEL_KEY_PREFIX
 
 logger = logging.getLogger(__name__)
 
