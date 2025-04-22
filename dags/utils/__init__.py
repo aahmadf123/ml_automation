@@ -14,7 +14,8 @@ __all__ = [
     'slack_msg',
     'download',
     'upload',
-    'trigger_dag'
+    'trigger_dag',
+    'DATA_BUCKET'
 ]
 
 """

@@ -103,7 +103,7 @@ def validate_numeric_parameter(param_name: str, value: Union[int, float], min_va
         raise ValueError(f"Parameter {param_name} must be between {min_value} and {max_value}, got {value}")
 
 # ─── S3 CONFIG ────────────────────────────────────────────────────────────────
-S3_BUCKET           = get_ssm_parameter('S3_BUCKET')
+S3_BUCKET           = get_ssm_parameter('DATA_BUCKET')
 RAW_DATA_KEY        = "raw-data/ut_loss_history_1.csv"
 REFERENCE_KEY       = "reference/reference_means.csv"
 REFERENCE_KEY_PREFIX= "reference"
@@ -308,7 +308,7 @@ class Config:
     """Centralized configuration management."""
     
     # S3 Configuration
-    S3_BUCKET = get_ssm_parameter('S3_BUCKET')
+    S3_BUCKET = get_ssm_parameter('DATA_BUCKET')
     S3_DATA_FOLDER = "raw-data"
     S3_ARCHIVE_FOLDER = get_ssm_parameter('S3_ARCHIVE_FOLDER', 'archive')
     S3_REFERENCE_KEY_PREFIX = "reference"
