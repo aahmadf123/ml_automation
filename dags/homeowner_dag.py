@@ -216,9 +216,12 @@ def homeowner_pipeline():
             log.error(f"Error in training_branch: {e}")
         return "train_all_models"
     
+    # Assign the training branch task to a variable
+    training_branch_task = training_branch()
+    
     train_all_models = EmptyOperator(task_id="train_all_models")
     for m in MODEL_IDS:
-        PythonOperator(
+        train_task = PythonOperator(
             task_id=f"train_compare_{m}",
             python_callable=train_and_compare_fn,
             op_kwargs={
@@ -228,12 +231,13 @@ def homeowner_pipeline():
                 "model_explainability_tracker": ModelExplainabilityTracker(m),
                 "ab_testing_pipeline": ABTestingPipeline(m, test_duration_days=7)
             },
-        ).set_downstream(join_after_training)
+        )
+        train_task.set_downstream(join_after_training)
     
     # Wire the training branch
-    training_branch() >> train_all_models
+    training_branch_task >> train_all_models
     for m in MODEL_IDS:
-        training_branch() >> PythonOperator(
+        train_task = PythonOperator(
             task_id=f"train_compare_{m}_direct",
             python_callable=train_and_compare_fn,
             op_kwargs={
@@ -243,14 +247,16 @@ def homeowner_pipeline():
                 "model_explainability_tracker": ModelExplainabilityTracker(m),
                 "ab_testing_pipeline": ABTestingPipeline(m, test_duration_days=7)
             },
-        ).set_downstream(join_after_training)
+        )
+        training_branch_task >> train_task
+        train_task.set_downstream(join_after_training)
 
     # wire drift → heal → override/train → training
     branch >> heal >> override_branch()
     branch >> override_branch()
-    override_branch() >> apply_override() >> training_branch()
-    override_branch() >> start_training >> training_branch()
-    override_branch() >> retrain_model() >> training_branch()
+    override_branch() >> apply_override() >> training_branch_task
+    override_branch() >> start_training >> training_branch_task
+    override_branch() >> retrain_model() >> training_branch_task
 
     # 6️⃣ Record metrics and notify
     @task()
