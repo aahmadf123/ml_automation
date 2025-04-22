@@ -298,4 +298,4 @@ def homeowner_pipeline():
     return homeowner_pipeline()
 
 # Create DAG instance
-dag = homeowner_pipeline()
+homeowner_loss_history_full_pipeline = homeowner_pipeline()
