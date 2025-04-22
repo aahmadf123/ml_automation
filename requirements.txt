@@ -38,12 +38,12 @@ apache-airflow-providers-slack>=7.3.0
 
 # WebSocket and Real-time Communication
 websockets>=11.0.3
-aiohttp>=3.8.5
+aiohttp==3.10.5
 fastapi>=0.100.0
 uvicorn>=0.23.0
 
 # Database and Storage
-sqlalchemy>=1.4.36,<2.0.0
+sqlalchemy==1.4.53
 psycopg2-binary>=2.9.6
 redis>=4.6.0
 pymongo>=4.5.0
