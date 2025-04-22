@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 from datetime import datetime, timedelta
 from scipy import stats
 import mlflow
-from .utils import slack_msg
+from utils.slack import post as send_message
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ class DataQualityMonitor:
         
         # Alert on significant issues
         if quality_report['issues']:
-            slack_msg(
+            send_message(
                 channel="#alerts",
                 title="🔍 Data Quality Issues Detected",
                 details="\n".join([
