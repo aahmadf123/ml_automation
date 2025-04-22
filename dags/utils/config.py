@@ -15,8 +15,11 @@ from airflow.models import Variable
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Initialize AWS clients
-ssm = boto3.client('ssm')
+# Get AWS region from environment variable or use default
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+
+# Initialize AWS clients with region
+ssm = boto3.client('ssm', region_name=AWS_REGION)
 
 # Cache for SSM parameters
 PARAM_CACHE = {}
