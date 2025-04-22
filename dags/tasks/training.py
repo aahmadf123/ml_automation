@@ -46,7 +46,7 @@ from airflow.models import Variable
 from utils.slack import post as slack_msg
 from utils.storage import upload as s3_upload, download as s3_download
 from utils.config import (
-    S3_BUCKET, MODEL_KEY_PREFIX, AWS_REGION,
+    DATA_BUCKET, MODEL_KEY_PREFIX, AWS_REGION,
     MLFLOW_URI, MLFLOW_EXPERIMENT, MODEL_CONFIG
 )
 
@@ -163,7 +163,7 @@ def manual_override() -> Optional[Dict[str, Any]]:
     return None
 
 # ─── ENV / AIRFLOW VARIABLES ─────────────────────────────────────────────────
-BUCKET               = os.getenv("S3_BUCKET") or Variable.get("S3_BUCKET")
+BUCKET               = DATA_BUCKET
 MLFLOW_URI           = os.getenv("MLFLOW_TRACKING_URI") or Variable.get("MLFLOW_TRACKING_URI")
 EXPERIMENT           = Variable.get("MLFLOW_EXPERIMENT_NAME", default_var="Homeowner_Loss_Hist_Proj")
 MAX_EVALS            = int(os.getenv("HYPEROPT_MAX_EVALS", Variable.get("HYPEROPT_MAX_EVALS", 20)))
