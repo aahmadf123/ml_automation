@@ -112,6 +112,10 @@ MODEL_KEY_PREFIX    = "models"  # Prefix for model files in S3
 LOGS_FOLDER         = "logs"
 ARCHIVE_FOLDER      = get_ssm_parameter('S3_ARCHIVE_FOLDER', 'archive')
 
+# ─── DRIFT CONFIG ────────────────────────────────────────────────────────────
+DRIFT_THRESHOLD = float(get_ssm_parameter('DRIFT_THRESHOLD', '0.1'))
+validate_numeric_parameter('DRIFT_THRESHOLD', DRIFT_THRESHOLD, 0, 1)
+
 # ─── MLFLOW CONFIG ────────────────────────────────────────────────────────────
 MLFLOW_URI          = get_ssm_parameter('MLFLOW_TRACKING_URI')
 MLFLOW_EXPERIMENT   = Variable.get(
