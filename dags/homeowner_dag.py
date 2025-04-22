@@ -2,16 +2,11 @@
 """
 homeowner_dag.py
 
-Home‑owner Loss‑History full pipeline DAG
-• Ingest → Preprocess → Data Quality → Drift‑Check → (Self‑Heal ⧸ Manual‑Override → Train)
-• Human‑in‑the‑Loop hooks for manual override
-• Metrics, Notifications, Archive
-• MLflow integration for experiment tracking
-• WebSocket events for real-time dashboard updates
-• Retraining triggers from dashboard
-• Data quality monitoring and alerts
-• Model explainability tracking
-• A/B testing for model promotion
+Main DAG for homeowner loss history project:
+  - Data processing pipeline
+  - Model training and evaluation
+  - A/B testing
+  - Monitoring and drift detection
 """
 
 import os
@@ -21,6 +16,7 @@ import json
 import pandas as pd
 
 from datetime import datetime, timedelta
+from airflow import DAG
 from airflow.decorators import dag, task
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
@@ -43,7 +39,10 @@ from tasks.training import train_and_compare_fn, manual_override
 from utils.slack import post as send_message
 from utils.storage import upload as upload_to_s3
 from utils.logging_config import get_logger, setup_logging
-from utils.config import Config
+from utils.config import (
+    DEFAULT_START_DATE, SCHEDULE_CRON, AIRFLOW_DAG_BASE_CONF,
+    AWS_REGION, S3_BUCKET, MODEL_KEY_PREFIX
+)
 from utils.security import SecurityMiddleware, require_auth, validate_input
 
 # Setup logging
@@ -59,6 +58,11 @@ MODEL_IDS = Config.MODEL_IDS  # Use model IDs from config
 data_quality_monitor = DataQualityMonitor()
 model_explainability_tracker = ModelExplainabilityTracker("model1")  # Will be updated per model
 ab_testing_pipeline = ABTestingPipeline("model1", test_duration_days=7)  # Will be updated per model
+
+# Initialize AWS clients with region
+import boto3
+s3 = boto3.client('s3', region_name=AWS_REGION)
+cloudwatch = boto3.client('cloudwatch', region_name=AWS_REGION)
 
 def _default_args():
     return {

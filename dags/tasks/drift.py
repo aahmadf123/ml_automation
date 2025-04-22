@@ -27,7 +27,10 @@ from datetime import datetime
 from utils.slack import post as send_message
 from utils.storage import download as s3_download
 from utils.storage import upload as s3_upload
-from utils.config import S3_BUCKET, REFERENCE_KEY_PREFIX, AWS_REGION
+from utils.config import (
+    S3_BUCKET, REFERENCE_KEY_PREFIX, AWS_REGION,
+    DRIFT_THRESHOLD
+)
 
 # Setup logging
 logger = logging.getLogger(__name__)

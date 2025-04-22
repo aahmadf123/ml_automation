@@ -45,6 +45,10 @@ from airflow.models import Variable
 
 from utils.slack import post as slack_msg
 from utils.storage import upload as s3_upload, download as s3_download
+from utils.config import (
+    S3_BUCKET, MODEL_KEY_PREFIX, AWS_REGION,
+    MLFLOW_URI, MLFLOW_EXPERIMENT, MODEL_CONFIG
+)
 
 import boto3
 from datetime import datetime
@@ -52,9 +56,10 @@ from datetime import datetime
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Initialize AWS clients
-sagemaker = boto3.client('sagemaker')
-cloudwatch = boto3.client('cloudwatch')
+# Initialize AWS clients with region
+s3 = boto3.client('s3', region_name=AWS_REGION)
+sagemaker = boto3.client('sagemaker', region_name=AWS_REGION)
+cloudwatch = boto3.client('cloudwatch', region_name=AWS_REGION)
 
 def log_metrics_to_cloudwatch(metrics, model_id):
     """
