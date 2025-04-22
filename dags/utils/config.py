@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # Get AWS region from environment variable or use default
-AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-2')
 
 # Initialize AWS clients with region
 ssm = boto3.client('ssm', region_name=AWS_REGION)
@@ -393,8 +393,10 @@ class Config:
             validate_numeric_parameter(threshold_name, threshold_value, 0, 1)
         
         # Validate data quality config
-        for key, value in cls.DATA_QUALITY_CONFIG.items():
-            validate_numeric_parameter(key, value, 0, 1)
+        validate_numeric_parameter('missing_threshold', cls.DATA_QUALITY_CONFIG['missing_threshold'], 0, 1)
+        validate_numeric_parameter('outlier_threshold', cls.DATA_QUALITY_CONFIG['outlier_threshold'], 1, 10)
+        validate_numeric_parameter('drift_threshold', cls.DATA_QUALITY_CONFIG['drift_threshold'], 0, 1)
+        validate_numeric_parameter('correlation_threshold', cls.DATA_QUALITY_CONFIG['correlation_threshold'], 0, 1)
         
         # Validate WebSocket config
         validate_numeric_parameter('WS_PORT', cls.WS_PORT, 1, 65535)
