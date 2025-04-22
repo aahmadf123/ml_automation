@@ -108,6 +108,7 @@ RAW_DATA_KEY        = "raw-data/ut_loss_history_1.csv"
 REFERENCE_KEY       = "reference/reference_means.csv"
 REFERENCE_KEY_PREFIX= "reference"
 MODELS_FOLDER       = "models"
+MODEL_KEY_PREFIX    = "models"  # Prefix for model files in S3
 LOGS_FOLDER         = "logs"
 ARCHIVE_FOLDER      = get_ssm_parameter('S3_ARCHIVE_FOLDER', 'archive')
 
