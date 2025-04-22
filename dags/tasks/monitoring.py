@@ -18,13 +18,7 @@ import websockets
 import psutil
 from prometheus_client import start_http_server, Gauge
 from typing import Dict, Set, Any
-
-# Attempt to start Prometheus metrics server once
-try:
-    start_http_server(8000)
-    logging.info("Prometheus metrics server started on port 8000")
-except OSError as e:
-    logging.warning(f"Prometheus metrics server already running: {e}")
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # Define Prometheus gauges
 dag_runtime_gauge = Gauge(
@@ -48,7 +42,23 @@ memory_percent_gauge = Gauge(
     "Percentage of system memory in use"
 )
 
-# WebSocket server state
+# Attempt to start Prometheus metrics server with retry
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+def start_metrics_server(port: int = 8000):
+    try:
+        start_http_server(port)
+        logging.info(f"Prometheus metrics server started on port {port}")
+    except OSError as e:
+        logging.warning(f"Failed to start Prometheus metrics server on port {port}: {e}")
+        raise
+
+try:
+    start_metrics_server()
+except Exception as e:
+    logging.error(f"Could not start Prometheus metrics server after retries: {e}")
+
+# WebSocket server configuration
+WEBSOCKET_PORT = 8765
 connected_clients: Set[websockets.WebSocketServerProtocol] = set()
 metrics_history: Dict[str, Dict[str, Any]] = {}
 
@@ -94,16 +104,16 @@ async def websocket_handler(websocket: websockets.WebSocketServerProtocol, path:
     finally:
         await unregister(websocket)
 
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def start_websocket_server():
-    """Start the WebSocket server."""
-    server = await websockets.serve(
-        websocket_handler,
-        "localhost",
-        8000,
-        path="/ws/metrics"
-    )
-    logging.info("WebSocket server started on ws://localhost:8000/ws/metrics")
-    return server
+    """Start the WebSocket server with retry logic."""
+    try:
+        server = await websockets.serve(websocket_handler, "0.0.0.0", WEBSOCKET_PORT)
+        logging.info(f"WebSocket server started on port {WEBSOCKET_PORT}")
+        return server
+    except Exception as e:
+        logging.error(f"Failed to start WebSocket server: {e}")
+        raise
 
 def record_system_metrics(runtime: float = None, memory_usage: str = None) -> None:
     """

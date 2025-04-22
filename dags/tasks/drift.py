@@ -27,8 +27,7 @@ from datetime import datetime
 from utils.slack import post as send_message
 from utils.storage import download as s3_download
 from utils.storage import upload as s3_upload
-
-from utils.config import S3_BUCKET, REFERENCE_KEY_PREFIX
+from utils.config import S3_BUCKET, REFERENCE_KEY_PREFIX, AWS_REGION
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -37,25 +36,46 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 # Local path for the reference means CSV
 REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
 
-# Initialize AWS clients
-cloudwatch = boto3.client('cloudwatch')
-lambda_client = boto3.client('lambda')
-ssm = boto3.client('ssm')
-secretsmanager = boto3.client('secretsmanager')
+# Initialize AWS clients with retry
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+def initialize_aws_clients():
+    """Initialize AWS clients with retry logic."""
+    try:
+        cloudwatch = boto3.client('cloudwatch', region_name=AWS_REGION)
+        lambda_client = boto3.client('lambda', region_name=AWS_REGION)
+        ssm = boto3.client('ssm', region_name=AWS_REGION)
+        secretsmanager = boto3.client('secretsmanager', region_name=AWS_REGION)
+        return cloudwatch, lambda_client, ssm, secretsmanager
+    except Exception as e:
+        logger.error(f"Failed to initialize AWS clients: {e}")
+        raise
+
+try:
+    cloudwatch, lambda_client, ssm, secretsmanager = initialize_aws_clients()
+except Exception as e:
+    logger.error(f"Could not initialize AWS clients after retries: {e}")
+    raise
 
 # Get drift threshold from SSM Parameter Store or use default
-try:
-    drift_threshold_param = ssm.get_parameter(Name='/ml-automation/drift/threshold')
-    DRIFT_THRESHOLD = float(drift_threshold_param['Parameter']['Value'])
-    logger.info(f"Using drift threshold from SSM: {DRIFT_THRESHOLD}")
-except Exception as e:
-    logger.warning(f"Failed to get drift threshold from SSM: {e}")
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+def get_drift_threshold():
+    """Get drift threshold from SSM with retry logic."""
     try:
-        DRIFT_THRESHOLD = float(Variable.get("DRIFT_THRESHOLD", default_var="0.1"))
-        logger.info(f"Using drift threshold from Airflow Variable: {DRIFT_THRESHOLD}")
-    except Exception:
-        DRIFT_THRESHOLD = 0.1
-        logger.warning(f"Using default drift threshold {DRIFT_THRESHOLD}")
+        drift_threshold_param = ssm.get_parameter(Name='/ml-automation/drift/threshold')
+        threshold = float(drift_threshold_param['Parameter']['Value'])
+        logger.info(f"Using drift threshold from SSM: {threshold}")
+        return threshold
+    except Exception as e:
+        logger.warning(f"Failed to get drift threshold from SSM: {e}")
+        try:
+            threshold = float(Variable.get("DRIFT_THRESHOLD", default_var="0.1"))
+            logger.info(f"Using drift threshold from Airflow Variable: {threshold}")
+            return threshold
+        except Exception:
+            logger.warning("Using default drift threshold 0.1")
+            return 0.1
+
+DRIFT_THRESHOLD = get_drift_threshold()
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def generate_reference_means(

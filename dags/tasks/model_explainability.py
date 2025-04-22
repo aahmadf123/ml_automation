@@ -5,7 +5,7 @@ import shap
 from typing import Dict, List, Tuple
 import mlflow
 from datetime import datetime
-from .utils import slack_msg
+from utils.slack import post as send_message
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ class ModelExplainabilityTracker:
         
         # Alert on significant changes
         if changes:
-            slack_msg(
+            send_message(
                 channel="#alerts",
                 title=f"🔍 Significant Feature Importance Changes - {self.model_id}",
                 details="\n".join([
