@@ -19,7 +19,7 @@ Dependencies:
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
@@ -66,7 +66,8 @@ def get_local_last_modified(local_path: str) -> datetime:
         logging.info(f"Local file {local_path} does not exist.")
         return None
     timestamp = os.path.getmtime(local_path)
-    last_modified = datetime.fromtimestamp(timestamp)
+    # Convert to timezone-aware datetime in UTC
+    last_modified = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     logging.info(f"Local file {local_path} last modified on {last_modified}")
     return last_modified
 

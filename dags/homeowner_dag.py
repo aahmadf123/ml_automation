@@ -73,14 +73,15 @@ def _default_args():
         "email_on_failure": False,
         "email_on_retry": False,
         "retries": 1,
-        "retry_delay": timedelta(minutes=10),
+        "retry_delay": timedelta(minutes=5),
         "execution_timeout": timedelta(hours=2),
     }
 
 @dag(
     dag_id="homeowner_loss_history_full_pipeline",
     default_args=_default_args(),
-    schedule_interval="0 10 * * *",  # daily at 10 AM
+    description='DAG for homeowner loss history prediction pipeline',
+    schedule='0 0 * * *',  # Daily at midnight
     catchup=False,
     tags=["homeowner", "loss_history"],
 )
