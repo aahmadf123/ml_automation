@@ -1,3 +1,14 @@
+#!/usr/bin/env python3
+"""
+tasks/ab_testing.py
+
+Handles:
+  - A/B testing pipeline for model comparison
+  - Statistical significance testing
+  - Performance metrics comparison
+  - Automated model promotion based on test results
+"""
+
 import logging
 import numpy as np
 import pandas as pd
@@ -6,7 +17,8 @@ from typing import Dict, List, Tuple
 from sklearn.metrics import mean_squared_error, r2_score
 import mlflow
 from mlflow.tracking import MlflowClient
-from .utils import slack_msg
+from utils.slack import post as slack_msg
+from utils.config import S3_BUCKET, MODEL_KEY_PREFIX
 
 logger = logging.getLogger(__name__)
 
