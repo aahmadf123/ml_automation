@@ -30,7 +30,7 @@ from datetime import datetime
 from utils.storage import download as s3_download
 from utils.storage import upload as s3_upload
 from utils.slack import post as send_message
-from data_quality import DataQualityMonitor
+from .data_quality import DataQualityMonitor
 
 # configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
