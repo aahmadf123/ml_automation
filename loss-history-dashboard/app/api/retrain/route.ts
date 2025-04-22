@@ -18,12 +18,16 @@ export async function POST(request: Request) {
       )
     }
 
-    // Trigger the retraining DAG
+    // Determine the environment (EC2 or localhost)
+    const isEC2 = process.env.EC2_INSTANCE === 'true'
+
+    // Trigger the retraining DAG with appropriate configuration
     const response = await airflowClient.triggerDag({
       dagId: 'homeowner_loss_history_full_pipeline',
       conf: {
         model_id: modelId,
-        action: 'retrain'
+        action: 'retrain',
+        environment: isEC2 ? 'ec2' : 'localhost'
       }
     })
 
@@ -38,4 +42,4 @@ export async function POST(request: Request) {
       { status: 500 }
     )
   }
-} 
+}

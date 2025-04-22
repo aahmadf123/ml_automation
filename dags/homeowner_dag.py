@@ -51,8 +51,8 @@ setup_logging()
 log = get_logger(__name__)
 
 # Constants
-LOCAL_PROCESSED_PATH = "/tmp/homeowner_processed.parquet"
-REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
+LOCAL_PROCESSED_PATH = "/mnt/efs/homeowner_processed.parquet"  # Updated path for EC2 instance storage
+REFERENCE_MEANS_PATH = "/mnt/efs/reference_means.csv"  # Updated path for EC2 instance storage
 MODEL_IDS = Config.MODEL_IDS  # Use model IDs from config
 
 # Initialize monitors
@@ -289,9 +289,9 @@ def homeowner_pipeline():
         # Archive data quality report
         quality_summary = data_quality_monitor.get_quality_summary()
         if quality_summary:
-            with open("/tmp/quality_summary.json", "w") as f:
+            with open("/mnt/efs/quality_summary.json", "w") as f:
                 json.dump(quality_summary, f)
-            upload_to_s3("/tmp/quality_summary.json", f"{archive_path}/quality_summary.json")
+            upload_to_s3("/mnt/efs/quality_summary.json", f"{archive_path}/quality_summary.json")
 
     # 8️⃣ Start WebSocket server for real-time updates
     @task()

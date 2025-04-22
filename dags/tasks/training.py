@@ -93,7 +93,7 @@ def register_model_with_sagemaker(model, model_id, metrics, mlflow_run):
     """
     try:
         # Save model artifacts
-        model_path = f"/tmp/{model_id}_model.json"
+        model_path = f"/mnt/efs/{model_id}_model.json"  # Updated path for EC2 instance storage
         model.save_model(model_path)
         
         # Upload model to S3
@@ -227,7 +227,7 @@ def _shap_summary(model: xgb.XGBRegressor, X_val: pd.DataFrame, model_id: str) -
     shap_vals = explainer(X_val[:SHAP_SAMPLE_ROWS])
     shap.summary_plot(shap_vals, X_val[:SHAP_SAMPLE_ROWS], show=False)
     plt.tight_layout()
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_shap_{model_id}.png")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_shap_{model_id}.png", dir="/mnt/efs")  # Updated path for EC2 instance storage
     plt.savefig(tmp.name)
     plt.close()
     key = f"visuals/shap/{os.path.basename(tmp.name)}"
@@ -243,7 +243,7 @@ def _actual_vs_pred_plot(y_true: np.ndarray, y_pred: np.ndarray, model_id: str) 
     plt.ylabel("Predicted pure_premium")
     plt.title(f"Actual vs. Predicted ({model_id})")
     plt.tight_layout()
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_avspred_{model_id}.png")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_avspred_{model_id}.png", dir="/mnt/efs")  # Updated path for EC2 instance storage
     plt.savefig(tmp.name)
     plt.close()
     key = f"visuals/avs_pred/{os.path.basename(tmp.name)}"
@@ -265,7 +265,7 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
 
     # Baseline model check
     try:
-        prev_file = f"/tmp/{model_id}_prev.joblib"
+        prev_file = f"/mnt/efs/{model_id}_prev.joblib"  # Updated path for EC2 instance storage
         s3_download(f"models/{model_id}.joblib", prev_file)
         prev_model = joblib.load(prev_file)
         preds_prev = prev_model.predict(X_val)
@@ -401,7 +401,7 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
         send_websocket_update_sync(model_id, final_metrics, "production")
         
     # Save model to S3
-    model_file = f"/tmp/{model_id}.joblib"
+    model_file = f"/mnt/efs/{model_id}.joblib"  # Updated path for EC2 instance storage
     joblib.dump(final_model, model_file)
     s3_upload(model_file, f"models/{model_id}.joblib")
 

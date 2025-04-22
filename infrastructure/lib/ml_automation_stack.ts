@@ -288,6 +288,37 @@ export class MlAutomationStack extends cdk.Stack {
       value: stage.url,
       description: 'WebSocket API URL'
     });
+
+    // Create EC2 instance for Airflow and MLflow
+    const ec2Instance = new ec2.Instance(this, 'AirflowMlflowInstance', {
+      vpc,
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MEDIUM),
+      machineImage: ec2.MachineImage.latestAmazonLinux(),
+      securityGroup,
+      keyName: 'ec2-key-pair', // Replace with your key pair name
+    });
+
+    // Add user data to install and start Airflow and MLflow
+    ec2Instance.addUserData(
+      `#!/bin/bash
+      sudo yum update -y
+      sudo amazon-linux-extras install docker -y
+      sudo service docker start
+      sudo usermod -a -G docker ec2-user
+      sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      sudo chmod +x /usr/local/bin/docker-compose
+      sudo yum install git -y
+      git clone https://github.com/aahmadf123/ml_automation.git /home/ec2-user/ml_automation
+      cd /home/ec2-user/ml_automation
+      sudo docker-compose up -d
+      `
+    );
+
+    // Output EC2 instance public DNS
+    new cdk.CfnOutput(this, 'Ec2InstancePublicDns', {
+      value: ec2Instance.instancePublicDnsName,
+      description: 'EC2 Instance Public DNS',
+    });
   }
 
   private createMwaaRole(): iam.Role {
@@ -509,4 +540,4 @@ export class MlAutomationStack extends cdk.Stack {
 
     return role;
   }
-} 
+}
