@@ -10,10 +10,14 @@ Main DAG for homeowner loss history project:
 """
 
 import os
+import sys
 import logging
 import time
 import json
 import pandas as pd
+
+# Add the parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datetime import datetime, timedelta
 from airflow import DAG
@@ -44,7 +48,7 @@ from utils.config import (
     AWS_REGION, DATA_BUCKET, MODEL_KEY_PREFIX, DRIFT_THRESHOLD,
     Config
 )
-from .utils.security import SecurityUtils, validate_input
+from utils.security import SecurityUtils, validate_input
 
 # Setup logging
 setup_logging()
