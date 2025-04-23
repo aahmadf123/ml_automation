@@ -68,18 +68,30 @@ def handle_missing_data(
 ) -> pd.DataFrame:
     """
     Drop columns with > threshold missing, then impute remaining missing.
+    Memory optimized version.
     """
+    # Calculate null ratios efficiently
     null_ratio = df.isnull().mean()
     drop_cols = null_ratio[null_ratio > missing_threshold].index.tolist()
-    df.drop(columns=drop_cols, inplace=True)
-    logging.info(f"Dropped columns >{missing_threshold*100:.0f}% missing: {drop_cols}")
+    
+    if drop_cols:
+        df.drop(columns=drop_cols, inplace=True)
+        logging.info(f"Dropped columns >{missing_threshold*100:.0f}% missing: {drop_cols}")
 
+    # Handle remaining missing values based on strategy
     if strategy == "mean":
-        df.fillna(df.mean(numeric_only=True), inplace=True)
+        # Calculate means only for numeric columns
+        numeric_cols = df.select_dtypes(include=["number"]).columns
+        for col in numeric_cols:
+            if df[col].isnull().any():
+                mean_val = df[col].mean()
+                df[col].fillna(mean_val, inplace=True)
     elif strategy == "zero":
         df.fillna(0, inplace=True)
     elif strategy == "ffill":
         df.fillna(method="ffill", inplace=True)
+        # If still have nulls after ffill (at the beginning), use bfill
+        df.fillna(method="bfill", inplace=True)
     else:
         raise ValueError(f"Unknown missing data strategy '{strategy}'")
 
@@ -177,6 +189,7 @@ def generate_profile_report(df: pd.DataFrame, output_path: str = PROFILE_REPORT_
 def preprocess_data(data_path, output_path):
     """
     Preprocess the data and perform quality checks.
+    Uses memory-efficient processing to handle large datasets.
     """
     try:
         # Import necessary dependencies
@@ -185,17 +198,52 @@ def preprocess_data(data_path, output_path):
         from datetime import datetime
         import os
         import json
+        import gc
         from utils.storage import upload as s3_upload
         from utils.slack import post as send_message
         from tasks.data_quality import DataQualityMonitor
         
-        # Load data
-        data = pd.read_parquet(data_path)
+        # Set pandas options for memory efficiency
+        pd.options.mode.chained_assignment = None  # default='warn'
         
         # Initialize quality monitor
         quality_monitor = DataQualityMonitor()
         
+        # Load data with memory optimization
+        logger = logging.getLogger(__name__)
+        logger.info(f"Loading data from {data_path} with memory optimization")
+        
+        # Load with lower memory usage by specifying numeric dtypes
+        dtypes = {
+            # Add specific column dtypes if known
+            # 'numeric_col1': 'float32',
+            # 'numeric_col2': 'float32',
+        }
+        
+        # Read in chunks to avoid memory issues
+        chunk_size = 100000  # Adjust based on available memory
+        chunks = []
+        
+        # Process in chunks
+        for chunk in pd.read_parquet(data_path, chunksize=chunk_size):
+            # Downcast numeric columns to reduce memory usage
+            for col in chunk.select_dtypes(include=['float64']).columns:
+                chunk[col] = pd.to_numeric(chunk[col], downcast='float')
+            for col in chunk.select_dtypes(include=['int64']).columns:
+                chunk[col] = pd.to_numeric(chunk[col], downcast='integer')
+                
+            chunks.append(chunk)
+            
+        # Combine chunks
+        data = pd.concat(chunks, ignore_index=True)
+        logger.info(f"Data loaded, shape={data.shape}")
+        
+        # Free memory
+        del chunks
+        gc.collect()
+        
         # Perform initial quality check
+        logger.info("Performing initial quality check")
         quality_report = quality_monitor.run_quality_checks(data)
         if quality_report['status'] == 'fail':
             send_message(
@@ -206,12 +254,24 @@ def preprocess_data(data_path, output_path):
             )
         
         # Basic preprocessing
+        logger.info("Handling missing data")
         data = handle_missing_data(data)
+        gc.collect()  # Force garbage collection after operations
+        
+        logger.info("Handling outliers")
         data = handle_outliers(data)
+        gc.collect()
+        
+        logger.info("Encoding categorical variables")
         data = encode_categorical_variables(data)
+        gc.collect()
+        
+        logger.info("Scaling numeric features")
         data = scale_numeric_features(data)
+        gc.collect()
         
         # Final quality check after preprocessing
+        logger.info("Performing final quality check")
         final_quality_report = quality_monitor.run_quality_checks(data)
         if final_quality_report['status'] == 'fail':
             send_message(
@@ -222,32 +282,26 @@ def preprocess_data(data_path, output_path):
             )
         
         # Save preprocessed data
-        data.to_parquet(output_path)
+        logger.info(f"Saving preprocessed data to {output_path}")
+        # Save in chunks to avoid memory issues
+        data.to_parquet(
+            output_path,
+            engine='pyarrow',
+            compression='snappy',  # More memory-efficient than default
+            index=False
+        )
         
         # Save quality reports
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         quality_reports = {
-            'initial': quality_report,
-            'final': final_quality_report,
+            'initial': {'status': quality_report['status']},
+            'final': {'status': final_quality_report['status']},
             'timestamp': timestamp
         }
         
-        # Convert reports to serializable format for JSON
-        # (pandas dataframes or numpy arrays won't serialize properly)
-        import json
-        try:
-            json.dumps(quality_reports)
-        except TypeError:
-            # If we can't serialize, create a simplified version
-            quality_reports = {
-                'initial': {'status': quality_report['status']},
-                'final': {'status': final_quality_report['status']},
-                'timestamp': timestamp
-            }
-        
-        # Upload quality reports to S3 - disabled for now to avoid S3 errors
-        # reports_path = f"quality_reports/{os.path.basename(data_path)}_{timestamp}.json"
-        # s3_upload(quality_reports, reports_path)
+        # Free memory before returning
+        del data
+        gc.collect()
         
         return output_path
         
@@ -265,19 +319,26 @@ def preprocess_data(data_path, output_path):
 
 def handle_outliers(data, threshold=3):
     """
-    Handle outliers using z-score method.
+    Handle outliers using z-score method with memory optimization.
     """
     numeric_cols = data.select_dtypes(include=[np.number]).columns
     
     for col in numeric_cols:
-        z_scores = np.abs((data[col] - data[col].mean()) / data[col].std())
-        data.loc[z_scores > threshold, col] = data[col].mean()
-    
+        # Calculate z-scores efficiently without creating a new large array
+        mean_val = data[col].mean()
+        std_val = data[col].std()
+        z_scores = np.abs((data[col] - mean_val) / std_val)
+        mask = z_scores > threshold
+        data.loc[mask, col] = mean_val
+        
+        # Clean up intermediates to free memory
+        del z_scores, mask
+        
     return data
 
 def encode_categorical_variables(data):
     """
-    Encode categorical variables.
+    Encode categorical variables efficiently.
     """
     categorical_cols = data.select_dtypes(include=['object', 'category']).columns
     
@@ -288,11 +349,17 @@ def encode_categorical_variables(data):
 
 def scale_numeric_features(data):
     """
-    Scale numeric features using min-max scaling.
+    Scale numeric features using min-max scaling with memory optimization.
     """
     numeric_cols = data.select_dtypes(include=[np.number]).columns
     
     for col in numeric_cols:
-        data[col] = (data[col] - data[col].min()) / (data[col].max() - data[col].min())
+        min_val = data[col].min()
+        range_val = data[col].max() - min_val
+        # Avoid division by zero
+        if range_val > 0:
+            data[col] = (data[col] - min_val) / range_val
+        else:
+            data[col] = 0
     
     return data

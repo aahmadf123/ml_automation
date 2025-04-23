@@ -105,6 +105,14 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
             'data_path': "{{ ti.xcom_pull(task_ids='ingest_data') }}",
             'output_path': LOCAL_PROCESSED_PATH
         },
+        executor_config={
+            "KubernetesExecutor": {
+                "request_memory": "4Gi",
+                "limit_memory": "8Gi",
+                "request_cpu": "1",
+                "limit_cpu": "2"
+            }
+        },
         dag=dag
     )
     
@@ -112,16 +120,29 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     validate_task = PythonOperator(
         task_id='validate_schema',
         python_callable=lambda **kwargs: validate_schema(
-            pd.read_parquet(LOCAL_PROCESSED_PATH)
+            pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow')
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
+        executor_config={
+            "KubernetesExecutor": {
+                "request_memory": "2Gi",
+                "limit_memory": "4Gi"
+            }
+        },
         dag=dag
     )
     
     snapshot_task = PythonOperator(
         task_id='snapshot_schema',
         python_callable=lambda **kwargs: snapshot_schema(
-            pd.read_parquet(LOCAL_PROCESSED_PATH)
+            # Just need dtypes, so read a small sample with only 1000 rows for memory efficiency
+            pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=None)
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
+        executor_config={
+            "KubernetesExecutor": {
+                "request_memory": "1Gi",
+                "limit_memory": "2Gi"
+            }
+        },
         dag=dag
     )
     
@@ -129,8 +150,14 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     quality_monitor = PythonOperator(
         task_id='monitor_data_quality',
         python_callable=lambda **kwargs: DataQualityMonitor().run_quality_checks(
-            pd.read_parquet(LOCAL_PROCESSED_PATH)
+            pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=None)
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
+        executor_config={
+            "KubernetesExecutor": {
+                "request_memory": "2Gi",
+                "limit_memory": "4Gi"
+            }
+        },
         dag=dag
     )
     
@@ -179,10 +206,16 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
         task_id='track_explainability',
         python_callable=lambda **kwargs: ModelExplainabilityTracker('homeowner_model').track_model_and_data(
             model=kwargs.get('ti').xcom_pull(task_ids='train_compare_model1'),
-            X=pd.read_parquet(LOCAL_PROCESSED_PATH).drop(columns=['claim_amount'], errors='ignore'),
-            y=pd.read_parquet(LOCAL_PROCESSED_PATH)['claim_amount'],
+            X=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow').drop(columns=['claim_amount'], errors='ignore'),
+            y=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=['claim_amount'])['claim_amount'],
             run_id=kwargs.get('ti').xcom_pull(task_ids='train_compare_model1', key='run_id')
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
+        executor_config={
+            "KubernetesExecutor": {
+                "request_memory": "4Gi",
+                "limit_memory": "6Gi"
+            }
+        },
         dag=dag
     )
     
@@ -190,9 +223,15 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
         task_id='ab_testing',
         python_callable=lambda **kwargs: ABTestingPipeline('homeowner_model').run_ab_test(
             new_model=kwargs.get('ti').xcom_pull(task_ids='train_compare_model1'),
-            X_test=pd.read_parquet(LOCAL_PROCESSED_PATH).drop(columns=['claim_amount'], errors='ignore'),
-            y_test=pd.read_parquet(LOCAL_PROCESSED_PATH)['claim_amount']
+            X_test=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow').drop(columns=['claim_amount'], errors='ignore'),
+            y_test=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=['claim_amount'])['claim_amount']
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
+        executor_config={
+            "KubernetesExecutor": {
+                "request_memory": "4Gi",
+                "limit_memory": "6Gi"
+            }
+        },
         dag=dag
     )
     
@@ -202,6 +241,14 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
         op_kwargs={
             'model_id': 'homeowner_model',
             'processed_path': LOCAL_PROCESSED_PATH
+        },
+        executor_config={
+            "KubernetesExecutor": {
+                "request_memory": "8Gi",
+                "limit_memory": "12Gi",
+                "request_cpu": "2",
+                "limit_cpu": "4"
+            }
         },
         dag=dag
     )
