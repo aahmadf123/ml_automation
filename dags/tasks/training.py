@@ -256,254 +256,259 @@ def find_best_hyperparams(X_train, y_train, max_evals=50):
     return best_params
 
 def train_and_compare_fn(model_id: str, processed_path: str) -> None:
-    """Train pipeline with baseline skip, HyperOpt, MLflow logging, and notifications."""
+    """
+    Train and compare ML models with optimized data loading using pyarrow.
+    
+    Args:
+        model_id: Identifier for the model
+        processed_path: Path to the processed data file
+    """
     # Import slack only when needed
-    from utils.slack import post as slack_msg
+    from utils.slack import post as send_message
     
-    # Load processed data
+    run_id = None
+    model = None
+    start_time = time.time()
+    metrics = {}
+    
     try:
-        df = pd.read_parquet(processed_path)
-        logger.info(f"Loaded processed data from {processed_path}: {df.shape}")
-    except Exception as e:
-        logger.error(f"Failed to load processed data: {e}")
-        slack_msg(
-            channel="#alerts",
-            title="❌ Training Failed",
-            details=f"Could not load processed data: {e}",
-            urgency="high"
+        # Set up MLflow tracking
+        mlflow.set_tracking_uri(MLFLOW_URI)
+        mlflow.set_experiment(MLFLOW_EXPERIMENT)
+        logger.info(f"MLflow tracking setup complete. URI: {MLFLOW_URI}, Experiment: {MLFLOW_EXPERIMENT}")
+        
+        # Load the data using pyarrow optimizations
+        logger.info(f"Loading data from {processed_path} with pyarrow optimizations")
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import pyarrow.dataset as ds
+        import gc
+        
+        # Create dataset with multi-threading
+        dataset = ds.dataset(processed_path, format="parquet")
+        
+        # Scan the dataset efficiently
+        scanner = ds.Scanner.from_dataset(
+            dataset,
+            use_threads=True,
+            memory_pool=pa.default_memory_pool()
         )
-        raise
-    
-    # Create directory for artifacts
-    temp_dir = tempfile.mkdtemp()
-    model_file = os.path.join(temp_dir, f"{model_id}.joblib")
-    
-    # Prepare data
-    target_column = "claim_amount"
-    if target_column not in df.columns:
-        error_msg = f"Target column '{target_column}' not found in dataset"
-        logger.error(error_msg)
-        slack_msg(
-            channel="#alerts",
-            title="❌ Training Failed",
-            details=error_msg,
-            urgency="high"
-        )
-        raise ValueError(error_msg)
-    
-    X = df.drop(columns=[target_column])
-    y = df[target_column]
-    
-    # Try to use time-series split if date column exists
-    try:
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-            df = df.sort_values('date')
+        
+        # Load as table and convert to pandas
+        table = scanner.to_table()
+        df = table.to_pandas()
+        
+        # Free memory
+        del table
+        gc.collect()
+        
+        logger.info(f"Data loaded, shape={df.shape}")
+        
+        # Prepare features and target
+        try:
+            target_col = "claim_amount"
+            X = df.drop(columns=[target_col], errors='ignore')
+            y = df[target_col]
+        except KeyError as e:
+            logger.error(f"KeyError while preparing features: {e}")
+            raise
             
-            # Remove date for modeling
-            X = X.drop(columns=['date'])
-            
-            # Time-based split (80/20)
-            split_idx = int(len(df) * 0.8)
-            X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-            y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-            
-            logger.info(f"Using time-series split: {X_train.shape}, {X_test.shape}")
-        else:
+        # Free memory by removing original dataframe
+        del df
+        gc.collect()
+        
+        # Split the data
+        try:
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=0.2, random_state=42
             )
-            logger.info(f"Using random train/test split: {X_train.shape}, {X_test.shape}")
-    except Exception as e:
-        logger.warning(f"Error using time-series split: {e}. Falling back to random split.")
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
-    
-    # Calculate baseline metrics for skip check
-    baseline_pred = np.ones(len(y_test)) * y_train.mean()
-    baseline_rmse = np.sqrt(mean_squared_error(y_test, baseline_pred))
-    
-    # Check if we can skip training
-    if should_skip_training(model_id, baseline_rmse * 0.8):  # Assume we can achieve 20% improvement over baseline
-        slack_msg(
-            channel="#alerts",
-            title="⏭️ Training Skipped",
-            details=f"Training skipped for {model_id} as current model is sufficient",
-            urgency="low"
-        )
-        return
-    
-    # Start MLflow run
-    mlflow.set_tracking_uri(MLFLOW_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
-    
-    with mlflow.start_run(run_name=f"{model_id}_training") as run:
-        run_id = run.info.run_id
-        logger.info(f"Started MLflow run: {run_id}")
-        
-        # Find best hyperparameters
-        logger.info("Finding best hyperparameters with Hyperopt")
-        send_websocket_update_sync(model_id, {"status": "hyperparameter_tuning"}, "running")
-        
-        max_evals = int(Variable.get("HYPEROPT_MAX_EVALS", default_var="30"))
-        best_params = find_best_hyperparams(X_train, y_train, max_evals=max_evals)
-        
-        # Log hyperparameters
-        mlflow.log_params(best_params)
-        
-        # Train final model with best parameters
-        logger.info(f"Training final model with best parameters: {best_params}")
-        send_websocket_update_sync(model_id, {"status": "training"}, "running")
-        
-        final_model = xgb.XGBRegressor(
-            objective='reg:squarederror',
-            random_state=42,
-            **best_params
-        )
-        
-        final_model.fit(X_train, y_train)
-        
-        # Make predictions and calculate metrics
-        y_pred = final_model.predict(X_test)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-        mse = mean_squared_error(y_test, y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        
-        # Log metrics
-        final_metrics = {
-            "rmse": rmse,
-            "mse": mse,
-            "mae": mae,
-            "r2": r2,
-            "baseline_rmse": baseline_rmse,
-            "improvement": (baseline_rmse - rmse) / baseline_rmse
-        }
-        
-        mlflow.log_metrics(final_metrics)
-        
-        # Generate visualizations
-        logger.info("Generating visualizations")
-        send_websocket_update_sync(model_id, {"status": "visualizing"}, "running")
-        
-        # SHAP plots
-        shap_plots = generate_shap_plots(final_model, X_test.iloc[:100], temp_dir)  # Limit to 100 samples for speed
-        for name, path in shap_plots.items():
-            mlflow.log_artifact(path, "shap_plots")
-            # Upload to S3
-            s3_key = f"visuals/shap/{model_id}_{name}.png"
-            s3_upload(path, s3_key)
-        
-        # Actual vs Predicted plot
-        avs_pred_path = os.path.join(temp_dir, "actual_vs_predicted.png")
-        plot_actual_vs_predicted(y_test.values, y_pred, avs_pred_path)
-        mlflow.log_artifact(avs_pred_path, "plots")
-        # Upload to S3
-        s3_key = f"visuals/avs_pred/{model_id}_avs_pred.png"
-        s3_upload(avs_pred_path, s3_key)
-        
-        # Log model
-        mlflow.xgboost.log_model(final_model, "model")
-        
-        # Register model
-        try:
-            model_uri = f"runs:/{run_id}/model"
-            mlflow.register_model(model_uri, model_id)
-            logger.info(f"Model registered as {model_id}")
+            logger.info(f"Data split complete: train={X_train.shape}, test={X_test.shape}")
         except Exception as e:
-            logger.warning(f"Failed to register model: {e}")
-        
-        # Try to promote model to Production
-        try:
-            client = MlflowClient()
-            latest_version = client.get_latest_versions(model_id, stages=["None"])[0].version
+            logger.error(f"Error splitting data: {e}")
+            raise
             
-            # If this is the first version, promote directly
-            all_versions = client.get_latest_versions(model_id)
-            if len(all_versions) == 1:
-                client.transition_model_version_stage(
-                    name=model_id,
-                    version=latest_version,
-                    stage="Production"
-                )
-                logger.info(f"Model {model_id} version {latest_version} promoted to Production as first version")
-            else:
-                # Compare with current production version
-                try:
-                    production_versions = client.get_latest_versions(model_id, stages=["Production"])
-                    if production_versions:
-                        prod_version = production_versions[0]
-                        prod_run = client.get_run(prod_version.run_id)
-                        prod_rmse = prod_run.data.metrics.get("rmse", float('inf'))
-                        
-                        # If new model is better, promote it
-                        if rmse < prod_rmse * 0.95:  # 5% improvement threshold
-                            client.transition_model_version_stage(
-                                name=model_id,
-                                version=latest_version,
-                                stage="Production",
-                                archive_existing_versions=True
-                            )
-                            logger.info(f"Model {model_id} version {latest_version} promoted to Production")
-                            slack_msg(
-                                channel="#alerts",
-                                title="🚀 Model Promoted",
-                                details=f"Model {model_id} v{latest_version} promoted to Production with "
-                                        f"{((prod_rmse - rmse)/prod_rmse)*100:.1f}% RMSE improvement",
-                                urgency="high"
-                            )
-                        else:
-                            logger.info(f"New model not significantly better: {rmse:.4f} vs {prod_rmse:.4f}")
-                            client.transition_model_version_stage(
-                                name=model_id,
-                                version=latest_version,
-                                stage="Staging"
-                            )
-                            logger.info(f"Model {model_id} version {latest_version} moved to Staging")
-                            slack_msg(
-                                channel="#alerts",
-                                title="📊 New Model in Staging",
-                                details=f"Model {model_id} v{latest_version} moved to Staging stage\n"
-                                        f"Current RMSE: {rmse:.4f}\nProduction RMSE: {prod_rmse:.4f}",
-                                urgency="medium"
-                            )
-                    else:
-                        # No production version found, promote this one
-                        client.transition_model_version_stage(
-                            name=model_id,
-                            version=latest_version,
-                            stage="Production"
-                        )
-                        logger.info(f"Model {model_id} version {latest_version} promoted to Production (no existing production version)")
-                except Exception as e:
-                    logger.warning(f"Error comparing with production model: {e}")
-                    # Move to staging as fallback
+        # Calculate preliminary RMSE to check if we need to train
+        baseline_model = xgb.XGBRegressor(objective='reg:squarederror', random_state=42)
+        baseline_model.fit(X_train, y_train)
+        baseline_preds = baseline_model.predict(X_test)
+        baseline_rmse = np.sqrt(mean_squared_error(y_test, baseline_preds))
+        
+        logger.info(f"Baseline RMSE: {baseline_rmse:.4f}")
+        
+        # Check if we should skip training
+        if should_skip_training(model_id, baseline_rmse):
+            send_message(
+                channel="#ml-updates",
+                title="🔄 Training Skipped",
+                details=f"Skipped training for {model_id}. Current RMSE: {baseline_rmse:.4f}",
+                urgency="low"
+            )
+            metrics = {
+                "rmse": float(baseline_rmse),
+                "status": "skipped",
+                "timestamp": datetime.now().isoformat()
+            }
+            send_websocket_update_sync(model_id, metrics, "skipped")
+            return None
+            
+        # Start MLflow run
+        with mlflow.start_run() as run:
+            run_id = run.info.run_id
+            logger.info(f"Started MLflow run: {run_id}")
+            
+            # Find optimal hyperparameters
+            logger.info("Finding optimal hyperparameters...")
+            max_evals = MODEL_CONFIG.get('max_evals', 30)
+            best_params = find_best_hyperparams(X_train, y_train, max_evals=max_evals)
+            mlflow.log_params(best_params)
+            
+            # Train the final model with best parameters
+            logger.info(f"Training final model with params: {best_params}")
+            model = xgb.XGBRegressor(
+                objective='reg:squarederror',
+                random_state=42,
+                **best_params
+            )
+            
+            model.fit(X_train, y_train)
+            
+            # Evaluate the model
+            y_pred = model.predict(X_test)
+            
+            # Calculate metrics
+            metrics = {
+                "rmse": float(np.sqrt(mean_squared_error(y_test, y_pred))),
+                "mse": float(mean_squared_error(y_test, y_pred)),
+                "mae": float(mean_absolute_error(y_test, y_pred)),
+                "r2": float(r2_score(y_test, y_pred)),
+                "baseline_rmse": float(baseline_rmse),
+                "improvement": float((baseline_rmse - metrics["rmse"]) / baseline_rmse * 100)
+            }
+            
+            # Log metrics
+            for name, value in metrics.items():
+                mlflow.log_metric(name, value)
+                
+            # Generate and log plots
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                # SHAP plots
+                shap_plots = generate_shap_plots(model, X_test, tmp_dir)
+                for name, path in shap_plots.items():
+                    mlflow.log_artifact(path)
+                    
+                # Actual vs Predicted plot
+                avs_path = os.path.join(tmp_dir, "actual_vs_predicted.png")
+                plot_actual_vs_predicted(y_test, y_pred, avs_path)
+                mlflow.log_artifact(avs_path)
+                
+                # Upload plots to S3 for dashboard
+                for name, path in shap_plots.items():
+                    s3_key = f"{MODEL_KEY_PREFIX}/visuals/shap/{model_id}_{name}.png"
+                    s3_upload(path, s3_key)
+                    
+                s3_key = f"{MODEL_KEY_PREFIX}/visuals/avs_pred/{model_id}_avs_pred.png"
+                s3_upload(avs_path, s3_key)
+                
+            # Log the model
+            mlflow.xgboost.log_model(model, "model")
+            
+            # Register the model
+            model_uri = f"runs:/{run_id}/model"
+            registered_model = mlflow.register_model(model_uri, model_id)
+            
+            # Promote to production if it's better
+            client = MlflowClient()
+            try:
+                production_versions = client.get_latest_versions(model_id, stages=["Production"])
+                
+                if not production_versions:
+                    logger.info(f"No production model found, promoting {model_id} version {registered_model.version}")
                     client.transition_model_version_stage(
                         name=model_id,
-                        version=latest_version,
-                        stage="Staging"
+                        version=registered_model.version,
+                        stage="Production"
                     )
-                    logger.info(f"Model {model_id} version {latest_version} moved to Staging (fallback)")
-        except Exception as e:
-            logger.warning(f"Failed to manage model version: {e}")
-    
-    # Save the model file for use outside MLflow
-    joblib.dump(final_model, model_file)
-    s3_upload(model_file, f"models/{model_id}.joblib")
-
-    # Notify completion
-    slack_msg(
-        channel="#alerts",
-        title=f"✅ {model_id} training complete",
-        details=f"RMSE={rmse:.4f}, R²={r2:.4f}",
-        urgency="low",
-    )
-    
-    # Send WebSocket update for completion
-    send_websocket_update_sync(model_id, final_metrics, "complete")
-    
-    return run_id
+                else:
+                    prod_version = production_versions[0]
+                    prod_run = client.get_run(prod_version.run_id)
+                    prod_rmse = prod_run.data.metrics.get("rmse", float('inf'))
+                    
+                    improvement_pct = (prod_rmse - metrics["rmse"]) / prod_rmse * 100
+                    
+                    if metrics["rmse"] < prod_rmse:
+                        logger.info(f"New model performs better: {metrics['rmse']:.4f} vs {prod_rmse:.4f}")
+                        client.transition_model_version_stage(
+                            name=model_id,
+                            version=registered_model.version,
+                            stage="Production"
+                        )
+                        
+                        # Archive the old version
+                        client.transition_model_version_stage(
+                            name=model_id,
+                            version=prod_version.version,
+                            stage="Archived"
+                        )
+                        
+                        send_message(
+                            channel="#ml-updates",
+                            title="🚀 New Model Promoted",
+                            details=f"New {model_id} model promoted to Production.\n"
+                                    f"RMSE: {metrics['rmse']:.4f} (improved by {improvement_pct:.2f}%)",
+                            urgency="high"
+                        )
+                    else:
+                        logger.info(f"New model does not outperform current production model")
+                        client.transition_model_version_stage(
+                            name=model_id,
+                            version=registered_model.version,
+                            stage="Staging"
+                        )
+                        
+                        send_message(
+                            channel="#ml-updates",
+                            title="⚠️ Model Not Promoted",
+                            details=f"New {model_id} model (RMSE: {metrics['rmse']:.4f}) kept in Staging "
+                                    f"as it does not outperform Production (RMSE: {prod_rmse:.4f})",
+                            urgency="medium"
+                        )
+            except Exception as e:
+                logger.error(f"Error promoting model: {e}")
+                send_message(
+                    channel="#alerts",
+                    title="❌ Model Promotion Failed",
+                    details=f"Error promoting {model_id} model: {str(e)}",
+                    urgency="high"
+                )
+                
+        # Record execution time
+        elapsed = time.time() - start_time
+        metrics["execution_time"] = elapsed
+        metrics["status"] = "success"
+        metrics["timestamp"] = datetime.now().isoformat()
+        
+        # Send update via WebSocket
+        send_websocket_update_sync(model_id, metrics, "success")
+        
+        return model
+        
+    except Exception as e:
+        error_msg = f"Error in model training: {str(e)}"
+        logger.error(error_msg)
+        send_message(
+            channel="#alerts",
+            title="❌ Model Training Failed",
+            details=f"Error training {model_id} model: {error_msg}",
+            urgency="high"
+        )
+        
+        # Send update via WebSocket
+        metrics["status"] = "failed"
+        metrics["error"] = str(e)
+        metrics["timestamp"] = datetime.now().isoformat()
+        send_websocket_update_sync(model_id, metrics, "failed")
+        
+        raise
 
 # backward‑compatibility alias
 train_xgboost_hyperopt = train_and_compare_fn

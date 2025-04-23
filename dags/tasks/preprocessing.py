@@ -54,9 +54,28 @@ quality_monitor = DataQualityMonitor()
 
 def load_data_to_dataframe(parquet_path: str) -> pd.DataFrame:
     """
-    Read Parquet from local path into DataFrame.
+    Read Parquet from local path into DataFrame with advanced pyarrow optimizations.
     """
-    df = pd.read_parquet(parquet_path)
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    
+    # Use multi-threaded reading for better performance
+    table = pq.read_table(parquet_path, use_threads=True, memory_pool=pa.default_memory_pool())
+    
+    # Convert to pandas
+    df = table.to_pandas()
+    
+    # Downcast numeric columns to reduce memory usage
+    for col in df.select_dtypes(include=['float64']).columns:
+        df[col] = pd.to_numeric(df[col], downcast='float')
+    for col in df.select_dtypes(include=['int64']).columns:
+        df[col] = pd.to_numeric(df[col], downcast='integer')
+    
+    # Clean up the Arrow table to free memory
+    del table
+    import gc
+    gc.collect()
+    
     logging.info(f"Loaded data from {parquet_path}, shape={df.shape}")
     return df
 
@@ -189,7 +208,7 @@ def generate_profile_report(df: pd.DataFrame, output_path: str = PROFILE_REPORT_
 def preprocess_data(data_path, output_path):
     """
     Preprocess the data and perform quality checks.
-    Uses memory-efficient processing to handle large datasets.
+    Uses advanced memory-efficient processing with pyarrow 14.0.2 optimizations.
     """
     try:
         # Import necessary dependencies
@@ -199,6 +218,10 @@ def preprocess_data(data_path, output_path):
         import os
         import json
         import gc
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import pyarrow.dataset as ds
+        import pyarrow.compute as pc
         from utils.storage import upload as s3_upload
         from utils.slack import post as send_message
         from tasks.data_quality import DataQualityMonitor
@@ -211,36 +234,59 @@ def preprocess_data(data_path, output_path):
         
         # Load data with memory optimization
         logger = logging.getLogger(__name__)
-        logger.info(f"Loading data from {data_path} with memory optimization")
+        logger.info(f"Loading data from {data_path} with advanced pyarrow 14.0.2 optimizations")
         
-        # Load with lower memory usage by specifying numeric dtypes
-        dtypes = {
-            # Add specific column dtypes if known
-            # 'numeric_col1': 'float32',
-            # 'numeric_col2': 'float32',
-        }
+        # First, explore the dataset schema
+        dataset = ds.dataset(data_path, format="parquet")
+        schema = dataset.schema
         
-        # Read in chunks to avoid memory issues
-        chunk_size = 100000  # Adjust based on available memory
-        chunks = []
+        # Log schema information
+        logger.info(f"Dataset schema: {schema}")
         
-        # Process in chunks
-        for chunk in pd.read_parquet(data_path, chunksize=chunk_size):
-            # Downcast numeric columns to reduce memory usage
-            for col in chunk.select_dtypes(include=['float64']).columns:
-                chunk[col] = pd.to_numeric(chunk[col], downcast='float')
-            for col in chunk.select_dtypes(include=['int64']).columns:
-                chunk[col] = pd.to_numeric(chunk[col], downcast='integer')
-                
-            chunks.append(chunk)
+        # Create a scanner with multi-threading enabled
+        scanner = ds.Scanner.from_dataset(
+            dataset,
+            use_threads=True,
+            memory_pool=pa.default_memory_pool()
+        )
+        
+        # Process in batches to control memory usage
+        batch_size = 50000
+        table_batches = []
+        processed_rows = 0
+        
+        # Custom batch processing function
+        def process_batch(batch):
+            nonlocal processed_rows
+            # Convert to pandas for processing
+            df_batch = batch.to_pandas()
+            processed_rows += len(df_batch)
             
-        # Combine chunks
-        data = pd.concat(chunks, ignore_index=True)
-        logger.info(f"Data loaded, shape={data.shape}")
+            # Downcast numeric columns to reduce memory usage
+            for col in df_batch.select_dtypes(include=['float64']).columns:
+                df_batch[col] = pd.to_numeric(df_batch[col], downcast='float')
+            for col in df_batch.select_dtypes(include=['int64']).columns:
+                df_batch[col] = pd.to_numeric(df_batch[col], downcast='integer')
+                
+            logger.info(f"Processed {len(df_batch)} rows (total: {processed_rows})")
+            return df_batch
         
-        # Free memory
-        del chunks
+        # Read and process batches
+        data_batches = []
+        for batch in scanner.to_batches(batch_size=batch_size):
+            df_batch = process_batch(batch)
+            data_batches.append(df_batch)
+            
+            # Clean up to free memory
+            gc.collect()
+        
+        # Combine processed batches
+        logger.info("Combining processed batches")
+        data = pd.concat(data_batches, ignore_index=True)
+        del data_batches
         gc.collect()
+        
+        logger.info(f"Data loaded and preprocessed, shape={data.shape}")
         
         # Perform initial quality check
         logger.info("Performing initial quality check")
@@ -281,14 +327,21 @@ def preprocess_data(data_path, output_path):
                 urgency="medium"
             )
         
-        # Save preprocessed data
-        logger.info(f"Saving preprocessed data to {output_path}")
-        # Save in chunks to avoid memory issues
-        data.to_parquet(
+        # Save preprocessed data using advanced PyArrow features
+        logger.info(f"Saving preprocessed data to {output_path} with ZSTD compression")
+        
+        # Convert pandas to pyarrow Table
+        arrow_table = pa.Table.from_pandas(data)
+        
+        # Write with optimized settings
+        pq.write_table(
+            arrow_table, 
             output_path,
-            engine='pyarrow',
-            compression='snappy',  # More memory-efficient than default
-            index=False
+            compression='zstd',  # Using ZSTD for better compression ratio
+            compression_level=3,  # Balanced compression level (range 1-22)
+            use_dictionary=True,
+            write_statistics=True,
+            use_threads=True
         )
         
         # Save quality reports
@@ -300,7 +353,7 @@ def preprocess_data(data_path, output_path):
         }
         
         # Free memory before returning
-        del data
+        del data, arrow_table
         gc.collect()
         
         return output_path

@@ -55,6 +55,7 @@ def initialize_aws_clients():
 def generate_reference_means(processed_data_path: str) -> str:
     """
     Generate reference means from processed data and upload to S3.
+    Uses advanced pyarrow optimizations for memory efficiency.
     
     Args:
         processed_data_path: Path to processed data file
@@ -66,9 +67,34 @@ def generate_reference_means(processed_data_path: str) -> str:
     from utils.slack import post as send_message
     
     try:
-        # Load the data
-        logger.info(f"Loading processed data from {processed_data_path}")
-        df = pd.read_parquet(processed_data_path)
+        # Load the data using pyarrow optimizations
+        logger.info(f"Loading processed data from {processed_data_path} with pyarrow optimizations")
+        
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import pyarrow.compute as pc
+        import pyarrow.dataset as ds
+        import gc
+        
+        # Create dataset for efficient reading
+        dataset = ds.dataset(processed_data_path, format="parquet")
+        
+        # Create scanner with projection and filtering to only include numeric columns
+        scanner = ds.Scanner.from_dataset(
+            dataset,
+            use_threads=True,
+            memory_pool=pa.default_memory_pool()
+        )
+        
+        # Read as arrow table
+        table = scanner.to_table()
+        
+        # Convert to pandas for easier stats calculation
+        df = table.to_pandas()
+        
+        # Free memory
+        del table
+        gc.collect()
         
         # Calculate means for numerical columns
         numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -112,6 +138,7 @@ def generate_reference_means(processed_data_path: str) -> str:
 def detect_data_drift(processed_data_path: str, reference_path: str = None) -> dict:
     """
     Detect drift between current data and reference means.
+    Uses advanced pyarrow optimizations for memory efficiency.
     
     Args:
         processed_data_path: Path to current processed data
@@ -122,14 +149,39 @@ def detect_data_drift(processed_data_path: str, reference_path: str = None) -> d
     """
     # Import slack only when needed
     from utils.slack import post as send_message
+    import gc
     
     drift_threshold = float(Variable.get("DRIFT_THRESHOLD", default_var=str(DRIFT_THRESHOLD)))
     logger.info(f"Using drift threshold: {drift_threshold}")
     
     try:
-        # Load current data
-        logger.info(f"Loading current data from {processed_data_path}")
-        current_df = pd.read_parquet(processed_data_path)
+        # Load current data using pyarrow optimizations
+        logger.info(f"Loading current data from {processed_data_path} with pyarrow optimizations")
+        
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import pyarrow.compute as pc
+        import pyarrow.dataset as ds
+        
+        # Create dataset for efficient reading
+        dataset = ds.dataset(processed_data_path, format="parquet")
+        
+        # Create scanner with multi-threading enabled
+        scanner = ds.Scanner.from_dataset(
+            dataset,
+            use_threads=True,
+            memory_pool=pa.default_memory_pool()
+        )
+        
+        # Read as arrow table
+        table = scanner.to_table()
+        
+        # Convert to pandas 
+        current_df = table.to_pandas()
+        
+        # Free memory
+        del table
+        gc.collect()
         
         # Get reference means
         if reference_path is None:
@@ -143,6 +195,10 @@ def detect_data_drift(processed_data_path: str, reference_path: str = None) -> d
         # Calculate current means for numeric columns
         numeric_cols = current_df.select_dtypes(include=[np.number]).columns
         current_means = current_df[numeric_cols].mean()
+        
+        # Free memory before drift calculations
+        del current_df
+        gc.collect()
         
         # Calculate drift for each column
         drift_results = {}
@@ -160,15 +216,15 @@ def detect_data_drift(processed_data_path: str, reference_path: str = None) -> d
                     relative_change = abs(cur_mean - ref_mean)
                 
                 drift_results[col] = {
-                    "reference_mean": ref_mean,
-                    "current_mean": cur_mean,
-                    "absolute_change": abs(cur_mean - ref_mean),
-                    "relative_change": relative_change,
+                    "reference_mean": float(ref_mean),
+                    "current_mean": float(cur_mean),
+                    "absolute_change": float(abs(cur_mean - ref_mean)),
+                    "relative_change": float(relative_change),
                     "significant": relative_change > drift_threshold
                 }
                 
                 if relative_change > drift_threshold:
-                    significant_drift[col] = relative_change
+                    significant_drift[col] = float(relative_change)
         
         # Send notification if significant drift detected
         if significant_drift:

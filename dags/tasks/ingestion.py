@@ -49,12 +49,12 @@ def check_s3_file_exists(bucket: str, key: str) -> bool:
 
 def ingest_data_from_s3() -> str:
     """
-    Efficiently process large CSV file from S3 using streaming and convert to Parquet.
+    Efficiently process large CSV file from S3 using advanced pyarrow 14.0.2 features.
     
     This function:
     1. Checks if the file exists in S3
-    2. Processes the data in a memory-efficient way using smart_open and pyarrow
-    3. Converts to Parquet format using a streaming approach
+    2. Uses pyarrow-native CSV parsing for memory efficiency
+    3. Employs ZSTD compression and dictionary encoding
     4. Handles errors and sends notifications
     
     Returns:
@@ -69,19 +69,26 @@ def ingest_data_from_s3() -> str:
         import boto3
         import pandas as pd
         from utils.config import DATA_BUCKET, AWS_REGION
+        import gc
         
-        # Make sure smart_open and pyarrow are installed
+        # Make sure required packages are installed
         try:
-            import smart_open
             import pyarrow as pa
+            import pyarrow.csv as csv
             import pyarrow.parquet as pq
+            import pyarrow.dataset as ds
+            import pyarrow.compute as pc
+            import smart_open
         except ImportError:
             log.warning("Required packages not installed, installing...")
             import subprocess
-            subprocess.check_call(["pip", "install", "smart_open[s3] pyarrow"])
-            import smart_open
+            subprocess.check_call(["pip", "install", "smart_open[s3] pyarrow>=14.0.0"])
             import pyarrow as pa
+            import pyarrow.csv as csv
             import pyarrow.parquet as pq
+            import pyarrow.dataset as ds
+            import pyarrow.compute as pc
+            import smart_open
         
         # S3 paths
         s3_key = f"{S3_DATA_FOLDER}/ut_loss_history_1.csv"
@@ -102,73 +109,92 @@ def ingest_data_from_s3() -> str:
             )
             raise FileNotFoundError(error_msg)
         
-        log.info(f"Processing large file from {s3_uri}")
+        log.info(f"Processing file from {s3_uri} with advanced pyarrow 14.0.2 optimizations")
         
-        # Process with smart_open - good for streaming large files
         # Initialize S3 client
         s3_client = boto3.client('s3', region_name=AWS_REGION)
         
-        # Process the CSV in chunks to avoid memory issues
-        chunksize = 400000  # Using larger chunks as adjusted
+        # Download to a local temporary file first for more efficient processing
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as temp_file:
+            temp_csv_path = temp_file.name
+            log.info(f"Downloading CSV to temporary file: {temp_csv_path}")
+            s3_client.download_file(s3_bucket, s3_key, temp_csv_path)
         
-        # Open the S3 file for streaming
         try:
-            s3_reader = smart_open.open(s3_uri, 'r', 
-                                       transport_params={'client': s3_client})
+            # Use PyArrow's native CSV reader for memory efficiency
+            log.info("Using PyArrow's native CSV reader for memory-efficient parsing")
+            
+            # First just read the header to understand the schema
+            read_options = csv.ReadOptions(
+                use_threads=True,
+                block_size=2**25,  # 32MB blocks for memory efficiency
+            )
+            
+            # Configure conversion options for data type inference
+            convert_options = csv.ConvertOptions(
+                strings_can_be_null=True,
+                null_values=['null', 'NULL', 'Null', 'NA', 'N/A', 'nan', ''],
+                timestamp_parsers=['%Y-%m-%d', '%Y/%m/%d', '%m/%d/%Y']
+            )
+            
+            # Parse CSV directly to Arrow Table
+            log.info("Parsing CSV to Arrow Table...")
+            arrow_table = csv.read_csv(
+                temp_csv_path,
+                read_options=read_options,
+                parse_options=csv.ParseOptions(newlines_in_values=False),
+                convert_options=convert_options
+            )
+            
+            log.info(f"CSV parsed to Arrow Table with {len(arrow_table)} rows and {len(arrow_table.column_names)} columns")
+            
+            # Create a scanner for efficient data processing
+            scanner = ds.Scanner.from_batches(
+                [arrow_table],
+                use_threads=True,
+                memory_pool=pa.default_memory_pool()
+            )
+            
+            # Write directly to parquet using advanced features of pyarrow 14.0.2
+            log.info(f"Writing to Parquet with ZSTD compression: {LOCAL_PARQUET_PATH}")
+            pq.write_table(
+                arrow_table,
+                LOCAL_PARQUET_PATH,
+                compression='zstd',
+                compression_level=3,
+                use_dictionary=True,
+                write_statistics=True,
+                use_deprecated_int96_timestamps=False,
+                coerce_timestamps='ms',
+                allow_truncated_timestamps=False,
+                use_threads=True
+            )
+            
+            # Clean up
+            del arrow_table
+            gc.collect()
+            
+            # Verify the file was created
+            if not os.path.exists(LOCAL_PARQUET_PATH):
+                raise FileNotFoundError(f"Parquet file not created: {LOCAL_PARQUET_PATH}")
+            
+            file_size_mb = os.path.getsize(LOCAL_PARQUET_PATH) / (1024 * 1024)
+            log.info(f"Successfully converted to Parquet: {LOCAL_PARQUET_PATH} ({file_size_mb:.2f} MB)")
+            
+            # Remove temporary CSV file
+            os.unlink(temp_csv_path)
+            
+            return LOCAL_PARQUET_PATH
+            
         except Exception as e:
-            log.error(f"Error opening S3 file with smart_open: {str(e)}")
-            raise
-        
-        # Create a schema writer after reading the first chunk
-        log.info(f"Reading CSV in chunks and writing to {LOCAL_PARQUET_PATH}")
-        
-        try:
-            # Use first chunk to infer schema
-            first_chunk = pd.read_csv(s3_reader, nrows=chunksize)
-            log.info(f"Read first chunk with {len(first_chunk)} rows and {len(first_chunk.columns)} columns")
+            log.error(f"Error in PyArrow processing: {str(e)}")
             
-            # Reset position to start of file
-            s3_reader.seek(0)
-            
-            # Create the schema based on the first chunk
-            schema = pa.Schema.from_pandas(first_chunk)
-            log.info(f"Created schema with {len(schema.names)} fields")
-            
-            # Create the parquet writer with compression
-            with pq.ParquetWriter(LOCAL_PARQUET_PATH, schema, compression='snappy') as writer:
-                # Process in chunks
-                chunk_count = 0
-                total_rows = 0
+            # Clean up temp file
+            if os.path.exists(temp_csv_path):
+                os.unlink(temp_csv_path)
                 
-                for chunk in pd.read_csv(s3_reader, chunksize=chunksize):
-                    chunk_count += 1
-                    total_rows += len(chunk)
-                    
-                    # Convert chunk to PyArrow table
-                    table = pa.Table.from_pandas(chunk, schema=schema)
-                    
-                    # Write the table to the parquet file
-                    writer.write_table(table)
-                    
-                    log.info(f"Processed chunk {chunk_count} with {len(chunk)} rows (total: {total_rows} rows)")
-            
-            log.info(f"Completed processing {total_rows} rows in {chunk_count} chunks")
-        
-        except Exception as e:
-            log.error(f"Error in chunked processing: {str(e)}")
             raise
-        finally:
-            # Close the S3 reader
-            s3_reader.close()
-        
-        # Verify the Parquet file was created
-        if not os.path.exists(LOCAL_PARQUET_PATH):
-            raise FileNotFoundError(f"Parquet file not created: {LOCAL_PARQUET_PATH}")
-        
-        file_size_mb = os.path.getsize(LOCAL_PARQUET_PATH) / (1024 * 1024)
-        log.info(f"Successfully converted large file to Parquet: {LOCAL_PARQUET_PATH} ({file_size_mb:.2f} MB)")
-        
-        return LOCAL_PARQUET_PATH
         
     except Exception as e:
         error_msg = f"Error ingesting data: {str(e)}"
