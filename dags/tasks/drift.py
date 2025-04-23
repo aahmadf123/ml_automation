@@ -82,8 +82,7 @@ def generate_reference_means(processed_data_path: str) -> str:
         # Create scanner with projection and filtering to only include numeric columns
         scanner = ds.Scanner.from_dataset(
             dataset,
-            use_threads=True,
-            memory_pool=pa.default_memory_pool()
+            use_threads=True
         )
         
         # Read as arrow table
@@ -169,8 +168,7 @@ def detect_data_drift(processed_data_path: str, reference_path: str = None) -> d
         # Create scanner with multi-threading enabled
         scanner = ds.Scanner.from_dataset(
             dataset,
-            use_threads=True,
-            memory_pool=pa.default_memory_pool()
+            use_threads=True
         )
         
         # Read as arrow table

@@ -243,11 +243,11 @@ def preprocess_data(data_path, output_path):
         # Log schema information
         logger.info(f"Dataset schema: {schema}")
         
-        # Create a scanner with multi-threading enabled
+        # Create scanner with multi-threading enabled - remove memory_pool parameter if it causes issues
         scanner = ds.Scanner.from_dataset(
             dataset,
-            use_threads=True,
-            memory_pool=pa.default_memory_pool()
+            use_threads=True
+            # Removed memory_pool parameter which might not be supported
         )
         
         # Process in batches to control memory usage
@@ -333,15 +333,15 @@ def preprocess_data(data_path, output_path):
         # Convert pandas to pyarrow Table
         arrow_table = pa.Table.from_pandas(data)
         
-        # Write with optimized settings
+        # Write with optimized settings - removing potentially unsupported parameters
         pq.write_table(
             arrow_table, 
             output_path,
             compression='zstd',  # Using ZSTD for better compression ratio
             compression_level=3,  # Balanced compression level (range 1-22)
             use_dictionary=True,
-            write_statistics=True,
-            use_threads=True
+            write_statistics=True
+            # Removed parameters that might not be supported
         )
         
         # Save quality reports

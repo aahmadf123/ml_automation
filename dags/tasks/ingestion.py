@@ -161,8 +161,7 @@ def ingest_data_from_s3() -> str:
                 write_statistics=True,
                 use_deprecated_int96_timestamps=False,
                 coerce_timestamps='ms',
-                allow_truncated_timestamps=False,
-                use_threads=True
+                allow_truncated_timestamps=False
             )
             
             # Clean up

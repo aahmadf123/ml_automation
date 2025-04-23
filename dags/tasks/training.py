@@ -290,8 +290,7 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
         # Scan the dataset efficiently
         scanner = ds.Scanner.from_dataset(
             dataset,
-            use_threads=True,
-            memory_pool=pa.default_memory_pool()
+            use_threads=True
         )
         
         # Load as table and convert to pandas
