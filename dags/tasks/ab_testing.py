@@ -17,8 +17,8 @@ from typing import Dict, List, Tuple
 from sklearn.metrics import mean_squared_error, r2_score
 import mlflow
 from mlflow.tracking import MlflowClient
-from utils.config import DATA_BUCKET, MODEL_KEY_PREFIX
-from utils.slack import post as slack_msg
+from plugins.utils.config import DATA_BUCKET, MODEL_KEY_PREFIX
+from plugins.utils.slack import post as slack_msg
 
 logger = logging.getLogger(__name__)
 

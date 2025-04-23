@@ -11,8 +11,8 @@ import time
 import pandas as pd
 import pandera as pa
 from pandera import Column, DataFrameSchema, Check
-from utils.config import DATA_BUCKET     # from the new config.py
-from utils.storage import upload       # your retrying S3 helper
+from plugins.utils.config import DATA_BUCKET     # from the new config.py
+from plugins.utils.storage import upload       # your retrying S3 helper
 
 # Define the expected schema for your processed data
 homeowner_schema = DataFrameSchema({

@@ -27,9 +27,9 @@ from tasks.schema_validation import validate_schema
 from agent_actions import handle_function_call
 import numpy as np
 from datetime import datetime
-from utils.storage import download as s3_download
-from utils.storage import upload as s3_upload
-from utils.slack import post as send_message
+from plugins.utils.storage import download as s3_download
+from plugins.utils.storage import upload as s3_upload
+from plugins.utils.slack import post as send_message
 from .data_quality import DataQualityMonitor
 
 # configure logging

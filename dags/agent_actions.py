@@ -13,9 +13,9 @@ from typing import Any, Dict, Optional, List
 
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from utils.slack import post as post_message
-from utils.airflow_api import trigger_dag as api_trigger_dag
-from utils.config import SLACK_WEBHOOK_URL, AIRFLOW_DAG_BASE_CONF, DATA_BUCKET
+from plugins.utils.slack import post as post_message
+from plugins.utils.airflow_api import trigger_dag as api_trigger_dag
+from plugins.utils.config import SLACK_WEBHOOK_URL, AIRFLOW_DAG_BASE_CONF, DATA_BUCKET
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(message)s")

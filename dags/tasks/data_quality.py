@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 from datetime import datetime, timedelta
 from scipy import stats
 import mlflow
-from utils.slack import post as send_message
+from plugins.utils.slack import post as send_message
 
 logger = logging.getLogger(__name__)
 
