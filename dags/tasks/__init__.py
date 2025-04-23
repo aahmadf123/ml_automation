@@ -28,8 +28,9 @@ from .schema_validation import validate_schema, snapshot_schema
 from .training import train_and_compare_fn
 from .model_explainability import ModelExplainabilityTracker
 from .ab_testing import ABTestingPipeline
-from .monitoring import DataQualityMonitor, generate_reference_means, detect_data_drift, self_healing, record_system_metrics, update_monitoring_with_ui_components
-from .data_quality import manual_override
+from .data_quality import DataQualityMonitor, manual_override
+from .drift import generate_reference_means, detect_data_drift, self_healing
+from .monitoring import record_system_metrics, update_monitoring_with_ui_components
 
 # Define exports
 __all__: List[str] = [
