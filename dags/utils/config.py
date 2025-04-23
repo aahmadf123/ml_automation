@@ -348,7 +348,7 @@ class ConfigManager:
             self._load_from_env()
             
             # Validate configuration
-            self._validate_config()
+            self.validate_config()
             
         except Exception as e:
             logger.error(f"Failed to load configuration: {str(e)}")
@@ -411,7 +411,7 @@ class ConfigManager:
             logger.error(f"Failed to load environment variables: {str(e)}")
             raise
             
-    def _validate_config(self) -> None:
+    def validate_config(self) -> None:
         """
         Validate configuration values.
         
@@ -494,5 +494,5 @@ class ConfigManager:
             logger.error(f"Failed to save configuration: {str(e)}")
             raise RuntimeError("Configuration saving failed") from e
 
-# Validate configuration on import
-ConfigManager().validate_config()
+# Create a default instance
+config = ConfigManager()

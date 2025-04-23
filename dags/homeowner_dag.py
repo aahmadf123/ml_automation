@@ -73,7 +73,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     Returns:
         Dict[str, PythonOperator]: Dictionary of task operators
     """
-    from dags.tasks import (
+    from .tasks import (
         ingest_data_from_s3,
         preprocess_data,
         validate_schema,

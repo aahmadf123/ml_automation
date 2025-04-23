@@ -13,7 +13,7 @@ from .config import (
     AWS_REGION,
     REFERENCE_KEY_PREFIX,
     DRIFT_THRESHOLD,
-    Config
+    ConfigManager
 )
 from .storage import upload, download
 from .slack import post
@@ -24,7 +24,7 @@ __all__ = [
     'AWS_REGION',
     'REFERENCE_KEY_PREFIX',
     'DRIFT_THRESHOLD',
-    'Config',
+    'ConfigManager',
     'upload',
     'download',
     'post',
