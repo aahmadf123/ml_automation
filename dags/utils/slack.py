@@ -143,6 +143,32 @@ class SlackManager:
             log.error(f"Channel validation failed: {str(e)}")
             return False
 
+# Create a singleton instance of SlackManager
+_manager = SlackManager()
+
+def post(
+    channel: str,
+    title: str,
+    details: str,
+    urgency: str = "normal"
+) -> Dict[str, Any]:
+    """
+    Post a message to Slack.
+    
+    Args:
+        channel: Slack channel to post to
+        title: Message title
+        details: Message details
+        urgency: Message urgency level (normal/high/critical)
+        
+    Returns:
+        Dict[str, Any]: Slack API response
+        
+    Raises:
+        SlackApiError: If message posting fails
+    """
+    return _manager.post(channel, title, details, urgency)
+
 def update_slack_notification_process_with_ui_components():
     """
     Placeholder function to update the Slack notification process with new UI components and endpoints.

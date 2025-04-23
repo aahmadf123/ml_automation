@@ -27,6 +27,7 @@ apache-airflow-providers-http==4.5.0
 apache-airflow-providers-postgres==5.6.0
 apache-airflow-providers-redis==3.3.1
 apache-airflow-providers-slack==7.3.0
+slack_sdk
 
 # WebSocket and Real-time Communication
 websockets==11.0.3

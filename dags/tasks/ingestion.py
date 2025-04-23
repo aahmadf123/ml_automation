@@ -64,10 +64,10 @@ def ingest_data_from_s3() -> str:
         FileNotFoundError: If the file doesn't exist in S3
         Exception: For other errors during ingestion
     """
-    from dags.utils.config import DATA_BUCKET
-    from dags.utils.storage import download as s3_download
-    from dags.utils.slack import post as send_message
-    from dags.tasks.cache import is_cache_valid, update_cache
+    from utils.config import DATA_BUCKET
+    from utils.storage import download as s3_download
+    from utils.slack import post as send_message
+    from .cache import is_cache_valid, update_cache
     
     s3_key = f"{S3_DATA_FOLDER}/ut_loss_history_1.csv"
     s3_bucket = DATA_BUCKET
