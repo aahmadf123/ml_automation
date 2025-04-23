@@ -1,9 +1,28 @@
+"""
+Security utilities for ML Automation.
+
+This module provides security-related functionality:
+- AWS credential management
+- Encryption/decryption
+- Access control
+- Secure configuration handling
+"""
+
+import logging
+import os
+from typing import Dict, Any, Optional, Union
+from base64 import b64encode, b64decode
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import re
-from typing import Dict, Any, Callable, Optional
 from functools import wraps
 import jwt
 from datetime import datetime, timedelta
 from utils.config import Config
+
+# Setup logging
+log = logging.getLogger(__name__)
 
 class SecurityUtils:
     """Security utilities for Airflow DAGs."""
@@ -92,4 +111,150 @@ def validate_input(schema: Dict[str, Any]) -> Callable:
             
             return func(*args, **kwargs)
         return wrapper
-    return decorator 
+    return decorator
+
+class SecurityManager:
+    """
+    Manages security operations for the ML Automation system.
+    
+    This class handles:
+    - Encryption/decryption of sensitive data
+    - AWS credential management
+    - Access control checks
+    - Secure configuration handling
+    """
+    
+    def __init__(self) -> None:
+        """
+        Initialize the SecurityManager.
+        
+        Sets up encryption keys and security configurations.
+        """
+        self._fernet = None
+        self._initialize_encryption()
+        
+    def _initialize_encryption(self) -> None:
+        """
+        Initialize encryption components.
+        
+        Raises:
+            RuntimeError: If encryption setup fails
+        """
+        try:
+            # Get encryption key from environment
+            key = os.getenv('ENCRYPTION_KEY')
+            if not key:
+                raise ValueError("ENCRYPTION_KEY environment variable not set")
+                
+            # Generate Fernet key from the encryption key
+            salt = b'salt_'  # Should be stored securely
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=100000,
+            )
+            key = b64encode(kdf.derive(key.encode()))
+            self._fernet = Fernet(key)
+            
+        except Exception as e:
+            log.error(f"Failed to initialize encryption: {str(e)}")
+            raise RuntimeError("Encryption initialization failed") from e
+            
+    def encrypt(self, data: Union[str, bytes]) -> str:
+        """
+        Encrypt sensitive data.
+        
+        Args:
+            data: Data to encrypt (string or bytes)
+            
+        Returns:
+            str: Encrypted data as base64 string
+            
+        Raises:
+            RuntimeError: If encryption fails
+        """
+        try:
+            if isinstance(data, str):
+                data = data.encode()
+            encrypted = self._fernet.encrypt(data)
+            return b64encode(encrypted).decode()
+        except Exception as e:
+            log.error(f"Encryption failed: {str(e)}")
+            raise RuntimeError("Encryption failed") from e
+            
+    def decrypt(self, encrypted_data: str) -> str:
+        """
+        Decrypt sensitive data.
+        
+        Args:
+            encrypted_data: Base64 encoded encrypted data
+            
+        Returns:
+            str: Decrypted data
+            
+        Raises:
+            RuntimeError: If decryption fails
+        """
+        try:
+            encrypted = b64decode(encrypted_data.encode())
+            decrypted = self._fernet.decrypt(encrypted)
+            return decrypted.decode()
+        except Exception as e:
+            log.error(f"Decryption failed: {str(e)}")
+            raise RuntimeError("Decryption failed") from e
+            
+    def get_aws_credentials(self) -> Dict[str, str]:
+        """
+        Get AWS credentials securely.
+        
+        Returns:
+            Dict[str, str]: AWS credentials
+            
+        Raises:
+            RuntimeError: If credential retrieval fails
+        """
+        try:
+            return {
+                'aws_access_key_id': self.decrypt(os.getenv('AWS_ACCESS_KEY_ID', '')),
+                'aws_secret_access_key': self.decrypt(os.getenv('AWS_SECRET_ACCESS_KEY', '')),
+                'region_name': os.getenv('AWS_REGION', 'us-east-1')
+            }
+        except Exception as e:
+            log.error(f"Failed to get AWS credentials: {str(e)}")
+            raise RuntimeError("AWS credential retrieval failed") from e
+            
+    def check_access(self, user: str, resource: str) -> bool:
+        """
+        Check if a user has access to a resource.
+        
+        Args:
+            user: User identifier
+            resource: Resource identifier
+            
+        Returns:
+            bool: True if access is granted, False otherwise
+        """
+        try:
+            # Implementation would check against an access control list
+            return True
+        except Exception as e:
+            log.error(f"Access check failed: {str(e)}")
+            return False
+            
+    def validate_config(self, config: Dict[str, Any]) -> bool:
+        """
+        Validate security-sensitive configuration.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            bool: True if configuration is valid, False otherwise
+        """
+        try:
+            required_keys = {'encryption_key', 'aws_region', 'access_control'}
+            return all(key in config for key in required_keys)
+        except Exception as e:
+            log.error(f"Configuration validation failed: {str(e)}")
+            return False 

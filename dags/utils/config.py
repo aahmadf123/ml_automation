@@ -8,8 +8,11 @@ import boto3
 import logging
 import time
 from functools import lru_cache
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 from airflow.models import Variable
+from pathlib import Path
+import json
+import yaml
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -307,117 +310,189 @@ FEATURE_CONFIG = {
 }
 
 # ─── CLASS CONFIG ──────────────────────────────────────────────────────────
-class Config:
-    """Centralized configuration management."""
+class ConfigManager:
+    """
+    Manages configuration for the ML Automation system.
     
-    # S3 Configuration
-    S3_BUCKET = DATA_BUCKET
-    S3_DATA_FOLDER = "raw-data"
-    S3_ARCHIVE_FOLDER = get_ssm_parameter('S3_ARCHIVE_FOLDER', 'archive')
-    S3_REFERENCE_KEY_PREFIX = "reference"
+    This class handles:
+    - Environment variable management
+    - Configuration file loading
+    - Configuration validation
+    - Default value handling
+    """
     
-    # MLflow Configuration
-    MLFLOW_TRACKING_URI = get_ssm_parameter('MLFLOW_TRACKING_URI')
-    MLFLOW_EXPERIMENT_NAME = "homeowner_loss_history"
-    
-    # Model Configuration
-    MODEL_IDS = ["model1", "model2", "model3", "model4", "model5"]
-    MODEL_METRICS = ["rmse", "mse", "mae", "r2"]
-    MODEL_THRESHOLDS = {
-        "rmse": float(get_ssm_parameter('RMSE_THRESHOLD', '0.1')),
-        "drift": float(get_ssm_parameter('DRIFT_THRESHOLD', '0.1')),
-        "correlation": float(get_ssm_parameter('CORRELATION_THRESHOLD', '0.7'))
-    }
-    
-    # Data Quality Configuration
-    DATA_QUALITY_CONFIG = DATA_QUALITY_CONFIG
-    
-    # WebSocket Configuration
-    WS_HOST = get_ssm_parameter('WS_HOST', 'localhost')
-    WS_PORT = int(get_ssm_parameter('WS_PORT', '8765'))
-    WS_PING_INTERVAL = int(get_ssm_parameter('WS_PING_INTERVAL', '30'))
-    
-    # API Configuration
-    API_HOST = get_ssm_parameter('API_HOST', 'localhost')
-    API_PORT = int(get_ssm_parameter('API_PORT', '3000'))
-    API_RATE_LIMIT = int(get_ssm_parameter('API_RATE_LIMIT', '100'))
-    
-    # Security Configuration
-    SECURITY_CONFIG = SECURITY_CONFIG
-    
-    # Slack Configuration
-    SLACK_WEBHOOK_URL = get_ssm_parameter('SLACK_WEBHOOK_URL')
-    SLACK_CHANNELS = {
-        "alerts": "#alerts",
-        "logs": "#agent_logs",
-        "metrics": "#metrics"
-    }
-    
-    # Airflow Configuration
-    AIRFLOW_CONFIG = AIRFLOW_CONFIG
-    
-    # Feature Configuration
-    FEATURE_CONFIG = FEATURE_CONFIG
-    
-    @classmethod
-    def get_model_config(cls, model_id: str) -> Dict[str, Any]:
-        """Get configuration for a specific model."""
-        if model_id in MODEL_CONFIG:
-            return MODEL_CONFIG[model_id]
-        return {}
-    
-    @classmethod
-    def validate_config(cls) -> None:
-        """Validate the configuration."""
-        # Required parameters
-        required_params = {
-            'S3_BUCKET': str,
-            'MLFLOW_TRACKING_URI': str,
-            'SLACK_WEBHOOK_URL': str
-        }
+    def __init__(self, config_path: Optional[str] = None) -> None:
+        """
+        Initialize the ConfigManager.
         
-        for param, param_type in required_params.items():
-            value = getattr(cls, param)
-            if not value:
-                raise ValueError(f"Missing required parameter: {param}")
-            if not isinstance(value, param_type):
-                raise TypeError(f"Invalid type for {param}: expected {param_type}")
+        Args:
+            config_path: Optional path to configuration file
+        """
+        self._config: Dict[str, Any] = {}
+        self._config_path = config_path
+        self._load_config()
         
-        # Validate model IDs
-        for model_id in cls.MODEL_IDS:
-            if model_id not in MODEL_CONFIG:
-                raise ValueError(f"Model ID {model_id} not found in MODEL_CONFIG")
+    def _load_config(self) -> None:
+        """
+        Load configuration from file and environment variables.
         
-        # Validate feature configuration
-        if not cls.FEATURE_CONFIG.get('numeric_features'):
-            raise ValueError("Missing numeric_features in FEATURE_CONFIG")
-        if not cls.FEATURE_CONFIG.get('categorical_features'):
-            raise ValueError("Missing categorical_features in FEATURE_CONFIG")
-        if not cls.FEATURE_CONFIG.get('target_feature'):
-            raise ValueError("Missing target_feature in FEATURE_CONFIG")
+        Raises:
+            RuntimeError: If configuration loading fails
+        """
+        try:
+            # Load from file if specified
+            if self._config_path and os.path.exists(self._config_path):
+                self._load_from_file()
+                
+            # Load from environment variables
+            self._load_from_env()
+            
+            # Validate configuration
+            self._validate_config()
+            
+        except Exception as e:
+            logger.error(f"Failed to load configuration: {str(e)}")
+            raise RuntimeError("Configuration loading failed") from e
+            
+    def _load_from_file(self) -> None:
+        """
+        Load configuration from file.
         
-        # Validate thresholds
-        for threshold_name, threshold_value in cls.MODEL_THRESHOLDS.items():
-            validate_numeric_parameter(threshold_name, threshold_value, 0, 1)
+        Supports JSON and YAML formats.
+        """
+        try:
+            with open(self._config_path, 'r') as f:
+                if self._config_path.endswith('.json'):
+                    self._config.update(json.load(f))
+                elif self._config_path.endswith(('.yaml', '.yml')):
+                    self._config.update(yaml.safe_load(f))
+                else:
+                    logger.warning(f"Unsupported config file format: {self._config_path}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to load config file: {str(e)}")
+            raise
+            
+    def _load_from_env(self) -> None:
+        """
+        Load configuration from environment variables.
+        """
+        try:
+            # AWS Configuration
+            self._config['aws'] = {
+                'region': os.getenv('AWS_REGION', 'us-east-1'),
+                'profile': os.getenv('AWS_PROFILE'),
+                'bucket': os.getenv('AWS_BUCKET', 'ml-automation-data')
+            }
+            
+            # Slack Configuration
+            self._config['slack'] = {
+                'token': os.getenv('SLACK_TOKEN'),
+                'channel': os.getenv('SLACK_CHANNEL', '#ml-automation'),
+                'username': os.getenv('SLACK_USERNAME', 'ML Automation')
+            }
+            
+            # Airflow Configuration
+            self._config['airflow'] = {
+                'host': os.getenv('AIRFLOW_HOST', 'localhost'),
+                'port': int(os.getenv('AIRFLOW_PORT', '8080')),
+                'username': os.getenv('AIRFLOW_USERNAME', 'airflow'),
+                'password': os.getenv('AIRFLOW_PASSWORD')
+            }
+            
+            # Model Configuration
+            self._config['model'] = {
+                'path': os.getenv('MODEL_PATH', 'models'),
+                'version': os.getenv('MODEL_VERSION', '1.0.0'),
+                'threshold': float(os.getenv('MODEL_THRESHOLD', '0.5'))
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to load environment variables: {str(e)}")
+            raise
+            
+    def _validate_config(self) -> None:
+        """
+        Validate configuration values.
         
-        # Validate data quality config
-        validate_numeric_parameter('missing_threshold', cls.DATA_QUALITY_CONFIG['missing_threshold'], 0, 1)
-        validate_numeric_parameter('outlier_threshold', cls.DATA_QUALITY_CONFIG['outlier_threshold'], 1, 10)
-        validate_numeric_parameter('drift_threshold', cls.DATA_QUALITY_CONFIG['drift_threshold'], 0, 1)
-        validate_numeric_parameter('correlation_threshold', cls.DATA_QUALITY_CONFIG['correlation_threshold'], 0, 1)
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        try:
+            # Validate AWS configuration
+            if not self._config['aws']['bucket']:
+                raise ValueError("AWS bucket name is required")
+                
+            # Validate Slack configuration
+            if not self._config['slack']['token']:
+                logger.warning("Slack token not set")
+                
+            # Validate Airflow configuration
+            if not self._config['airflow']['password']:
+                logger.warning("Airflow password not set")
+                
+            # Validate Model configuration
+            if not os.path.exists(self._config['model']['path']):
+                os.makedirs(self._config['model']['path'], exist_ok=True)
+                
+        except Exception as e:
+            logger.error(f"Configuration validation failed: {str(e)}")
+            raise ValueError("Invalid configuration") from e
+            
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Get a configuration value.
         
-        # Validate WebSocket config
-        validate_numeric_parameter('WS_PORT', cls.WS_PORT, 1, 65535)
-        validate_numeric_parameter('WS_PING_INTERVAL', cls.WS_PING_INTERVAL, 5, 300)
+        Args:
+            key: Configuration key
+            default: Default value if key not found
+            
+        Returns:
+            Any: Configuration value
+        """
+        try:
+            return self._config.get(key, default)
+        except Exception as e:
+            logger.error(f"Failed to get config value for {key}: {str(e)}")
+            return default
+            
+    def set(self, key: str, value: Any) -> None:
+        """
+        Set a configuration value.
         
-        # Validate API config
-        validate_numeric_parameter('API_PORT', cls.API_PORT, 1, 65535)
-        validate_numeric_parameter('API_RATE_LIMIT', cls.API_RATE_LIMIT, 1, 10000)
+        Args:
+            key: Configuration key
+            value: Configuration value
+        """
+        try:
+            self._config[key] = value
+        except Exception as e:
+            logger.error(f"Failed to set config value for {key}: {str(e)}")
+            raise
+            
+    def save(self) -> None:
+        """
+        Save configuration to file.
         
-        # Validate security config
-        validate_numeric_parameter('JWT_EXPIRY', cls.SECURITY_CONFIG['jwt_expiry'], 60, 86400)
-        validate_numeric_parameter('RATE_LIMIT_WINDOW', cls.SECURITY_CONFIG['rate_limit_window'], 60, 86400)
-        validate_numeric_parameter('RATE_LIMIT_MAX_REQUESTS', cls.SECURITY_CONFIG['rate_limit_max_requests'], 1, 10000)
+        Raises:
+            RuntimeError: If configuration saving fails
+        """
+        if not self._config_path:
+            logger.warning("No config file path specified")
+            return
+            
+        try:
+            with open(self._config_path, 'w') as f:
+                if self._config_path.endswith('.json'):
+                    json.dump(self._config, f, indent=2)
+                elif self._config_path.endswith(('.yaml', '.yml')):
+                    yaml.dump(self._config, f, default_flow_style=False)
+                    
+            logger.info(f"Configuration saved to {self._config_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save configuration: {str(e)}")
+            raise RuntimeError("Configuration saving failed") from e
 
 # Validate configuration on import
-Config.validate_config()
+ConfigManager().validate_config()
