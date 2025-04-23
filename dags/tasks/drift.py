@@ -24,10 +24,10 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 import json
 import boto3
 from datetime import datetime
-from dags.utils.slack import post as send_message
-from dags.utils.storage import download as s3_download
-from dags.utils.storage import upload as s3_upload
-from dags.utils.config import (
+from utils.slack import post as send_message
+from utils.storage import download as s3_download
+from utils.storage import upload as s3_upload
+from utils.config import (
     DATA_BUCKET, REFERENCE_KEY_PREFIX, AWS_REGION,
     DRIFT_THRESHOLD
 )
