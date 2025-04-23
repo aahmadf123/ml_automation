@@ -46,74 +46,118 @@ class ABTestingPipeline:
         # Import slack only when needed
         from utils.slack import post as slack_msg
         
+        # Validate inputs
+        if new_model is None:
+            logger.error("New model is None, cannot perform A/B test")
+            return {
+                "status": "error",
+                "message": "New model is None"
+            }
+            
+        if X_test is None or y_test is None or len(X_test) == 0 or len(y_test) == 0:
+            logger.error("Test data is empty or None")
+            return {
+                "status": "error",
+                "message": "Test data is empty or None"
+            }
+        
         # Get production model
         prod_model, prod_rmse = self.get_production_model()
         if prod_model is None:
+            logger.warning("No production model found for comparison")
             results = {
                 "status": "error",
                 "message": "No production model found for comparison"
             }
             return results
+        
+        try:
+            # Make predictions with both models
+            try:
+                prod_preds = prod_model.predict(X_test)
+                # Ensure predictions are in the right format
+                if not isinstance(prod_preds, np.ndarray):
+                    prod_preds = np.array(prod_preds)
+            except Exception as e:
+                logger.error(f"Error making predictions with production model: {str(e)}")
+                return {
+                    "status": "error",
+                    "message": f"Error with production model: {str(e)}"
+                }
+                
+            try:
+                new_preds = new_model.predict(X_test)
+                # Ensure predictions are in the right format
+                if not isinstance(new_preds, np.ndarray):
+                    new_preds = np.array(new_preds)
+            except Exception as e:
+                logger.error(f"Error making predictions with new model: {str(e)}")
+                return {
+                    "status": "error",
+                    "message": f"Error with new model: {str(e)}"
+                }
             
-        # Make predictions with both models
-        prod_preds = prod_model.predict(X_test)
-        new_preds = new_model.predict(X_test)
-        
-        # Calculate metrics for both models
-        prod_metrics = {
-            "rmse": np.sqrt(mean_squared_error(y_test, prod_preds)),
-            "r2": r2_score(y_test, prod_preds)
-        }
-        
-        new_metrics = {
-            "rmse": np.sqrt(mean_squared_error(y_test, new_preds)),
-            "r2": r2_score(y_test, new_preds)
-        }
-        
-        # Calculate improvements
-        rmse_improvement = (prod_metrics["rmse"] - new_metrics["rmse"]) / prod_metrics["rmse"] * 100
-        r2_improvement = (new_metrics["r2"] - prod_metrics["r2"]) / max(0.01, abs(prod_metrics["r2"])) * 100
-        
-        # Perform statistical significance test
-        from scipy import stats
-        t_stat, p_value = stats.ttest_rel(
-            np.abs(y_test - prod_preds),
-            np.abs(y_test - new_preds)
-        )
-        
-        # Results
-        results = {
-            "status": "success",
-            "production_metrics": prod_metrics,
-            "new_model_metrics": new_metrics,
-            "rmse_improvement": rmse_improvement,
-            "r2_improvement": r2_improvement,
-            "p_value": p_value,
-            "statistical_significance": p_value < 0.05,
-            "timestamp": datetime.now().isoformat()
-        }
-
-        # Send notification
-        if rmse_improvement > 0 and results['statistical_significance']:
-            slack_msg(
-                channel="#alerts",
-                title=f"🎯 A/B Test Results - {self.model_id}",
-                details=f"New model shows {rmse_improvement:.2f}% RMSE improvement\n"
-                        f"R2 improvement: {r2_improvement:.2f}%\n"
-                        f"Statistically significant: Yes",
-                urgency="high"
+            # Calculate metrics for both models
+            prod_metrics = {
+                "rmse": np.sqrt(mean_squared_error(y_test, prod_preds)),
+                "r2": r2_score(y_test, prod_preds)
+            }
+            
+            new_metrics = {
+                "rmse": np.sqrt(mean_squared_error(y_test, new_preds)),
+                "r2": r2_score(y_test, new_preds)
+            }
+            
+            # Calculate improvements
+            rmse_improvement = (prod_metrics["rmse"] - new_metrics["rmse"]) / prod_metrics["rmse"] * 100
+            r2_improvement = (new_metrics["r2"] - prod_metrics["r2"]) / max(0.01, abs(prod_metrics["r2"])) * 100
+            
+            # Perform statistical significance test
+            from scipy import stats
+            t_stat, p_value = stats.ttest_rel(
+                np.abs(y_test - prod_preds),
+                np.abs(y_test - new_preds)
             )
-        else:
-            slack_msg(
-                channel="#alerts",
-                title=f"⚠️ A/B Test Results - {self.model_id}",
-                details=f"New model does not show significant improvement\n"
-                        f"RMSE change: {rmse_improvement:.2f}%\n"
-                        f"R2 change: {r2_improvement:.2f}%",
-                urgency="medium"
-            )
+            
+            # Results
+            results = {
+                "status": "success",
+                "production_metrics": prod_metrics,
+                "new_model_metrics": new_metrics,
+                "rmse_improvement": rmse_improvement,
+                "r2_improvement": r2_improvement,
+                "p_value": p_value,
+                "statistical_significance": p_value < 0.05,
+                "timestamp": datetime.now().isoformat()
+            }
 
-        return results
+            # Send notification
+            if rmse_improvement > 0 and results['statistical_significance']:
+                slack_msg(
+                    channel="#alerts",
+                    title=f"🎯 A/B Test Results - {self.model_id}",
+                    details=f"New model shows {rmse_improvement:.2f}% RMSE improvement\n"
+                            f"R2 improvement: {r2_improvement:.2f}%\n"
+                            f"Statistically significant: Yes",
+                    urgency="high"
+                )
+            else:
+                slack_msg(
+                    channel="#alerts",
+                    title=f"⚠️ A/B Test Results - {self.model_id}",
+                    details=f"New model does not show significant improvement\n"
+                            f"RMSE change: {rmse_improvement:.2f}%\n"
+                            f"R2 change: {r2_improvement:.2f}%",
+                    urgency="medium"
+                )
+
+            return results
+        except Exception as e:
+            logger.error(f"Error during A/B testing: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Error during A/B testing: {str(e)}"
+            }
 
     def should_promote_new_model(self, results: Dict) -> bool:
         """Determine if new model should be promoted based on A/B test results."""

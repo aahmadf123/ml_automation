@@ -72,7 +72,7 @@ class ModelExplainabilityTracker:
                            model: object, 
                            X: pd.DataFrame, 
                            y: pd.Series,
-                           run_id: str) -> Dict:
+                           run_id: str = None) -> Dict:
         """
         Track model explainability metrics and log them to MLflow.
         
@@ -80,11 +80,28 @@ class ModelExplainabilityTracker:
             model: Trained model object
             X: Feature data
             y: Target data
-            run_id: MLflow run ID
+            run_id: MLflow run ID (optional)
             
         Returns:
             Dict of explainability metrics
         """
+        # Check for None values in inputs
+        if model is None:
+            logger.error("Cannot track explainability: model is None")
+            return {
+                'status': 'error',
+                'message': 'Model is None',
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        if X is None or len(X) == 0:
+            logger.error("Cannot track explainability: feature data is empty or None")
+            return {
+                'status': 'error',
+                'message': 'Feature data is empty or None',
+                'timestamp': datetime.now().isoformat()
+            }
+        
         # Calculate and store feature importance
         feature_importance = self.calculate_feature_importance(model, X)
         self.feature_importance_history.append(feature_importance)
@@ -101,26 +118,40 @@ class ModelExplainabilityTracker:
         # Detect feature importance shifts
         feature_shifts = self.detect_feature_shift(feature_importance)
         
-        # Log to MLflow
-        with mlflow.start_run(run_id=run_id):
-            # Log feature importance
-            for feature, importance in feature_importance.items():
-                mlflow.log_metric(f"importance_{feature}", importance)
-                
-            # Log feature shifts
-            for feature, shift in feature_shifts.items():
-                mlflow.log_metric(f"shift_{feature}", shift)
-            
-            # Log summary metrics
-            mlflow.log_metric("num_features", len(feature_importance))
-            mlflow.log_metric("num_feature_shifts", len(feature_shifts))
-            mlflow.log_metric("avg_importance", 
-                             sum(feature_importance.values()) / len(feature_importance) if feature_importance else 0)
-                
+        # Log to MLflow if run_id is provided
+        if run_id:
+            try:
+                with mlflow.start_run(run_id=run_id):
+                    # Log feature importance
+                    for feature, importance in feature_importance.items():
+                        mlflow.log_metric(f"importance_{feature}", importance)
+                        
+                    # Log feature shifts
+                    for feature, shift in feature_shifts.items():
+                        mlflow.log_metric(f"shift_{feature}", shift)
+                    
+                    # Log summary metrics
+                    mlflow.log_metric("num_features", len(feature_importance))
+                    mlflow.log_metric("num_feature_shifts", len(feature_shifts))
+                    if feature_importance:
+                        mlflow.log_metric("avg_importance", 
+                                         sum(feature_importance.values()) / len(feature_importance))
+                logger.info(f"Logged explainability metrics to MLflow run {run_id}")
+            except Exception as e:
+                logger.error(f"Failed to log to MLflow: {str(e)}")
+                # Continue execution despite MLflow error
+        else:
+            logger.info("No MLflow run_id provided, skipping MLflow logging")
+        
+        # Convert NumPy arrays to lists for JSON serialization
+        serializable_feature_importance = {k: float(v) for k, v in feature_importance.items()}
+        serializable_feature_shifts = {k: float(v) for k, v in feature_shifts.items()}
+        
         # Return results
         results = {
-            'feature_importance': feature_importance,
-            'feature_shifts': feature_shifts,
+            'status': 'success',
+            'feature_importance': serializable_feature_importance,
+            'feature_shifts': serializable_feature_shifts,
             'has_shap_values': len(shap_values) > 0,
             'timestamp': datetime.now().isoformat()
         }
