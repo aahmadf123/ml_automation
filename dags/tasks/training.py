@@ -43,9 +43,9 @@ import mlflow
 import mlflow.xgboost
 from airflow.models import Variable
 
-from utils.slack import post as slack_msg
-from utils.storage import upload as s3_upload, download as s3_download
-from utils.config import (
+from ..utils.slack import post as slack_msg
+from ..utils.storage import upload as s3_upload, download as s3_download
+from ..utils.config import (
     DATA_BUCKET, MODEL_KEY_PREFIX, AWS_REGION,
     MLFLOW_URI, MLFLOW_EXPERIMENT, MODEL_CONFIG
 )
