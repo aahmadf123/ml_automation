@@ -44,7 +44,7 @@ from utils.config import (
     AWS_REGION, DATA_BUCKET, MODEL_KEY_PREFIX, DRIFT_THRESHOLD,
     Config
 )
-from utils.security import SecurityUtils, validate_input
+from .utils.security import SecurityUtils, validate_input
 
 # Setup logging
 setup_logging()
