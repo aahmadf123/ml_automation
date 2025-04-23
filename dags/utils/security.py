@@ -92,15 +92,4 @@ def validate_input(schema: Dict[str, Any]) -> Callable:
             
             return func(*args, **kwargs)
         return wrapper
-    return decorator
-
-# Example usage:
-# @validate_input({
-#     "model_id": {"type": str, "required": True, "pattern": r"^model[1-5]$"},
-#     "metric": {"type": str, "required": True},
-#     "threshold": {"type": float, "required": True, "min": 0, "max": 1}
-# })
-# def update_model_metrics(**kwargs):
-#     data = kwargs.get('validated_data', {})
-#     # Process the validated data
-#     pass 
+    return decorator 
