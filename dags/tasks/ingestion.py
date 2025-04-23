@@ -149,14 +149,8 @@ def ingest_data_from_s3() -> str:
             
             log.info(f"CSV parsed to Arrow Table with {len(arrow_table)} rows and {len(arrow_table.column_names)} columns")
             
-            # Create a scanner for efficient data processing
-            scanner = ds.Scanner.from_batches(
-                [arrow_table],
-                use_threads=True,
-                memory_pool=pa.default_memory_pool()
-            )
-            
-            # Write directly to parquet using advanced features of pyarrow 14.0.2
+            # We don't need a scanner since we already have the full arrow_table
+            # Just write directly to parquet using advanced features of pyarrow 14.0.2
             log.info(f"Writing to Parquet with ZSTD compression: {LOCAL_PARQUET_PATH}")
             pq.write_table(
                 arrow_table,
