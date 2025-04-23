@@ -273,7 +273,7 @@ def preprocess_data(data_path, output_path):
         
         # Read and process batches
         data_batches = []
-        for batch in scanner.to_batches(batch_size=batch_size):
+        for batch in scanner.to_batches():
             df_batch = process_batch(batch)
             data_batches.append(df_batch)
             
