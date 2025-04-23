@@ -5,7 +5,7 @@ import shap
 from typing import Dict, List, Tuple
 import mlflow
 from datetime import datetime
-from ..utils.slack import post as send_message
+from dags.utils.slack import post as send_message
 
 logger = logging.getLogger(__name__)
 

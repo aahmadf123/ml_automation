@@ -20,7 +20,7 @@ import boto3
 from prometheus_client import start_http_server, Gauge
 from typing import Dict, Set, Any
 from tenacity import retry, stop_after_attempt, wait_fixed
-from ..utils.config import AWS_REGION
+from dags.utils.config import AWS_REGION
 
 # Setup logging
 logger = logging.getLogger(__name__)

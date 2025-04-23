@@ -7,9 +7,9 @@ import pandas as pd
 from airflow.models import Variable
 from tasks.cache import is_cache_valid, update_cache
 from botocore.exceptions import ClientError
-from ..utils.config import DATA_BUCKET, AWS_REGION
-from ..utils.storage import download as s3_download
-from ..utils.slack import post as send_message
+from dags.utils.config import DATA_BUCKET, AWS_REGION
+from dags.utils.storage import download as s3_download
+from dags.utils.slack import post as send_message
 
 S3_BUCKET = DATA_BUCKET
 S3_DATA_FOLDER = "raw-data"
