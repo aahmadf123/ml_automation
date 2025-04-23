@@ -382,6 +382,14 @@ def handle_outliers(data, threshold=3):
         std_val = data[col].std()
         z_scores = np.abs((data[col] - mean_val) / std_val)
         mask = z_scores > threshold
+        
+        # Get the data type of the column
+        dtype = data[col].dtype
+        
+        # Explicitly cast the mean value to the column's data type to avoid dtype warnings
+        if np.issubdtype(dtype, np.integer):
+            mean_val = int(mean_val)
+        
         data.loc[mask, col] = mean_val
         
         # Clean up intermediates to free memory

@@ -66,7 +66,8 @@ class SlackManager:
                 return
                 
             self._client = WebClient(token=token)
-            log.info("Slack client initialized successfully")
+            # Log the initialization success and scopes for debugging
+            log.info("Slack client initialized successfully. Make sure your Slack app has the 'chat:write' or 'chat:write:bot' scope enabled.")
         except Exception as e:
             log.warning(f"Failed to initialize Slack client: {str(e)}. Notifications will be logged but not sent.")
             
