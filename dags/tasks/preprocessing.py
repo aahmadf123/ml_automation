@@ -316,6 +316,24 @@ def preprocess_data(data_path, output_path):
         data = scale_numeric_features(data)
         gc.collect()
         
+        # Calculate pure_premium as required by schema validation
+        logger.info("Calculating pure_premium and sample weights")
+        if 'il_total' in data.columns and 'eey' in data.columns:
+            # Create target variable (Pure Premium)
+            data['pure_premium'] = data['il_total'] / data['eey']
+            # Create sample weight variable based on earned exposure years
+            data['wt'] = data['eey']
+            logger.info("Successfully added pure_premium and wt columns")
+        else:
+            missing_cols = []
+            if 'il_total' not in data.columns:
+                missing_cols.append('il_total')
+            if 'eey' not in data.columns:
+                missing_cols.append('eey')
+            error_msg = f"Cannot calculate pure_premium: missing columns {missing_cols}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
         # Final quality check after preprocessing
         logger.info("Performing final quality check")
         final_quality_report = quality_monitor.run_quality_checks(data)

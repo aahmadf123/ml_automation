@@ -124,6 +124,22 @@ class SlackManager:
         except SlackApiError as e:
             log.error(f"Slack API error: {str(e)}")
             log.info(f"[FALLBACK] Channel: {channel}, Message: {message}")
+            
+            # Handle channel_not_found error by trying to post to a default channel
+            if "channel_not_found" in str(e) and channel != "#general":
+                try:
+                    # Try posting to the general channel instead
+                    log.info(f"Channel {channel} not found, trying to post to #general instead")
+                    fallback_response = self._client.chat_postMessage(
+                        channel="#general",
+                        text=f"[Intended for {channel}] {message}",
+                        mrkdwn=True
+                    )
+                    log.info(f"Fallback message sent to #general")
+                    return fallback_response.data
+                except Exception as fallback_e:
+                    log.error(f"Fallback to #general failed: {str(fallback_e)}")
+            
             return {"ok": False, "error": str(e)}
         except Exception as e:
             log.error(f"Failed to send Slack message: {str(e)}")

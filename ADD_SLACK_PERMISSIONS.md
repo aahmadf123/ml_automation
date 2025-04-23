@@ -15,7 +15,19 @@ To fix the Slack API error, follow these steps to update your Slack app permissi
     - As an Airflow Variable: `airflow variables set SLACK_BOT_TOKEN "xoxb-your-token"`
     - As an environment variable: Add to your environment or .env file
 
-These permissions will allow the app to post messages to channels.
+## Required Slack Channels
+Make sure the following Slack channels exist in your workspace:
+
+1. `#alerts` - For important data and processing alerts
+2. `#general` - Used as a fallback channel
+3. `#agent_logs` - For general logging information
+
+To create these channels:
+1. In Slack, click on the + next to "Channels" in the sidebar
+2. Click "Create Channel"
+3. Name the channel (without the #) and set privacy options
+4. Click "Create"
+5. Make sure to add your Slack bot to each channel by typing `/invite @YourBotName` in the channel
 
 ## Current Scopes
 Current scopes that need to be updated:
