@@ -19,7 +19,7 @@ import re
 from functools import wraps
 import jwt
 from datetime import datetime, timedelta
-from utils.config import Config
+from utils.config import ConfigManager
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -30,12 +30,12 @@ class SecurityUtils:
     @staticmethod
     def validate_model_id(model_id: str) -> bool:
         """Validate model ID format."""
-        return model_id in Config.MODEL_IDS
+        return model_id in ConfigManager.MODEL_IDS
     
     @staticmethod
     def validate_metric_name(metric: str) -> bool:
         """Validate metric name."""
-        return metric in Config.MODEL_METRICS
+        return metric in ConfigManager.MODEL_METRICS
     
     @staticmethod
     def validate_timestamp(timestamp: str) -> bool:

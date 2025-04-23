@@ -12,7 +12,7 @@ import boto3
 from botocore.exceptions import ClientError
 from tqdm import tqdm
 from tenacity import retry, wait_exponential, stop_after_attempt
-from .config import DATA_BUCKET
+from utils.config import DATA_BUCKET
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -195,7 +195,39 @@ class StorageManager:
 
 def update_storage_process_with_ui_components():
     """
-    Placeholder function to update the storage process with new UI components and endpoints.
+    Update the storage process with UI components.
     """
-    logging.info("Updating storage process with new UI components and endpoints.")
-    # Placeholder for actual implementation
+    pass
+
+# Create standalone functions for backward compatibility
+def upload(file_path: str, bucket: str, key: str, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    Upload a file to S3.
+    
+    Args:
+        file_path: Path to the file to upload
+        bucket: S3 bucket name
+        key: S3 key
+        metadata: Optional metadata to attach to the file
+        
+    Returns:
+        Dict containing upload result
+    """
+    manager = StorageManager()
+    return manager.upload(file_path, bucket, key, metadata)
+
+def download(bucket: str, key: str, file_path: str, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    Download a file from S3.
+    
+    Args:
+        bucket: S3 bucket name
+        key: S3 key
+        file_path: Path to save the downloaded file
+        metadata: Optional metadata to attach to the file
+        
+    Returns:
+        Dict containing download result
+    """
+    manager = StorageManager()
+    return manager.download(bucket, key, file_path, metadata)
