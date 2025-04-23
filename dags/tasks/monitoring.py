@@ -17,7 +17,7 @@ import asyncio
 import websockets
 import psutil
 import boto3
-from prometheus_client import start_http_server, Gauge
+from prometheus_client import start_http_server, Gauge, REGISTRY
 from typing import Dict, Set, Any
 from tenacity import retry, stop_after_attempt, wait_fixed
 from utils.config import AWS_REGION
@@ -29,32 +29,69 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 # Initialize AWS clients with region
 cloudwatch = boto3.client('cloudwatch', region_name=AWS_REGION)
 
-# Define Prometheus gauges
-dag_runtime_gauge = Gauge(
-    "homeowner_dag_runtime_seconds",
-    "Duration of the DAG run in seconds"
-)
-memory_available_gauge = Gauge(
-    "homeowner_memory_available_mb",
-    "Available system memory in megabytes"
-)
-memory_used_gauge = Gauge(
-    "homeowner_memory_used_mb",
-    "Used system memory in megabytes"
-)
-memory_total_gauge = Gauge(
-    "homeowner_memory_total_mb",
-    "Total system memory in megabytes"
-)
-memory_percent_gauge = Gauge(
-    "homeowner_memory_usage_percent",
-    "Percentage of system memory in use"
-)
+# Singleton flag to ensure metrics are only registered once
+_metrics_initialized = False
+dag_runtime_gauge = None
+memory_available_gauge = None
+memory_used_gauge = None
+memory_total_gauge = None
+memory_percent_gauge = None
+
+def initialize_metrics():
+    """Initialize Prometheus metrics if not already done"""
+    global _metrics_initialized, dag_runtime_gauge, memory_available_gauge, memory_used_gauge, memory_total_gauge, memory_percent_gauge
+    
+    if _metrics_initialized:
+        return
+    
+    # Check if metrics already exist in registry and clear them if needed
+    collectors_to_remove = []
+    for collector in REGISTRY._collector_to_names:
+        for name in REGISTRY._collector_to_names[collector]:
+            if name in [
+                "homeowner_dag_runtime_seconds",
+                "homeowner_memory_available_mb",
+                "homeowner_memory_used_mb",
+                "homeowner_memory_total_mb",
+                "homeowner_memory_usage_percent"
+            ]:
+                collectors_to_remove.append(collector)
+                break
+    
+    for collector in collectors_to_remove:
+        REGISTRY.unregister(collector)
+    
+    # Define Prometheus gauges
+    dag_runtime_gauge = Gauge(
+        "homeowner_dag_runtime_seconds",
+        "Duration of the DAG run in seconds"
+    )
+    memory_available_gauge = Gauge(
+        "homeowner_memory_available_mb",
+        "Available system memory in megabytes"
+    )
+    memory_used_gauge = Gauge(
+        "homeowner_memory_used_mb",
+        "Used system memory in megabytes"
+    )
+    memory_total_gauge = Gauge(
+        "homeowner_memory_total_mb",
+        "Total system memory in megabytes"
+    )
+    memory_percent_gauge = Gauge(
+        "homeowner_memory_usage_percent",
+        "Percentage of system memory in use"
+    )
+    
+    _metrics_initialized = True
+    logger.info("Prometheus metrics initialized successfully")
 
 # Attempt to start Prometheus metrics server with retry
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def start_metrics_server(port: int = 8000):
     try:
+        # Initialize metrics before starting server
+        initialize_metrics()
         start_http_server(port)
         logging.info(f"Prometheus metrics server started on port {port}")
     except OSError as e:
@@ -132,6 +169,9 @@ def record_system_metrics(runtime: float = None, memory_usage: str = None) -> No
         runtime (float, optional): The runtime duration in seconds.
         memory_usage (str, optional): Ignored (string snapshots aren't Prometheus-friendly).
     """
+    # Initialize metrics if needed
+    initialize_metrics()
+    
     # Record DAG runtime
     if runtime is not None:
         dag_runtime_gauge.set(runtime)
@@ -200,6 +240,9 @@ def update_monitoring_with_ui_components():
     """
     Update the monitoring process with new UI components and endpoints.
     """
+    # Make sure metrics are initialized
+    initialize_metrics()
+    
     logging.info("Updating monitoring process with new UI components and endpoints.")
     
     # Start WebSocket server in a separate thread
@@ -213,4 +256,4 @@ def update_monitoring_with_ui_components():
     websocket_thread = threading.Thread(target=run_websocket_server, daemon=True)
     websocket_thread.start()
     
-    logging.info("WebSocket server started for real-time dashboard updates.")
+    return {"status": "success", "message": "Monitoring UI components updated"}

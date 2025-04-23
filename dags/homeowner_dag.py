@@ -26,6 +26,7 @@ from airflow.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.models import Variable
 from airflow.utils.dates import days_ago
+import pandas as pd
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -117,8 +118,9 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     )
     
     # Monitoring tasks
-    quality_monitor = DataQualityMonitor(
+    quality_monitor = PythonOperator(
         task_id='monitor_data_quality',
+        python_callable=lambda **kwargs: DataQualityMonitor().run_quality_checks(pd.read_parquet('/tmp/processed_data.parquet')),
         dag=dag
     )
     
