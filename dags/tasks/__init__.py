@@ -4,6 +4,14 @@ tasks
 A package containing all the task implementations for the ML Automation DAGs.
 """
 
+import os
+import sys
+
+# Add the dags directory to the Python path
+dags_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if dags_dir not in sys.path:
+    sys.path.append(dags_dir)
+
 from .ingestion import ingest_data_from_s3
 from .preprocessing import preprocess_data
 from .schema_validation import validate_schema, snapshot_schema
