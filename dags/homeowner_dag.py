@@ -9,13 +9,14 @@ Main DAG for homeowner loss history project:
   - Monitoring and drift detection
 """
 
+# Core Python imports
 import os
-import logging
-import time
 import json
-import pandas as pd
-
+import logging
 from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
+
+# Airflow imports
 from airflow import DAG
 from airflow.decorators import dag, task
 from airflow.operators.empty import EmptyOperator
@@ -23,30 +24,13 @@ from airflow.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.models import Variable
 
-from tasks.ingestion import ingest_data_from_s3
-from tasks.preprocessing import preprocess_data
-from tasks.schema_validation import validate_schema, snapshot_schema
-from tasks.data_quality import DataQualityMonitor
-from tasks.drift import (
-    generate_reference_means,
-    detect_data_drift,
-    self_healing as drift_self_heal
-)
-from tasks.monitoring import record_system_metrics, update_monitoring_with_ui_components
-from tasks.model_explainability import ModelExplainabilityTracker
-from tasks.ab_testing import ABTestingPipeline
-from tasks.training import train_and_compare_fn, manual_override
-
-# Import from utils
-from utils.slack import post as send_message
-from utils.storage import upload as upload_to_s3
-from utils.logging_config import get_logger, setup_logging
+# Local imports
 from utils.config import (
     DEFAULT_START_DATE, SCHEDULE_CRON, AIRFLOW_DAG_BASE_CONF,
     AWS_REGION, DATA_BUCKET, MODEL_KEY_PREFIX, DRIFT_THRESHOLD,
     Config
 )
-from utils.security import SecurityUtils, validate_input
+from utils.logging_config import get_logger, setup_logging
 
 # Setup logging
 setup_logging()
@@ -55,23 +39,14 @@ log = get_logger(__name__)
 # Constants
 LOCAL_PROCESSED_PATH = "/tmp/homeowner_processed.parquet"
 REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
-MODEL_IDS = Config.MODEL_IDS  # Use model IDs from config
+MODEL_IDS = Config.MODEL_IDS
 
-# Initialize monitors
-data_quality_monitor = DataQualityMonitor()
-model_explainability_tracker = ModelExplainabilityTracker("model1")  # Will be updated per model
-ab_testing_pipeline = ABTestingPipeline("model1", test_duration_days=7)  # Will be updated per model
-
-# Initialize AWS clients with region
-import boto3
-s3 = boto3.client('s3', region_name=AWS_REGION)
-cloudwatch = boto3.client('cloudwatch', region_name=AWS_REGION)
-
-def _default_args():
+def _default_args() -> Dict[str, Any]:
+    """Get default arguments for the DAG."""
     return {
         "owner": "airflow",
         "depends_on_past": False,
-        "start_date": datetime(2025, 1, 1),
+        "start_date": DEFAULT_START_DATE,
         "email_on_failure": False,
         "email_on_retry": False,
         "retries": 1,
@@ -79,32 +54,63 @@ def _default_args():
         "execution_timeout": timedelta(hours=2),
     }
 
+def _get_dag_config() -> Dict[str, Any]:
+    """Get DAG configuration from Airflow variables."""
+    try:
+        conf = Variable.get("DAG_RUN_CONF", default_var="{}")
+        return json.loads(conf) if isinstance(conf, str) else conf
+    except Exception as e:
+        log.error(f"Error getting DAG config: {e}")
+        return {}
+
 @dag(
     dag_id="homeowner_loss_history_full_pipeline",
     default_args=_default_args(),
     description='DAG for homeowner loss history prediction pipeline',
-    schedule='0 0 * * *',  # Daily at midnight
+    schedule=SCHEDULE_CRON,
     catchup=False,
     tags=["homeowner", "loss_history"],
 )
 def homeowner_pipeline():
+    """Main DAG function that defines the pipeline structure."""
+    
+    # Initialize monitors (lazy imports)
+    from tasks.data_quality import DataQualityMonitor
+    from tasks.model_explainability import ModelExplainabilityTracker
+    from tasks.ab_testing import ABTestingPipeline
+    
+    data_quality_monitor = DataQualityMonitor()
+    model_explainability_tracker = ModelExplainabilityTracker("model1")
+    ab_testing_pipeline = ABTestingPipeline("model1", test_duration_days=7)
 
-    # 1️⃣ Ingest raw CSV
-    raw_path = ingest_data_from_s3()
-
-    # 2️⃣ Preprocess → Parquet
+    # 1️⃣ Data Ingestion
     @task()
-    def _preprocess(path: str) -> str:
-        df = preprocess_data(path)
+    def ingest_data():
+        """Task to ingest data from S3."""
+        from tasks.ingestion import ingest_data_from_s3
+        return ingest_data_from_s3()
+
+    # 2️⃣ Data Processing
+    @task()
+    def preprocess_data(raw_path: str) -> str:
+        """Task to preprocess and validate data."""
+        from tasks.preprocessing import preprocess_data
+        from tasks.schema_validation import validate_schema, snapshot_schema
+        import pandas as pd
+        
+        df = preprocess_data(raw_path)
         validate_schema(df)
         snapshot_schema(df)
         df.to_parquet(LOCAL_PROCESSED_PATH, index=False)
         return LOCAL_PROCESSED_PATH
-    processed_path = _preprocess(raw_path)
 
-    # 2a Data Quality Check
+    # 3️⃣ Data Quality Check
     @task()
     def check_data_quality(path: str) -> str:
+        """Task to check data quality."""
+        from utils.slack import post as send_message
+        import pandas as pd
+        
         df = pd.read_parquet(path)
         quality_report = data_quality_monitor.monitor_data_quality(df, is_baseline=True)
         
@@ -120,21 +126,29 @@ def homeowner_pipeline():
             )
         
         return path
-    quality_checked_path = check_data_quality(processed_path)
 
-    # 3️⃣ Drift‑check: existing reference?
+    # 4️⃣ Drift Detection
     @task.branch()
-    def _branch(path: str) -> str:
+    def check_drift(path: str) -> str:
+        """Task to check for data drift."""
+        from tasks.drift import (
+            generate_reference_means,
+            detect_data_drift
+        )
+        
         if os.path.exists(REFERENCE_MEANS_PATH):
             ref = generate_reference_means(path, REFERENCE_MEANS_PATH)
             flag = detect_data_drift(path, ref)
             return "healing_task" if flag == "self_healing" else "override_or_train"
         return "override_or_train"
-    branch = _branch(quality_checked_path)
 
-    # 3a Self‑healing path
+    # 5️⃣ Self-healing
     @task(task_id="healing_task")
     def healing_task():
+        """Task to handle drift self-healing."""
+        from utils.slack import post as send_message
+        from tasks.drift import self_healing as drift_self_heal
+        
         send_message(
             channel="#alerts",
             title="⚠️ Drift Detected",
@@ -142,28 +156,27 @@ def homeowner_pipeline():
             urgency="medium",
         )
         drift_self_heal()
-    heal = healing_task()
 
-    # 4️⃣ Manual‑Override vs Start‑Training
+    # 6️⃣ Training Control
     @task.branch(task_id="override_or_train")
     def override_branch() -> str:
-        # Check if this is a retraining trigger from the dashboard
-        try:
-            conf = Variable.get("DAG_RUN_CONF", default_var="{}")
-            if isinstance(conf, str):
-                conf = json.loads(conf)
-            
-            if conf.get("action") == "retrain" and conf.get("model_id"):
-                log.info(f"Retraining triggered for model: {conf.get('model_id')}")
-                return "retrain_model"
-        except Exception as e:
-            log.error(f"Error checking retraining trigger: {e}")
+        """Task to determine training path."""
+        from tasks.training import manual_override
         
-        # Default behavior
+        conf = _get_dag_config()
+        if conf.get("action") == "retrain" and conf.get("model_id"):
+            log.info(f"Retraining triggered for model: {conf.get('model_id')}")
+            return "retrain_model"
+            
         return "apply_override" if manual_override() else "start_training"
 
+    # 7️⃣ Training Tasks
     @task(task_id="apply_override")
     def apply_override():
+        """Task to apply manual override."""
+        from utils.slack import post as send_message
+        from tasks.training import manual_override
+        
         params = manual_override()
         send_message(
             channel="#alerts",
@@ -171,45 +184,32 @@ def homeowner_pipeline():
             details=f"Custom hyperparams: {params}",
             urgency="low",
         )
-        # training task will consume manual_override internally
 
     @task(task_id="retrain_model")
     def retrain_model():
-        try:
-            conf = Variable.get("DAG_RUN_CONF", default_var="{}")
-            if isinstance(conf, str):
-                conf = json.loads(conf)
+        """Task to handle model retraining."""
+        from utils.slack import post as send_message
+        
+        conf = _get_dag_config()
+        model_id = conf.get("model_id")
+        if not model_id:
+            log.error("No model_id provided for retraining")
+            return
             
-            model_id = conf.get("model_id")
-            if not model_id:
-                log.error("No model_id provided for retraining")
-                return
-            
-            log.info(f"Retraining model: {model_id}")
-            send_message(
-                channel="#alerts",
-                title=f"🔄 Retraining {model_id}",
-                details="Retraining triggered from dashboard",
-                urgency="medium",
-            )
-            
-            # Set the model_id for the training task
-            Variable.set("TARGET_MODEL_ID", model_id)
-            
-        except Exception as e:
-            log.error(f"Error in retrain_model task: {e}")
+        log.info(f"Retraining model: {model_id}")
+        send_message(
+            channel="#alerts",
+            title=f"🔄 Retraining {model_id}",
+            details="Retraining triggered from dashboard",
+            urgency="medium",
+        )
+        
+        Variable.set("TARGET_MODEL_ID", model_id)
 
-    start_training = EmptyOperator(task_id="start_training")
-
-    # 5️⃣ Training per model → join
-    join_after_training = EmptyOperator(
-        task_id="join_after_training",
-        trigger_rule=TriggerRule.NONE_FAILED,
-    )
-    
-    # Check if we're retraining a specific model
+    # 8️⃣ Training Execution
     @task.branch()
     def training_branch() -> str:
+        """Task to determine which model to train."""
         try:
             target_model = Variable.get("TARGET_MODEL_ID", default_var=None)
             if target_model:
@@ -217,50 +217,19 @@ def homeowner_pipeline():
         except Exception as e:
             log.error(f"Error in training_branch: {e}")
         return "train_all_models"
-    
-    # Assign the training branch task to a variable
-    training_branch_task = training_branch()
-    
-    train_all_models = EmptyOperator(task_id="train_all_models")
-    
-    # Create training tasks for each model
-    training_tasks = []
-    for m in MODEL_IDS:
-        # Create task for normal training path
-        train_task = PythonOperator(
-            task_id=f"train_compare_{m}",
-            python_callable=train_and_compare_fn,
-            op_kwargs={
-                "model_id": m,
-                "processed_path": LOCAL_PROCESSED_PATH,
-                "data_quality_monitor": data_quality_monitor,
-                "model_explainability_tracker": ModelExplainabilityTracker(m),
-                "ab_testing_pipeline": ABTestingPipeline(m, test_duration_days=7)
-            },
-        )
-        training_tasks.append(train_task)
-        # Set downstream relationship
-        train_task.set_downstream(join_after_training)
-    
-    # Wire the training branch
-    training_branch_task >> train_all_models
-    train_all_models.set_downstream(training_tasks)
-    
-    # Wire drift → heal → override/train → training
-    branch >> heal >> override_branch()
-    branch >> override_branch()
-    override_branch() >> apply_override() >> training_branch_task
-    override_branch() >> start_training >> training_branch_task
-    override_branch() >> retrain_model() >> training_branch_task
 
-    # 6️⃣ Record metrics and notify
+    # 9️⃣ Post-Training Tasks
     @task()
-    def record_metrics_task():
+    def record_metrics():
+        """Task to record system metrics."""
+        from tasks.monitoring import record_system_metrics, update_monitoring_with_ui_components
         record_system_metrics()
         update_monitoring_with_ui_components()
 
     @task()
     def notify_complete():
+        """Task to send completion notification."""
+        from utils.slack import post as send_message
         send_message(
             channel="#alerts",
             title="✅ Pipeline Complete",
@@ -268,34 +237,70 @@ def homeowner_pipeline():
             urgency="low",
         )
 
-    # 7️⃣ Archive artifacts
     @task()
     def archive():
+        """Task to archive artifacts."""
+        from utils.storage import upload as upload_to_s3
+        from utils.slack import post as send_message
+        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         archive_path = f"archive/{timestamp}"
         
-        # Archive processed data
-        upload_to_s3(LOCAL_PROCESSED_PATH, f"{archive_path}/processed.parquet")
-        
-        # Archive reference means if exists
-        if os.path.exists(REFERENCE_MEANS_PATH):
-            upload_to_s3(REFERENCE_MEANS_PATH, f"{archive_path}/reference_means.csv")
-        
-        # Archive data quality report
-        quality_summary = data_quality_monitor.get_quality_summary()
-        if quality_summary:
-            with open("/tmp/quality_summary.json", "w") as f:
-                json.dump(quality_summary, f)
-            upload_to_s3("/tmp/quality_summary.json", f"{archive_path}/quality_summary.json")
+        try:
+            # Archive processed data
+            upload_to_s3(LOCAL_PROCESSED_PATH, f"{archive_path}/processed.parquet")
+            
+            # Archive reference means if exists
+            if os.path.exists(REFERENCE_MEANS_PATH):
+                upload_to_s3(REFERENCE_MEANS_PATH, f"{archive_path}/reference_means.csv")
+            
+            # Archive data quality report
+            quality_summary = data_quality_monitor.get_quality_summary()
+            if quality_summary:
+                with open("/tmp/quality_summary.json", "w") as f:
+                    json.dump(quality_summary, f)
+                upload_to_s3("/tmp/quality_summary.json", f"{archive_path}/quality_summary.json")
+        except Exception as e:
+            log.error(f"Error in archive task: {e}")
+            send_message(
+                channel="#alerts",
+                title="❌ Archive Failed",
+                details=str(e),
+                urgency="high"
+            )
 
-    # 8️⃣ Start WebSocket server for real-time updates
-    @task()
-    def start_websocket_server():
-        update_monitoring_with_ui_components()
-
-    # Set up task dependencies
-    join_after_training >> record_metrics_task() >> notify_complete() >> archive()
-    join_after_training >> start_websocket_server()
+    # Define task dependencies
+    raw_data = ingest_data()
+    processed_data = preprocess_data(raw_data)
+    quality_checked = check_data_quality(processed_data)
+    
+    branch = check_drift(quality_checked)
+    heal = healing_task()
+    
+    override = override_branch()
+    apply_override_task = apply_override()
+    retrain = retrain_model()
+    start_training = EmptyOperator(task_id="start_training")
+    
+    training_branch_task = training_branch()
+    train_all_models = EmptyOperator(task_id="train_all_models")
+    
+    join_after_training = EmptyOperator(
+        task_id="join_after_training",
+        trigger_rule=TriggerRule.NONE_FAILED,
+    )
+    
+    # Wire up the pipeline
+    branch >> heal >> override
+    branch >> override
+    override >> apply_override_task >> training_branch_task
+    override >> start_training >> training_branch_task
+    override >> retrain >> training_branch_task
+    
+    training_branch_task >> train_all_models
+    train_all_models.set_downstream(join_after_training)
+    
+    join_after_training >> record_metrics() >> notify_complete() >> archive()
 
     return homeowner_pipeline()
 
