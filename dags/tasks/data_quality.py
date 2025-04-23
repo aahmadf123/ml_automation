@@ -5,7 +5,6 @@ from typing import Dict, List, Tuple
 from datetime import datetime, timedelta
 from scipy import stats
 import mlflow
-from utils.slack import post as send_message
 
 logger = logging.getLogger(__name__)
 
@@ -40,163 +39,170 @@ class DataQualityMonitor:
                     'most_common': df[column].value_counts().index[0] if not df[column].empty else None
                 }
         return stats
-
-    def detect_outliers(self, df: pd.DataFrame) -> Dict[str, List[int]]:
-        """Detect outliers using z-score method."""
-        outliers = {}
-        for column in df.select_dtypes(include=[np.number]).columns:
-            z_scores = np.abs(stats.zscore(df[column].dropna()))
-            outlier_indices = np.where(z_scores > self.config['outlier_threshold'])[0]
-            if len(outlier_indices) > 0:
-                outliers[column] = outlier_indices.tolist()
-        return outliers
-
-    def detect_drift(self, current_stats: Dict, baseline_stats: Dict) -> Dict:
-        """Detect statistical drift between current and baseline data."""
-        drift = {}
-        for column in current_stats:
-            if column in baseline_stats:
-                current = current_stats[column]
-                baseline = baseline_stats[column]
-                
-                if 'mean' in current and 'mean' in baseline:
-                    mean_drift = abs(current['mean'] - baseline['mean']) / baseline['std']
-                    if mean_drift > self.config['drift_threshold']:
-                        drift[column] = {
-                            'type': 'mean',
-                            'current': current['mean'],
-                            'baseline': baseline['mean'],
-                            'drift': mean_drift
-                        }
-                
-                if 'missing' in current and 'missing' in baseline:
-                    missing_drift = abs(current['missing'] - baseline['missing'])
-                    if missing_drift > self.config['missing_threshold']:
-                        drift[column] = {
-                            'type': 'missing',
-                            'current': current['missing'],
-                            'baseline': baseline['missing'],
-                            'drift': missing_drift
-                        }
-        return drift
-
-    def detect_correlations(self, df: pd.DataFrame) -> List[Dict]:
-        """Detect highly correlated features."""
-        correlations = []
-        numeric_df = df.select_dtypes(include=[np.number])
-        if len(numeric_df.columns) > 1:
-            corr_matrix = numeric_df.corr()
-            for i in range(len(corr_matrix.columns)):
-                for j in range(i+1, len(corr_matrix.columns)):
-                    corr = corr_matrix.iloc[i,j]
-                    if abs(corr) > self.config['correlation_threshold']:
-                        correlations.append({
-                            'feature1': corr_matrix.columns[i],
-                            'feature2': corr_matrix.columns[j],
-                            'correlation': corr
-                        })
-        return correlations
-
-    def monitor_data_quality(self, df: pd.DataFrame, is_baseline: bool = False) -> Dict:
-        """Monitor data quality and detect issues."""
-        current_time = datetime.now()
+    
+    def detect_missing_values(self, df: pd.DataFrame) -> Dict:
+        """Detect missing values above threshold."""
+        missing = {}
+        for column in df.columns:
+            missing_rate = df[column].isnull().mean()
+            if missing_rate > self.config['missing_threshold']:
+                missing[column] = missing_rate
         
-        # Calculate current statistics
-        current_stats = self.calculate_basic_stats(df)
-        
-        # Store baseline if specified
-        if is_baseline:
-            self.baseline_stats = current_stats
-            logger.info("Baseline statistics updated")
-        
-        # Initialize quality report
-        quality_report = {
-            'timestamp': current_time,
-            'basic_stats': current_stats,
-            'issues': []
-        }
-        
-        # Check for missing values
-        for column, stats in current_stats.items():
-            if stats['missing'] > self.config['missing_threshold']:
-                quality_report['issues'].append({
-                    'type': 'missing_values',
-                    'column': column,
-                    'missing_rate': stats['missing'],
-                    'threshold': self.config['missing_threshold']
-                })
-        
-        # Detect outliers
-        outliers = self.detect_outliers(df)
-        if outliers:
-            quality_report['issues'].append({
-                'type': 'outliers',
-                'details': outliers
-            })
-        
-        # Detect drift if baseline exists
-        if self.baseline_stats:
-            drift = self.detect_drift(current_stats, self.baseline_stats)
-            if drift:
-                quality_report['issues'].append({
-                    'type': 'drift',
-                    'details': drift
-                })
-        
-        # Detect correlations
-        correlations = self.detect_correlations(df)
-        if correlations:
-            quality_report['issues'].append({
-                'type': 'correlations',
-                'details': correlations
-            })
-        
-        # Store in history
-        self.history.append(quality_report)
-        
-        # Log to MLflow
-        mlflow.log_metrics({
-            'missing_rate': sum(stats['missing'] for stats in current_stats.values()) / len(current_stats),
-            'outlier_count': sum(len(indices) for indices in outliers.values()),
-            'drift_count': len(drift) if 'drift' in quality_report else 0,
-            'correlation_count': len(correlations)
-        })
-        
-        # Alert on significant issues
-        if quality_report['issues']:
+        if missing:
+            # Import slack only when needed
+            from utils.slack import post as send_message
             send_message(
                 channel="#alerts",
-                title="🔍 Data Quality Issues Detected",
-                details="\n".join([
-                    f"{issue['type']}: {len(issue.get('details', []))} issues found"
-                    for issue in quality_report['issues']
-                ]),
+                title="🔍 Missing Data Alert",
+                details=f"Missing data detected in {len(missing)} columns:\n" +
+                        "\n".join([f"{col}: {rate:.2%}" for col, rate in missing.items()]),
+                urgency="high"
+            )
+            
+        return missing
+    
+    def detect_outliers(self, df: pd.DataFrame) -> Dict:
+        """Detect outliers using z-score."""
+        outliers = {}
+        for column in df.columns:
+            if pd.api.types.is_numeric_dtype(df[column]):
+                z_scores = np.abs(stats.zscore(df[column].dropna()))
+                outlier_indices = np.where(z_scores > self.config['outlier_threshold'])[0]
+                if len(outlier_indices) > 0:
+                    outliers[column] = len(outlier_indices) / len(df)
+        
+        if outliers:
+            # Import slack only when needed
+            from utils.slack import post as send_message
+            send_message(
+                channel="#alerts",
+                title="⚠️ Outlier Alert",
+                details=f"Outliers detected in {len(outliers)} columns:\n" +
+                        "\n".join([f"{col}: {rate:.2%}" for col, rate in outliers.items()]),
                 urgency="medium"
             )
-        
-        return quality_report
-
-    def get_quality_summary(self, window_hours: int = 24) -> Dict:
-        """Get a summary of data quality metrics over the specified time window."""
-        if not self.history:
+            
+        return outliers
+    
+    def detect_data_drift(self, df: pd.DataFrame) -> Dict:
+        """Detect drift in numerical columns."""
+        if self.baseline_stats is None:
+            logger.warning("No baseline stats available for drift detection")
             return {}
         
-        cutoff_time = datetime.now() - timedelta(hours=window_hours)
-        recent_history = [h for h in self.history if h['timestamp'] >= cutoff_time]
+        drift = {}
+        for column in df.columns:
+            if column in self.baseline_stats and pd.api.types.is_numeric_dtype(df[column]):
+                current_mean = df[column].mean()
+                baseline_mean = self.baseline_stats[column]['mean']
+                
+                if baseline_mean != 0:
+                    drift_pct = abs(current_mean - baseline_mean) / baseline_mean
+                    if drift_pct > self.config['drift_threshold']:
+                        drift[column] = drift_pct
         
-        if not recent_history:
+        if drift:
+            # Import slack only when needed
+            from utils.slack import post as send_message
+            send_message(
+                channel="#alerts",
+                title="🚨 Data Drift Detected",
+                details=f"Drift detected in {len(drift)} columns:\n" +
+                        "\n".join([f"{col}: {drift_pct:.2%}" for col, drift_pct in drift.items()]),
+                urgency="critical"
+            )
+            
+        return drift
+    
+    def detect_correlation_changes(self, df: pd.DataFrame) -> Dict:
+        """Detect changes in correlation between numeric columns."""
+        if self.baseline_stats is None or 'correlation' not in self.baseline_stats:
+            logger.warning("No baseline correlation available")
             return {}
         
-        # Aggregate issues
-        issue_counts = {}
-        for report in recent_history:
-            for issue in report['issues']:
-                issue_type = issue['type']
-                issue_counts[issue_type] = issue_counts.get(issue_type, 0) + 1
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        current_corr = df[numeric_cols].corr()
+        baseline_corr = self.baseline_stats['correlation']
         
-        return {
-            'total_reports': len(recent_history),
-            'issue_counts': issue_counts,
-            'latest_report': recent_history[-1],
-            'window_hours': window_hours
-        } 
+        correlation_changes = {}
+        for col1 in numeric_cols:
+            for col2 in numeric_cols:
+                if col1 != col2 and col1 in baseline_corr and col2 in baseline_corr:
+                    current = current_corr.loc[col1, col2]
+                    baseline = baseline_corr.loc[col1, col2]
+                    change = abs(current - baseline)
+                    
+                    if change > self.config['correlation_threshold']:
+                        correlation_changes[f"{col1} ↔ {col2}"] = change
+        
+        if correlation_changes:
+            # Import slack only when needed
+            from utils.slack import post as send_message
+            send_message(
+                channel="#alerts",
+                title="🔄 Correlation Changes Detected",
+                details=f"Changes in {len(correlation_changes)} correlations:\n" +
+                        "\n".join([f"{cols}: {change:.2f}" for cols, change in correlation_changes.items()]),
+                urgency="medium"
+            )
+            
+        return correlation_changes
+    
+    def set_baseline(self, df: pd.DataFrame) -> None:
+        """Set baseline statistics for drift detection."""
+        stats = self.calculate_basic_stats(df)
+        stats['correlation'] = df.select_dtypes(include=['number']).corr()
+        self.baseline_stats = stats
+        logger.info("Baseline statistics set")
+        
+    def run_quality_checks(self, df: pd.DataFrame) -> Dict:
+        """Run all quality checks on the dataframe."""
+        results = {
+            'timestamp': datetime.now().isoformat(),
+            'missing_values': self.detect_missing_values(df),
+            'outliers': self.detect_outliers(df),
+            'data_drift': self.detect_data_drift(df),
+            'correlation_changes': self.detect_correlation_changes(df)
+        }
+        
+        self.history.append(results)
+        
+        # Log the results and determine overall status
+        issues = sum(len(check) for check in results.values() if isinstance(check, dict))
+        if issues == 0:
+            status = "pass"
+            logger.info("Data quality checks passed")
+        else:
+            status = "fail"
+            logger.warning(f"Data quality checks found {issues} issues")
+            
+        results['status'] = status
+        return results
+    
+    def export_report(self, filepath: str) -> None:
+        """Export data quality history to a file."""
+        try:
+            pd.DataFrame(self.history).to_csv(filepath, index=False)
+            logger.info(f"Data quality report exported to {filepath}")
+        except Exception as e:
+            logger.error(f"Failed to export data quality report: {str(e)}")
+            
+def manual_override(model_id: str, override_action: str) -> Dict:
+    """Manual override function for Airflow DAG."""
+    logger.info(f"Manual override requested for {model_id}: {override_action}")
+    
+    # Import slack only when needed
+    from utils.slack import post as send_message
+    send_message(
+        channel="#alerts",
+        title="🔧 Manual Override",
+        details=f"Manual override applied to {model_id}:\n{override_action}",
+        urgency="high"
+    )
+    
+    return {
+        "status": "success",
+        "model_id": model_id,
+        "action": override_action,
+        "timestamp": datetime.now().isoformat()
+    } 

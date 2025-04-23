@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 from airflow.models import Variable
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from utils.slack import post as post_message
 from utils.storage import upload
 from utils.config import DATA_BUCKET, ARCHIVE_FOLDER as S3_ARCHIVE_FOLDER
 
@@ -67,6 +66,8 @@ def notify_success(channel: str = "#alerts") -> dict:
     Returns:
         dict: Slack API response.
     """
+    # Import slack only when needed
+    from utils.slack import post as post_message
     return post_message(
         channel=channel,
         title="✅ Pipeline Completed",

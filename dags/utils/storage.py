@@ -35,7 +35,7 @@ class StorageManager:
         Sets up the S3 client and configuration.
         """
         self._s3_client = None
-        self._initialize_client()
+        # Don't initialize client at creation time
         
     def _initialize_client(self) -> None:
         """
@@ -44,14 +44,17 @@ class StorageManager:
         Raises:
             RuntimeError: If client initialization fails
         """
+        if self._s3_client is not None:
+            return
+            
         try:
+            # Import security module only when needed
             from .security import SecurityManager
             security = SecurityManager()
             credentials = security.get_aws_credentials()
             self._s3_client = boto3.client('s3', **credentials)
         except Exception as e:
-            log.error(f"Failed to initialize S3 client: {str(e)}")
-            raise RuntimeError("S3 client initialization failed") from e
+            log.warning(f"Failed to initialize S3 client: {str(e)}. Operations will fail.")
             
     def upload(
         self,
@@ -76,6 +79,14 @@ class StorageManager:
             FileNotFoundError: If local file doesn't exist
             ClientError: If S3 upload fails
         """
+        # Lazy initialization
+        self._initialize_client()
+        
+        if self._s3_client is None:
+            error_msg = f"Cannot upload file, S3 client not initialized. Path: {file_path}, Key: {key}"
+            log.error(error_msg)
+            raise RuntimeError(error_msg)
+            
         try:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"File not found: {file_path}")
@@ -125,6 +136,14 @@ class StorageManager:
         Raises:
             ClientError: If S3 download fails
         """
+        # Lazy initialization
+        self._initialize_client()
+        
+        if self._s3_client is None:
+            error_msg = f"Cannot download file, S3 client not initialized. Key: {key}, Path: {file_path}"
+            log.error(error_msg)
+            raise RuntimeError(error_msg)
+            
         try:
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -174,6 +193,13 @@ class StorageManager:
         Returns:
             bool: True if file is valid, False otherwise
         """
+        # Lazy initialization
+        self._initialize_client()
+        
+        if self._s3_client is None:
+            log.error(f"Cannot validate file, S3 client not initialized. Key: {key}")
+            return False
+            
         try:
             response = self._s3_client.head_object(Bucket=bucket, Key=key)
             
@@ -193,41 +219,55 @@ class StorageManager:
             log.error(f"File validation failed: {str(e)}")
             return False
 
+# Create a lazy-loading singleton
+_manager = None
+
+def get_manager() -> StorageManager:
+    """Get the StorageManager singleton instance (create it if it doesn't exist)."""
+    global _manager
+    if _manager is None:
+        _manager = StorageManager()
+    return _manager
+
+def upload(local_path: str, key: str, bucket: str = DATA_BUCKET, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    Upload a local file to S3 with retry logic.
+    
+    Args:
+        local_path: Path to the local file
+        key: S3 object key
+        bucket: S3 bucket name (default: DATA_BUCKET)
+        metadata: Optional metadata to attach to the object
+        
+    Returns:
+        Dict[str, Any]: S3 upload response
+        
+    Raises:
+        FileNotFoundError: If local file doesn't exist
+        ClientError: If S3 upload fails
+    """
+    return get_manager().upload(local_path, bucket, key, metadata)
+
+def download(key: str, local_path: str, bucket: str = DATA_BUCKET, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """
+    Download a file from S3 with retry logic.
+    
+    Args:
+        key: S3 object key
+        local_path: Path to save the downloaded file
+        bucket: S3 bucket name (default: DATA_BUCKET)
+        metadata: Optional metadata to verify
+        
+    Returns:
+        Dict[str, Any]: S3 download response
+        
+    Raises:
+        ClientError: If S3 download fails
+    """
+    return get_manager().download(bucket, key, local_path, metadata)
+
 def update_storage_process_with_ui_components():
     """
     Update the storage process with UI components.
     """
     pass
-
-# Create standalone functions for backward compatibility
-def upload(file_path: str, bucket: str, key: str, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """
-    Upload a file to S3.
-    
-    Args:
-        file_path: Path to the file to upload
-        bucket: S3 bucket name
-        key: S3 key
-        metadata: Optional metadata to attach to the file
-        
-    Returns:
-        Dict containing upload result
-    """
-    manager = StorageManager()
-    return manager.upload(file_path, bucket, key, metadata)
-
-def download(bucket: str, key: str, file_path: str, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """
-    Download a file from S3.
-    
-    Args:
-        bucket: S3 bucket name
-        key: S3 key
-        file_path: Path to save the downloaded file
-        metadata: Optional metadata to attach to the file
-        
-    Returns:
-        Dict containing download result
-    """
-    manager = StorageManager()
-    return manager.download(bucket, key, file_path, metadata)

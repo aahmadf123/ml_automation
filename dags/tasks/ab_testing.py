@@ -18,7 +18,6 @@ from sklearn.metrics import mean_squared_error, r2_score
 import mlflow
 from mlflow.tracking import MlflowClient
 from utils.config import DATA_BUCKET, MODEL_KEY_PREFIX
-from utils.slack import post as slack_msg
 
 logger = logging.getLogger(__name__)
 
@@ -44,43 +43,55 @@ class ABTestingPipeline:
 
     def run_ab_test(self, new_model: object, X_test: pd.DataFrame, y_test: pd.Series) -> Dict:
         """Run A/B test between new and production models."""
+        # Import slack only when needed
+        from utils.slack import post as slack_msg
+        
+        # Get production model
         prod_model, prod_rmse = self.get_production_model()
         if prod_model is None:
-            return {"status": "error", "message": "Could not retrieve production model"}
-
-        # Get predictions from both models
-        new_preds = new_model.predict(X_test)
+            results = {
+                "status": "error",
+                "message": "No production model found for comparison"
+            }
+            return results
+            
+        # Make predictions with both models
         prod_preds = prod_model.predict(X_test)
-
-        # Calculate metrics
-        new_rmse = np.sqrt(mean_squared_error(y_test, new_preds))
-        new_r2 = r2_score(y_test, new_preds)
-        prod_r2 = r2_score(y_test, prod_preds)
-
-        # Calculate improvement percentages
-        rmse_improvement = ((prod_rmse - new_rmse) / prod_rmse) * 100
-        r2_improvement = ((new_r2 - prod_r2) / abs(prod_r2)) * 100
-
-        # Statistical significance test
+        new_preds = new_model.predict(X_test)
+        
+        # Calculate metrics for both models
+        prod_metrics = {
+            "rmse": np.sqrt(mean_squared_error(y_test, prod_preds)),
+            "r2": r2_score(y_test, prod_preds)
+        }
+        
+        new_metrics = {
+            "rmse": np.sqrt(mean_squared_error(y_test, new_preds)),
+            "r2": r2_score(y_test, new_preds)
+        }
+        
+        # Calculate improvements
+        rmse_improvement = (prod_metrics["rmse"] - new_metrics["rmse"]) / prod_metrics["rmse"] * 100
+        r2_improvement = (new_metrics["r2"] - prod_metrics["r2"]) / max(0.01, abs(prod_metrics["r2"])) * 100
+        
+        # Perform statistical significance test
         from scipy import stats
-        t_stat, p_value = stats.ttest_ind(new_preds, prod_preds)
-
+        t_stat, p_value = stats.ttest_rel(
+            np.abs(y_test - prod_preds),
+            np.abs(y_test - new_preds)
+        )
+        
+        # Results
         results = {
             "status": "success",
-            "new_model_rmse": new_rmse,
-            "prod_model_rmse": prod_rmse,
+            "production_metrics": prod_metrics,
+            "new_model_metrics": new_metrics,
             "rmse_improvement": rmse_improvement,
             "r2_improvement": r2_improvement,
-            "statistical_significance": p_value < 0.05,
             "p_value": p_value,
-            "test_duration_days": self.test_duration_days
+            "statistical_significance": p_value < 0.05,
+            "timestamp": datetime.now().isoformat()
         }
-
-        # Log results
-        logger.info(f"A/B Test Results for {self.model_id}:")
-        logger.info(f"RMSE Improvement: {rmse_improvement:.2f}%")
-        logger.info(f"R2 Improvement: {r2_improvement:.2f}%")
-        logger.info(f"Statistical Significance: {results['statistical_significance']}")
 
         # Send notification
         if rmse_improvement > 0 and results['statistical_significance']:

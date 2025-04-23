@@ -5,7 +5,6 @@ import shap
 from typing import Dict, List, Tuple
 import mlflow
 from datetime import datetime
-from utils.slack import post as send_message
 
 logger = logging.getLogger(__name__)
 
@@ -41,109 +40,121 @@ class ModelExplainabilityTracker:
         except Exception as e:
             logger.error(f"Error calculating SHAP values: {str(e)}")
             return np.array([]), []
-
-    def track_explainability(self, model: object, X: pd.DataFrame, y: pd.Series) -> Dict:
-        """Track model explainability metrics and detect significant changes."""
-        current_time = datetime.now()
-        
-        # Calculate current metrics
-        feature_importance = self.calculate_feature_importance(model, X)
-        shap_values, feature_names = self.calculate_shap_values(model, X)
-        
-        # Store in history
-        self.feature_importance_history.append({
-            'timestamp': current_time,
-            'importance': feature_importance
-        })
-        
-        if len(shap_values) > 0:
-            self.shap_values_history.append({
-                'timestamp': current_time,
-                'values': shap_values,
-                'features': feature_names
-            })
-        
-        # Detect significant changes if we have history
-        changes = self.detect_significant_changes()
-        
-        # Log to MLflow
-        mlflow.log_metrics({
-            'top_feature_importance': list(feature_importance.values())[0] if feature_importance else 0,
-            'feature_importance_entropy': self.calculate_importance_entropy(feature_importance)
-        })
-        
-        # Store feature importance plot
-        if feature_importance:
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(10, 6))
-            plt.bar(range(len(feature_importance)), list(feature_importance.values()))
-            plt.xticks(range(len(feature_importance)), list(feature_importance.keys()), rotation=45)
-            plt.title('Feature Importance')
-            plt.tight_layout()
-            mlflow.log_figure(plt.gcf(), "feature_importance.png")
-            plt.close()
-        
-        return {
-            'feature_importance': feature_importance,
-            'significant_changes': changes,
-            'timestamp': current_time
-        }
-
-    def detect_significant_changes(self) -> List[Dict]:
-        """Detect significant changes in feature importance over time."""
-        if len(self.feature_importance_history) < 2:
-            return []
-        
-        changes = []
-        current = self.feature_importance_history[-1]['importance']
-        previous = self.feature_importance_history[-2]['importance']
-        
-        # Calculate relative changes
-        for feature in current:
-            if feature in previous:
-                change = ((current[feature] - previous[feature]) / previous[feature]) * 100
-                if abs(change) > 10:  # 10% change threshold
-                    changes.append({
-                        'feature': feature,
-                        'change_percentage': change,
-                        'current_value': current[feature],
-                        'previous_value': previous[feature]
-                    })
-        
-        # Alert on significant changes
-        if changes:
-            send_message(
-                channel="#alerts",
-                title=f"🔍 Significant Feature Importance Changes - {self.model_id}",
-                details="\n".join([
-                    f"{c['feature']}: {c['change_percentage']:.1f}% change"
-                    for c in changes
-                ]),
-                urgency="medium"
-            )
-        
-        return changes
-
-    def calculate_importance_entropy(self, importance: Dict[str, float]) -> float:
-        """Calculate entropy of feature importance distribution."""
-        if not importance:
-            return 0.0
-        
-        values = np.array(list(importance.values()))
-        values = values / values.sum()  # Normalize
-        return -np.sum(values * np.log2(values + 1e-10))
-
-    def get_explainability_summary(self) -> Dict:
-        """Get a summary of model explainability metrics."""
+    
+    def detect_feature_shift(self, current_importance: Dict[str, float], threshold: float = 0.1) -> Dict[str, float]:
+        """Detect shifts in feature importance from historical data."""
         if not self.feature_importance_history:
             return {}
+            
+        last_importance = self.feature_importance_history[-1]
+        shifts = {}
         
-        current = self.feature_importance_history[-1]['importance']
-        top_features = list(current.items())[:5]
+        for feature, importance in current_importance.items():
+            if feature in last_importance:
+                shift = abs(importance - last_importance[feature])
+                if shift > threshold:
+                    shifts[feature] = shift
+                    
+        if shifts:
+            # Import slack only when needed
+            from utils.slack import post as send_message
+            shift_msg = "\n".join([f"{feature}: {shift:.4f}" for feature, shift in shifts.items()])
+            send_message(
+                channel="#alerts",
+                title="🔄 Feature Importance Shift Detected",
+                details=f"Shifts detected in feature importance:\n{shift_msg}",
+                urgency="medium"
+            )
+                    
+        return shifts
+    
+    def track_model_and_data(self, 
+                           model: object, 
+                           X: pd.DataFrame, 
+                           y: pd.Series,
+                           run_id: str) -> Dict:
+        """
+        Track model explainability metrics and log them to MLflow.
         
-        return {
-            'top_features': top_features,
-            'importance_entropy': self.calculate_importance_entropy(current),
-            'recent_changes': self.detect_significant_changes(),
-            'history_length': len(self.feature_importance_history)
-        } 
+        Args:
+            model: Trained model object
+            X: Feature data
+            y: Target data
+            run_id: MLflow run ID
+            
+        Returns:
+            Dict of explainability metrics
+        """
+        # Calculate and store feature importance
+        feature_importance = self.calculate_feature_importance(model, X)
+        self.feature_importance_history.append(feature_importance)
+        
+        # Calculate SHAP values
+        shap_values, feature_names = self.calculate_shap_values(model, X)
+        if len(shap_values) > 0:
+            self.shap_values_history.append({
+                'values': shap_values,
+                'features': feature_names,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        # Detect feature importance shifts
+        feature_shifts = self.detect_feature_shift(feature_importance)
+        
+        # Log to MLflow
+        with mlflow.start_run(run_id=run_id):
+            # Log feature importance
+            for feature, importance in feature_importance.items():
+                mlflow.log_metric(f"importance_{feature}", importance)
+                
+            # Log feature shifts
+            for feature, shift in feature_shifts.items():
+                mlflow.log_metric(f"shift_{feature}", shift)
+            
+            # Log summary metrics
+            mlflow.log_metric("num_features", len(feature_importance))
+            mlflow.log_metric("num_feature_shifts", len(feature_shifts))
+            mlflow.log_metric("avg_importance", 
+                             sum(feature_importance.values()) / len(feature_importance) if feature_importance else 0)
+                
+        # Return results
+        results = {
+            'feature_importance': feature_importance,
+            'feature_shifts': feature_shifts,
+            'has_shap_values': len(shap_values) > 0,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return results
+    
+    def generate_explainability_report(self, output_path: str) -> str:
+        """Generate an explainability report with historical data."""
+        if not self.feature_importance_history:
+            return "No historical data available for reporting."
+            
+        # Import slack only when needed
+        from utils.slack import post as send_message
+        send_message(
+            channel="#alerts",
+            title="📊 Explainability Report",
+            details=f"Model explainability report generated for {self.model_id}",
+            urgency="low"
+        )
+        
+        # Generate simple text report for now
+        report = f"# Model Explainability Report - {self.model_id}\n\n"
+        report += f"Generated on: {datetime.now().isoformat()}\n\n"
+        
+        # Add feature importance history
+        report += "## Feature Importance History\n\n"
+        for i, importance in enumerate(self.feature_importance_history):
+            report += f"### Snapshot {i+1}\n"
+            for feature, value in importance.items():
+                report += f"- {feature}: {value:.4f}\n"
+            report += "\n"
+        
+        # Write to file
+        with open(output_path, 'w') as f:
+            f.write(report)
+            
+        return output_path 

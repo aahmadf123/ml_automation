@@ -66,7 +66,6 @@ def ingest_data_from_s3() -> str:
     """
     from utils.config import DATA_BUCKET
     from utils.storage import download as s3_download
-    from utils.slack import post as send_message
     from .cache import is_cache_valid, update_cache
     
     s3_key = f"{S3_DATA_FOLDER}/ut_loss_history_1.csv"
@@ -76,6 +75,8 @@ def ingest_data_from_s3() -> str:
     if not check_s3_file_exists(s3_bucket, s3_key):
         error_msg = f"Data file not found in S3: s3://{s3_bucket}/{s3_key}"
         log.error(error_msg)
+        # Import slack only when needed
+        from utils.slack import post as send_message
         send_message(
             channel="#alerts",
             title="❌ Data Ingestion Failed",
@@ -108,6 +109,8 @@ def ingest_data_from_s3() -> str:
         except Exception as e:
             error_msg = f"Error converting to Parquet: {str(e)}"
             log.error(error_msg)
+            # Import slack only when needed
+            from utils.slack import post as send_message
             send_message(
                 channel="#alerts",
                 title="❌ Data Conversion Failed",
@@ -119,6 +122,8 @@ def ingest_data_from_s3() -> str:
     except Exception as e:
         error_msg = f"Error ingesting data: {str(e)}"
         log.error(error_msg)
+        # Import slack only when needed
+        from utils.slack import post as send_message
         send_message(
             channel="#alerts",
             title="❌ Data Ingestion Failed",
