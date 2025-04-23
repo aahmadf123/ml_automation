@@ -37,16 +37,16 @@ from tasks.model_explainability import ModelExplainabilityTracker
 from tasks.ab_testing import ABTestingPipeline
 from tasks.training import train_and_compare_fn, manual_override
 
-# Import from plugins
-from plugins.utils.slack import post as send_message
-from plugins.utils.storage import upload as upload_to_s3
-from plugins.utils.logging_config import get_logger, setup_logging
-from plugins.utils.config import (
+# Import from utils
+from utils.slack import post as send_message
+from utils.storage import upload as upload_to_s3
+from utils.logging_config import get_logger, setup_logging
+from utils.config import (
     DEFAULT_START_DATE, SCHEDULE_CRON, AIRFLOW_DAG_BASE_CONF,
     AWS_REGION, DATA_BUCKET, MODEL_KEY_PREFIX, DRIFT_THRESHOLD,
     Config
 )
-from plugins.utils.security import SecurityUtils, validate_input
+from utils.security import SecurityUtils, validate_input
 
 # Setup logging
 setup_logging()
