@@ -101,19 +101,27 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     preprocess_task = PythonOperator(
         task_id='preprocess_data',
         python_callable=preprocess_data,
+        op_kwargs={
+            'data_path': "{{ ti.xcom_pull(task_ids='ingest_data') }}",
+            'output_path': LOCAL_PROCESSED_PATH
+        },
         dag=dag
     )
     
     # Schema validation tasks
     validate_task = PythonOperator(
         task_id='validate_schema',
-        python_callable=validate_schema,
+        python_callable=lambda **kwargs: validate_schema(
+            pd.read_parquet(LOCAL_PROCESSED_PATH)
+        ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
         dag=dag
     )
     
     snapshot_task = PythonOperator(
         task_id='snapshot_schema',
-        python_callable=snapshot_schema,
+        python_callable=lambda **kwargs: snapshot_schema(
+            pd.read_parquet(LOCAL_PROCESSED_PATH)
+        ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
         dag=dag
     )
     
@@ -129,18 +137,28 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     reference_task = PythonOperator(
         task_id='generate_reference_means',
         python_callable=generate_reference_means,
+        op_kwargs={
+            'processed_data_path': LOCAL_PROCESSED_PATH
+        },
         dag=dag
     )
     
     drift_task = PythonOperator(
         task_id='detect_drift',
         python_callable=detect_data_drift,
+        op_kwargs={
+            'processed_data_path': LOCAL_PROCESSED_PATH
+        },
         dag=dag
     )
     
     healing_task = PythonOperator(
         task_id='self_healing',
         python_callable=self_healing,
+        op_kwargs={
+            'drift_results': "{{ ti.xcom_pull(task_ids='detect_drift') }}",
+            'processed_data_path': LOCAL_PROCESSED_PATH
+        },
         dag=dag
     )
     
@@ -181,6 +199,10 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     train_task = PythonOperator(
         task_id='train_compare_model1',
         python_callable=train_and_compare_fn,
+        op_kwargs={
+            'model_id': 'homeowner_model',
+            'processed_path': LOCAL_PROCESSED_PATH
+        },
         dag=dag
     )
     
@@ -188,6 +210,10 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     override_task = PythonOperator(
         task_id='manual_override',
         python_callable=manual_override,
+        op_kwargs={
+            'model_id': 'homeowner_model',
+            'override_action': 'No action required'
+        },
         dag=dag
     )
     
