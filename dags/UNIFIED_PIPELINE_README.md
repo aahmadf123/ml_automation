@@ -67,6 +67,20 @@ If your dataset is already clean, set `APPLY_FEATURE_ENGINEERING` to "False" (de
 
 For datasets requiring preprocessing, set `APPLY_FEATURE_ENGINEERING` to "True".
 
+## Data Processing Optimizations
+
+The pipeline uses a simplified preprocessing module (`preprocessing_simplified.py`) that:
+
+1. Skips outlier detection and handling since the dataset is already clean
+2. Still handles all other preprocessing steps:
+   - Missing value handling
+   - Skewed feature transformation (if needed)
+   - Categorical encoding
+   - Model-specific feature selection
+   - Target column creation (pure_premium/trgt)
+
+This optimization improves performance and reduces processing time while ensuring all necessary data preparation is still performed.
+
 ## Running the Pipeline
 
 To run the unified pipeline:

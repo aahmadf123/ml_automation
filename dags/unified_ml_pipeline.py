@@ -47,7 +47,7 @@ import utils.slack as slack
 
 # Import task modules that are actively used
 import tasks.ingestion as ingestion
-import tasks.preprocessing as preprocessing  # Primary data processing module
+import tasks.preprocessing_simplified as preprocessing  # Use simplified preprocessing without outlier detection
 import tasks.data_quality as data_quality
 import tasks.schema_validation as schema_validation
 import tasks.drift as drift
@@ -405,6 +405,12 @@ def process_data(**context):
                 try:
                     # Load and save to ensure format compatibility
                     df = pd.read_parquet(raw_data_path)
+                    
+                    # Ensure target column exists
+                    if 'trgt' not in df.columns and 'il_total' in df.columns and 'eey' in df.columns:
+                        logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
+                        df['trgt'] = df['il_total'] / df['eey']
+                        
                     df.to_parquet(processed_path, index=False)
                     logger.info(f"File copied with minimal processing to {processed_path}")
                 except Exception as e:
@@ -418,12 +424,11 @@ def process_data(**context):
                 
                 # Use preprocessing module for data processing
                 try:
-                    # Call the preprocess_data function with appropriate parameters
+                    # Call the preprocess_data function without the apply_feature_engineering parameter
                     processed_data = preprocessing.preprocess_data(
                         data_path=raw_data_path,
                         output_path=processed_path,
-                        force_reprocess=True,
-                        apply_feature_engineering=apply_feature_engineering
+                        force_reprocess=True
                     )
                     logger.info(f"Data processed successfully to {processed_path}")
                 except Exception as e:
