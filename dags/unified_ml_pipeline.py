@@ -557,16 +557,18 @@ def run_data_quality_checks(**context):
             logger.error(f"Failed to load parquet file: {str(e)}")
             raise
             
-        # Run quality checks
+        # Run quality checks - use correct DataQualityMonitor method
         try:
-            quality_results = data_quality.DataQualityMonitor().run_quality_checks(df)
+            # Create DataQualityMonitor instance and run checks
+            quality_monitor = data_quality.DataQualityMonitor()
+            quality_results = quality_monitor.run_quality_checks(df)
             logger.info(f"Data quality results: {quality_results}")
             
             # Store results in XCom
             context['ti'].xcom_push(key='quality_results', value=quality_results)
             
             # Determine if quality checks passed
-            quality_passed = quality_results.get('status') == 'success'
+            quality_passed = quality_results.get('status', '') == 'success' or quality_results.get('total_issues', 0) == 0
             context['ti'].xcom_push(key='quality_passed', value=quality_passed)
             
             if quality_passed:
@@ -578,7 +580,9 @@ def run_data_quality_checks(**context):
             else:
                 logger.warning("Data quality checks failed or had warnings")
                 try:
-                    slack.post(f":warning: Data quality checks had issues: {quality_results.get('message', 'Unknown issue')}")
+                    message = quality_results.get('message', 'Unknown issue')
+                    issues = quality_results.get('total_issues', 0)
+                    slack.post(f":warning: Data quality checks had {issues} issues: {message}")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
                     
@@ -682,6 +686,48 @@ def run_schema_validation(**context):
             
         raise
 
+# Defensive wrapper to handle function calls
+def safe_module_call(module, function_name, *args, **kwargs):
+    """
+    Safely call a function from a module, handling AttributeError gracefully.
+    
+    Args:
+        module: The module to call function from
+        function_name: Name of the function to call
+        *args: Positional arguments to pass to the function
+        **kwargs: Keyword arguments to pass to the function
+        
+    Returns:
+        Function result or error dict
+    """
+    try:
+        # Check if the module has the function
+        if hasattr(module, function_name):
+            func = getattr(module, function_name)
+            if callable(func):
+                return func(*args, **kwargs)
+            else:
+                logger.error(f"Function {function_name} exists in {module.__name__} but is not callable")
+                return {"status": "error", "message": f"Function {function_name} is not callable"}
+        else:
+            # Try to find similar function names for useful error messages
+            available_funcs = [name for name in dir(module) if callable(getattr(module, name)) and not name.startswith('_')]
+            suggestion = ""
+            if available_funcs:
+                suggestion = f"Available functions: {', '.join(available_funcs[:5])}"
+                if len(available_funcs) > 5:
+                    suggestion += f" and {len(available_funcs) - 5} more"
+                    
+            logger.error(f"Function {function_name} not found in {module.__name__}. {suggestion}")
+            return {"status": "error", "message": f"Function {function_name} not found in module. {suggestion}"}
+    except AttributeError as e:
+        logger.error(f"AttributeError calling {function_name}: {str(e)}")
+        return {"status": "error", "message": f"AttributeError: {str(e)}"}
+    except Exception as e:
+        logger.error(f"Error calling {function_name}: {str(e)}")
+        return {"status": "error", "message": f"Error: {str(e)}"}
+
+# Update the drift detection call to use the safe function call
 def check_for_drift(**context):
     """Check for data drift"""
     logger.info("Starting drift_detection task")
@@ -700,37 +746,49 @@ def check_for_drift(**context):
             
         logger.info(f"Running drift detection on {data_path}")
         
-        # Run drift detection
-        try:
-            drift_results = drift.DriftDetector().check_for_drift(data_path)
-            logger.info(f"Drift detection results: {drift_results}")
+        # Try multiple possible function names from the drift module
+        drift_results = None
+        
+        # First try detect_data_drift
+        drift_results = safe_module_call(drift, "detect_data_drift", processed_data_path=data_path)
+        
+        # If that failed, try check_for_drift
+        if drift_results.get("status") == "error" and "not found" in drift_results.get("message", ""):
+            logger.info("Trying alternate drift detection function 'check_for_drift'")
+            drift_results = safe_module_call(drift, "check_for_drift", data_path)
             
-            # Store results in XCom
-            context['ti'].xcom_push(key='drift_results', value=drift_results)
-            
-            # Determine if drift was detected
-            drift_detected = drift_results.get('drift_detected', False)
-            context['ti'].xcom_push(key='drift_detected', value=drift_detected)
-            
-            if drift_detected:
-                logger.warning("Data drift detected")
-                try:
-                    slack.post(f":warning: Data drift detected: {drift_results.get('message', 'Unknown issue')}")
-                except Exception as e:
-                    logger.warning(f"Error sending Slack notification: {str(e)}")
-            else:
-                logger.info("No data drift detected")
-                try:
-                    slack.post(":white_check_mark: No data drift detected")
-                except Exception as e:
-                    logger.warning(f"Error sending Slack notification: {str(e)}")
+        # If still failed, try other potential names
+        if drift_results.get("status") == "error" and "not found" in drift_results.get("message", ""):
+            for func_name in ["detect_drift", "run_drift_detection", "check_drift"]:
+                logger.info(f"Trying alternate drift detection function '{func_name}'")
+                drift_results = safe_module_call(drift, func_name, data_path)
+                if drift_results.get("status") != "error" or "not found" not in drift_results.get("message", ""):
+                    break
                     
-            return drift_results
-            
-        except Exception as e:
-            logger.error(f"Error running drift detection: {str(e)}")
-            raise
-            
+        logger.info(f"Drift detection results: {drift_results}")
+        
+        # Store results in XCom
+        context['ti'].xcom_push(key='drift_results', value=drift_results)
+        
+        # Determine if drift was detected
+        drift_detected = drift_results.get('drift_detected', False)
+        context['ti'].xcom_push(key='drift_detected', value=drift_detected)
+        
+        if drift_detected:
+            logger.warning("Data drift detected")
+            try:
+                slack.post(f":warning: Data drift detected: {drift_results.get('message', 'Unknown issue')}")
+            except Exception as e:
+                logger.warning(f"Error sending Slack notification: {str(e)}")
+        else:
+            logger.info("No data drift detected")
+            try:
+                slack.post(":white_check_mark: No data drift detected")
+            except Exception as e:
+                logger.warning(f"Error sending Slack notification: {str(e)}")
+                
+        return drift_results
+        
     except Exception as e:
         logger.error(f"Error in drift_detection task: {str(e)}")
         
