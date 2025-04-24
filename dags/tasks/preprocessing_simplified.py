@@ -256,43 +256,120 @@ def select_model_features(df: pd.DataFrame) -> pd.DataFrame:
 @cache_result
 def generate_profile_report(df: pd.DataFrame, output_path: str = PROFILE_REPORT_PATH) -> None:
     """
-    Generate a profile report using ydata-profiling.
+    Generate a profile report for the DataFrame.
+    Made robust against data errors.
+    
+    Args:
+        df: Input DataFrame
+        output_path: Path to save the profile report
     """
-    # Only sample if needed for large datasets
-    if len(df) > 100000:
-        sample = df.sample(min(100000, len(df) // 10))
-        logging.info(f"Using {len(sample):,} rows for profiling (sampled from {len(df):,})")
-    else:
-        sample = df
-        logging.info(f"Using all {len(df):,} rows for profiling")
-    
-    # For very wide datasets, limit columns to improve performance
-    if len(df.columns) > 100:
-        logging.info(f"Dataset has {len(df.columns)} columns, limiting profile to important columns")
-        # Prioritize numeric columns and columns with fewer missing values
-        col_info = []
-        for col in df.columns:
-            missing_pct = df[col].isna().mean()
-            is_numeric = pd.api.types.is_numeric_dtype(df[col].dtype)
-            col_info.append((col, missing_pct, is_numeric))
+    try:
+        logger.info(f"Generating profile report and saving to {output_path}")
         
-        # Sort by numeric first, then by missing percentage
-        col_info.sort(key=lambda x: (-x[2], x[1]))
-        selected_cols = [col for col, _, _ in col_info[:100]]
-        sample = sample[selected_cols]
-        logging.info(f"Selected {len(selected_cols)} columns for profiling")
-    
-    # Generate minimal report first, then expand if needed
-    profile = ProfileReport(
-        sample,
-        title="Homeowner Loss History Data Profile",
-        minimal=True,
-        progress_bar=False,
-        explorative=True
-    )
-    
-    profile.to_file(output_path)
-    logging.info(f"Profile report saved to {output_path}")
+        # Ensure df is a proper DataFrame
+        if not isinstance(df, pd.DataFrame):
+            logger.warning(f"Input is not a DataFrame, type is {type(df)}")
+            return None
+            
+        # Limit report to a sample if dataframe is very large
+        if len(df) > 100000:
+            logger.info(f"Large DataFrame detected, sampling 100,000 rows for profile report")
+            df_sample = df.sample(100000, random_state=42)
+        else:
+            df_sample = df
+        
+        # Fix any column issues before profiling
+        fixed_df = df_sample.copy()
+        
+        # Handle problematic columns that might cause the profiler to fail
+        for col in fixed_df.columns:
+            try:
+                col_dtype = fixed_df[col].dtype
+                
+                # Handle potentially problematic columns
+                if col_dtype == 'object' or col_dtype.name == 'category':
+                    # Limit string length to avoid memory issues
+                    fixed_df[col] = fixed_df[col].astype(str).str.slice(0, 1000)
+                    
+                # Convert any complex data types to strings to avoid profiling failures
+                if not np.issubdtype(col_dtype, np.number) and not np.issubdtype(col_dtype, np.bool_) and col_dtype != 'object':
+                    logger.warning(f"Converting column {col} with dtype {col_dtype} to string")
+                    fixed_df[col] = fixed_df[col].astype(str)
+                    
+                # Handle mixed type columns - check if we have None/nan mixed with other types
+                if fixed_df[col].isna().any() and not np.issubdtype(col_dtype, np.number):
+                    # Fill nulls with a specific string for categorical data
+                    fixed_df[col] = fixed_df[col].fillna("(missing)")
+            except Exception as e:
+                logger.warning(f"Error preprocessing column {col} for profiling: {str(e)}")
+                # In case of error, convert to string as a fallback
+                try:
+                    fixed_df[col] = fixed_df[col].astype(str)
+                except:
+                    # Last resort - drop the column if it can't be processed
+                    logger.warning(f"Dropping problematic column {col} for profiling only")
+                    fixed_df = fixed_df.drop(columns=[col])
+        
+        try:
+            # Import here to avoid affecting performance of other functions
+            from ydata_profiling import ProfileReport
+            
+            # Use minimal configuration for faster processing
+            profile = ProfileReport(
+                fixed_df,
+                title="Homeowner Data Profile",
+                minimal=True,  # Use minimal mode for faster processing
+                explorative=False,  # Disable explorative mode
+                correlations=None,  # Don't compute correlations (compute separately)
+                progress_bar=False,  # Disable progress bar for better logging
+                html={'style': {'full_width': True}},
+                n_obs_unique=10,  # Only show 10 unique values
+                n_freq_table_max=10,  # Max 10 rows in frequency tables
+                vars={'num': {'low_categorical_threshold': 5}},  # Treat numeric cols with <5 unique values as categorical
+                infer_dtypes=False  # Don't try to infer dtypes
+            )
+            
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # Save the report
+            profile.to_file(output_path)
+            logger.info(f"Profile report saved to {output_path}")
+            
+        except ImportError:
+            # ydata_profiling not available, try pandas profiling or skip
+            logger.warning("ydata_profiling not available, trying pandas_profiling")
+            try:
+                from pandas_profiling import ProfileReport
+                profile = ProfileReport(fixed_df, minimal=True, progress_bar=False)
+                profile.to_file(output_path)
+                logger.info(f"Profile report saved to {output_path} using pandas_profiling")
+            except ImportError:
+                logger.warning("Neither ydata_profiling nor pandas_profiling available, skipping profile report")
+        except Exception as e:
+            logger.error(f"Error generating profile report: {str(e)}")
+            # Try to create a simple HTML report as fallback
+            try:
+                logger.info("Attempting to create fallback simple HTML report")
+                html_content = f"""<html>
+                <head><title>Simple DataFrame Summary</title></head>
+                <body>
+                <h1>DataFrame Summary</h1>
+                <p>Shape: {fixed_df.shape}</p>
+                <h2>Data Types</h2>
+                <pre>{fixed_df.dtypes}</pre>
+                <h2>Summary Statistics</h2>
+                <pre>{fixed_df.describe().to_html()}</pre>
+                </body></html>
+                """
+                with open(output_path, 'w') as f:
+                    f.write(html_content)
+                logger.info(f"Created fallback HTML report at {output_path}")
+            except Exception as fallback_error:
+                logger.error(f"Failed to create fallback report: {str(fallback_error)}")
+    except Exception as e:
+        logger.error(f"Critical error in generate_profile_report: {str(e)}")
+        return None
 
 
 def process_column_group(df, columns, process_func):

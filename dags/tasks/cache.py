@@ -69,10 +69,44 @@ class DataFrameCache:
     
     def _get_dataframe_hash(self, df: pd.DataFrame) -> str:
         """Generate a hash for a DataFrame to use as cache key."""
-        # Use shape, column names, and sampling of values to create a hash
-        sample_values = df.sample(min(100, len(df))).values.flatten()[:1000]
-        hash_input = f"{df.shape}_{list(df.columns)}_{sample_values.mean()}_{sample_values.std()}"
-        return hashlib.md5(hash_input.encode()).hexdigest()
+        try:
+            # Use shape and column names as a base for the hash
+            base_hash = f"{df.shape}_{list(df.columns)}"
+            
+            # Safely sample values, avoiding potential errors with mixed data types
+            try:
+                # Try to sample the dataframe, but handle errors gracefully
+                sample_df = df.sample(min(100, len(df)))
+                
+                # For numeric columns only, try to calculate statistics
+                numeric_cols = sample_df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    numeric_sample = sample_df[numeric_cols].values.flatten()
+                    
+                    # Filter out None values and non-numeric types
+                    numeric_sample = [x for x in numeric_sample if x is not None and not np.isnan(x)]
+                    
+                    if numeric_sample:
+                        # Only calculate statistics if we have valid numeric data
+                        numeric_stats = f"_{np.mean(numeric_sample)}_{np.std(numeric_sample)}"
+                        base_hash += numeric_stats
+                
+                # Add column count info for additional uniqueness
+                base_hash += f"_cols:{len(df.columns)}"
+                
+            except Exception as e:
+                # If any error occurs during sampling, just use the base hash
+                logger.warning(f"Error during dataframe sampling for hash: {str(e)}")
+                # Add timestamp to ensure uniqueness even if error occurs
+                base_hash += f"_ts:{time.time()}"
+        
+        except Exception as e:
+            # If any critical error occurs, use a timestamp-based fallback hash
+            logger.error(f"Critical error generating DataFrame hash: {str(e)}")
+            base_hash = f"fallback_hash_{time.time()}"
+        
+        # Generate the actual hash from our string
+        return hashlib.md5(base_hash.encode()).hexdigest()
     
     def compute_statistics(self, df: pd.DataFrame, df_name: str) -> Dict[str, Dict[str, Dict[str, float]]]:
         """
