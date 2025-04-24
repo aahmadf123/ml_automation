@@ -323,8 +323,26 @@ def download_data(**context):
                     logger.warning(f"Failed to create backup in {backup_dir}: {str(e)}")
                     
         # Store both primary path and backup paths in XCom
+        logger.info(f"Pushing data_path to XCom: {data_path}")
         context['ti'].xcom_push(key='data_path', value=data_path)
+        
+        # Add additional debugging
+        ti = context['ti']
+        task_id = ti.task_id
+        dag_id = ti.dag_id
+        logger.info(f"XCom values for debugging - task_id: {task_id}, dag_id: {dag_id}")
+        
+        # Verify the XCom push by directly reading from Airflow's XCom table
+        try:
+            execution_date = context.get('execution_date')
+            logger.info(f"Execution date: {execution_date}")
+            xcom_value = ti.xcom_pull(task_ids=task_id, key='data_path')
+            logger.info(f"Verification of XCom value (self-pull): {xcom_value}")
+        except Exception as e:
+            logger.warning(f"Could not verify XCom value: {str(e)}")
+
         if backup_paths:
+            logger.info(f"Pushing backup_paths to XCom: {backup_paths}")
             context['ti'].xcom_push(key='backup_paths', value=backup_paths)
             
         # Test file exists and is accessible
@@ -338,6 +356,25 @@ def download_data(**context):
             raise ValueError(f"Downloaded file is empty: {data_path}")
             
         logger.info(f"Verified file exists with size {file_size} bytes")
+        
+        # Set file permissions to ensure next tasks can read it
+        try:
+            os.chmod(data_path, 0o666)  # Make file readable/writable by all users
+            logger.info(f"Set file permissions to 666 for {data_path}")
+        except Exception as e:
+            logger.warning(f"Could not set file permissions: {str(e)}")
+            
+        # Create a standardized file path that other tasks can find directly
+        try:
+            # Ensure we have a constant location for the file across tasks
+            standard_path = os.path.join(data_dir, f"latest_raw_data.csv")
+            shutil.copy2(data_path, standard_path)
+            logger.info(f"Created standardized copy at {standard_path}")
+            
+            # Add this to XCom as well
+            context['ti'].xcom_push(key='standard_data_path', value=standard_path)
+        except Exception as e:
+            logger.warning(f"Could not create standardized path: {str(e)}")
         
         # Log with ClearML if enabled
         try:
@@ -366,8 +403,8 @@ def download_data(**context):
         
         try:
             slack.simple_post(f"❌ Failed to access data: {str(e)}", channel="#data-pipeline")
-        except:
-            pass
+        except Exception as ex:
+            logger.warning(f"Error sending error notification: {str(ex)}")
             
         raise
 
@@ -406,7 +443,7 @@ def process_data(**context):
             raise PermissionError("No writable directory found for storing processed data")
         
         # Get raw data path from previous task
-        raw_data_path = context['ti'].xcom_pull(task_ids='download_data', key='data_path')
+        raw_data_path = context['ti'].xcom_pull(task_ids='import_data_task', key='data_path')
         
         if not raw_data_path:
             logger.error("Failed to get data_path from previous tasks")
@@ -417,7 +454,7 @@ def process_data(**context):
             logger.warning(f"Data file does not exist at primary location: {raw_data_path}")
             
             # Try backup paths
-            backup_paths = context['ti'].xcom_pull(task_ids='download_data', key='backup_paths') or []
+            backup_paths = context['ti'].xcom_pull(task_ids='import_data_task', key='backup_paths') or []
             for backup_path in backup_paths:
                 if os.path.exists(backup_path):
                     raw_data_path = backup_path

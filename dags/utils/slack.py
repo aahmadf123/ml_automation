@@ -126,19 +126,26 @@ class SlackManager:
             log.info(f"[FALLBACK] Channel: {channel}, Message: {message}")
             
             # Handle channel_not_found error by trying to post to a default channel
-            if "channel_not_found" in str(e) and channel != "#general":
+            if "channel_not_found" in str(e):
                 try:
-                    # Try posting to the general channel instead
-                    log.info(f"Channel {channel} not found, trying to post to #general instead")
+                    # Try to get default channel from Airflow Variable
+                    try:
+                        from airflow.models import Variable
+                        default_channel = Variable.get("SLACK_DEFAULT_CHANNEL", default_var="#all-airflow-notification")
+                    except Exception:
+                        default_channel = "#all-airflow-notification"
+                        
+                    # Try posting to the default channel instead
+                    log.info(f"Channel {channel} not found, trying to post to {default_channel} instead")
                     fallback_response = self._client.chat_postMessage(
-                        channel="#general",
+                        channel=default_channel,
                         text=f"[Intended for {channel}] {message}",
                         mrkdwn=True
                     )
-                    log.info(f"Fallback message sent to #general")
+                    log.info(f"Fallback message sent to {default_channel}")
                     return fallback_response.data
                 except Exception as fallback_e:
-                    log.error(f"Fallback to #general failed: {str(fallback_e)}")
+                    log.error(f"Fallback to {default_channel} failed: {str(fallback_e)}")
             
             return {"ok": False, "error": str(e)}
         except Exception as e:
@@ -234,7 +241,7 @@ def post(
     """
     return get_manager().post(channel, title, details, urgency)
 
-def simple_post(message: str, channel: str = "#alerts", urgency: str = "normal") -> Dict[str, Any]:
+def simple_post(message: str, channel: str = None, urgency: str = "normal") -> Dict[str, Any]:
     """
     Simplified function to post a message to Slack with just a message string.
     
@@ -246,6 +253,14 @@ def simple_post(message: str, channel: str = "#alerts", urgency: str = "normal")
     Returns:
         Dict[str, Any]: Slack API response
     """
+    # Get default channel if none provided
+    if channel is None:
+        try:
+            from airflow.models import Variable
+            channel = Variable.get("SLACK_DEFAULT_CHANNEL", default_var="#all-airflow-notification")
+        except Exception:
+            channel = "#all-airflow-notification"
+    
     # Split the message into title and details if it contains a newline
     if "\n" in message:
         parts = message.split("\n", 1)
@@ -276,6 +291,13 @@ def ensure_default_channels() -> Dict[str, bool]:
     """
     manager = get_manager()
     
+    try:
+        # Try to get default channel from Airflow Variable
+        from airflow.models import Variable
+        default_fallback_channel = Variable.get("SLACK_DEFAULT_CHANNEL", default_var="#all-airflow-notification")
+    except Exception:
+        default_fallback_channel = "#all-airflow-notification"
+    
     # Default channels for different message types
     default_channels = [
         "#data-pipeline",  # Primary channel for data pipeline notifications
@@ -285,7 +307,7 @@ def ensure_default_channels() -> Dict[str, bool]:
         "#incidents",      # Channel for incidents
         "#data-engineering",# Channel for data engineering
         "#ml-training",    # Channel for ml training
-        "#general"         # Fallback channel
+        default_fallback_channel  # Fallback channel
     ]
     
     results = {}
@@ -316,7 +338,7 @@ def ensure_default_channels() -> Dict[str, bool]:
             except Exception as e:
                 log.warning(f"Failed to create channel {channel}: {str(e)}")
                 # Fall back to more reliable channels
-                log.info(f"Messages meant for {channel} will be sent to #general or logged only")
+                log.info(f"Messages meant for {channel} will be sent to {default_fallback_channel} or logged only")
     
     return results
 
@@ -331,15 +353,19 @@ send_message = post
 post_message = post
 
 # Default settings
-DEFAULT_CHANNEL = "#alerts"
+try:
+    from airflow.models import Variable
+    DEFAULT_CHANNEL = Variable.get("SLACK_DEFAULT_CHANNEL", default_var="#all-airflow-notification")
+except Exception:
+    DEFAULT_CHANNEL = "#all-airflow-notification"
+
 DEFAULT_CHANNELS = [
-    "#alerts", 
+    DEFAULT_CHANNEL, 
     "#data-pipeline", 
     "#ml-approvals", 
     "#fix-proposals", 
     "#incidents", 
     "#data-engineering", 
-    "#ml-training",
-    "#general"
+    "#ml-training"
 ]
 DEFAULT_TIMEOUT = 10  # seconds
