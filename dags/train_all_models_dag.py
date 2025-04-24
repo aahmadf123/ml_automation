@@ -19,12 +19,12 @@ from airflow.exceptions import AirflowException
 from airflow.hooks.S3_hook import S3Hook
 from airflow.providers.amazon.aws.operators.s3 import S3CopyObjectOperator
 
-from dags.tasks.data_prep import prepare_dataset
-from dags.tasks.training import train_multiple_models
-from dags.tasks.archiving import archive_to_s3
-from dags.tasks.model_comparison import compare_model_results
+from tasks.data_prep import prepare_dataset
+from tasks.training import train_multiple_models
+from tasks.archiving import archive_to_s3
+from tasks.model_comparison import compare_model_results
 
-from dags.utils.config import S3_BUCKET, MODEL_CONFIG
+from utils.config import S3_BUCKET, MODEL_CONFIG
 
 logger = logging.getLogger(__name__)
 

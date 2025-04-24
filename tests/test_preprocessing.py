@@ -4,12 +4,14 @@ import numpy as np
 from datetime import datetime, timedelta
 import sys
 import os
+import tempfile
+from unittest.mock import patch, MagicMock
 
 # Add the parent directory to the path so we can import the preprocessing module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the preprocessing functions
-from dags.tasks.preprocessing import (
+from tasks.preprocessing import (
     load_data,
     clean_data,
     feature_engineering,
@@ -17,7 +19,10 @@ from dags.tasks.preprocessing import (
     detect_outliers,
     normalize_features,
     encode_categorical_variables,
-    split_data
+    split_data,
+    preprocess_homeowner_data,
+    analyze_loss_history,
+    encode_categorical_features
 )
 
 class TestPreprocessing(unittest.TestCase):
@@ -239,6 +244,60 @@ class TestPreprocessing(unittest.TestCase):
             
         except Exception as e:
             self.fail(f"End-to-end preprocessing raised an exception: {e}")
+
+    def test_preprocess_homeowner_data(self):
+        """Test the main preprocessing function."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
+            # Save test data
+            self.sample_data.to_csv(temp_file.name, index=False)
+            temp_file_path = temp_file.name
+            
+        try:
+            # Call preprocessing function
+            with tempfile.TemporaryDirectory() as temp_dir:
+                output_path = os.path.join(temp_dir, "processed.parquet")
+                result = preprocess_homeowner_data(temp_file_path, output_path)
+                
+                # Verify output file was created
+                self.assertTrue(os.path.exists(output_path))
+                
+                # Verify result contains expected keys
+                self.assertIn('output_path', result)
+                self.assertIn('num_rows', result)
+                self.assertIn('num_features', result)
+                
+                # Load and verify processed data
+                processed_df = pd.read_parquet(output_path)
+                self.assertGreater(len(processed_df), 0)
+                self.assertGreaterEqual(len(processed_df.columns), len(self.sample_data.columns))
+        finally:
+            # Clean up
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                
+    def test_analyze_loss_history(self):
+        """Test loss history analysis."""
+        result = analyze_loss_history(self.sample_data)
+        
+        # Verify result is a dataframe
+        self.assertIsInstance(result, pd.DataFrame)
+        
+        # Verify new features were created
+        self.assertIn('total_loss_count', result.columns)
+        self.assertIn('has_recent_loss', result.columns)
+        
+    def test_encode_categorical_features(self):
+        """Test categorical feature encoding."""
+        result = encode_categorical_features(self.sample_data)
+        
+        # Check that categorical column was encoded
+        self.assertNotIn('coverage_type', result.columns)
+        self.assertIn('coverage_type_basic', result.columns)
+        self.assertIn('coverage_type_premium', result.columns)
+        self.assertIn('region_north', result.columns)
+        self.assertIn('region_south', result.columns)
+        self.assertIn('region_east', result.columns)
+        self.assertIn('region_west', result.columns)
 
 if __name__ == '__main__':
     unittest.main() 

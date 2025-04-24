@@ -21,14 +21,14 @@ from airflow.decorators import task
 import mlflow
 
 # Fix import paths to use absolute imports
-from dags.utils.metrics import (
+from utils.metrics import (
     calculate_metrics,
     compare_models,
     create_comparison_plots,
     should_retrain
 )
-from dags.utils.s3 import upload_to_s3, download_from_s3
-from dags.utils.notifications import send_slack_notification
+from utils.s3 import upload_to_s3, download_from_s3
+from utils.notifications import send_slack_notification
 
 logger = logging.getLogger(__name__)
 

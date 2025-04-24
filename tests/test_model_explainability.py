@@ -1,110 +1,114 @@
 import unittest
-import numpy as np
 import pandas as pd
-from datetime import datetime
-from dags.tasks.model_explainability import ModelExplainabilityTracker
-from sklearn.ensemble import RandomForestRegressor
+import numpy as np
+from tasks.model_explainability import ModelExplainabilityTracker
 
-class TestModelExplainabilityTracker(unittest.TestCase):
+class TestModelExplainability(unittest.TestCase):
+    """Test the model explainability tracker."""
+    
     def setUp(self):
-        """Set up test data and model."""
-        # Create sample data
-        np.random.seed(42)
-        self.X = pd.DataFrame({
-            'feature1': np.random.normal(0, 1, 100),
-            'feature2': np.random.normal(0, 1, 100),
-            'feature3': np.random.normal(0, 1, 100)
-        })
-        self.y = 2 * self.X['feature1'] + 3 * self.X['feature2'] + np.random.normal(0, 0.1, 100)
+        """Set up test data and tracker."""
+        # Sample model predictions and actual values
+        self.predictions = np.array([0.1, 0.8, 0.3, 0.9, 0.2, 0.7])
+        self.actuals = np.array([0, 1, 0, 1, 0, 1])
         
-        # Train a model
-        self.model = RandomForestRegressor(n_estimators=10, random_state=42)
-        self.model.fit(self.X, self.y)
+        # Sample feature values
+        self.features = pd.DataFrame({
+            'feature1': [1.0, 2.0, 1.5, 3.0, 0.5, 2.5],
+            'feature2': [0.5, 1.5, 1.0, 2.0, 0.2, 1.8],
+            'feature3': [100, 200, 150, 250, 50, 220]
+        })
         
         # Initialize tracker
-        self.tracker = ModelExplainabilityTracker("test_model")
-
-    def test_calculate_feature_importance(self):
-        """Test feature importance calculation."""
-        importance = self.tracker.calculate_feature_importance(self.model, self.X)
+        self.tracker = ModelExplainabilityTracker(model_id='test_model')
         
-        # Check return type and structure
-        self.assertIsInstance(importance, dict)
-        self.assertEqual(len(importance), 3)  # Three features
+    def test_track_prediction_explanations(self):
+        """Test prediction explanations tracking."""
+        result = self.tracker.track_prediction_explanations(
+            predictions=self.predictions,
+            actuals=self.actuals,
+            features=self.features
+        )
         
-        # Check values are sorted in descending order
-        values = list(importance.values())
-        self.assertEqual(values, sorted(values, reverse=True))
+        # Verify the result contains the expected keys
+        self.assertIn('explanations_generated', result)
+        self.assertIn('feature_importance', result)
+        self.assertIn('global_explanations', result)
+        self.assertIn('local_explanations', result)
         
-        # Check all features are present
-        self.assertIn('feature1', importance)
-        self.assertIn('feature2', importance)
-        self.assertIn('feature3', importance)
-
-    def test_calculate_shap_values(self):
-        """Test SHAP values calculation."""
-        shap_values, features = self.tracker.calculate_shap_values(self.model, self.X)
+        # Verify feature importance contains all features
+        for feature in self.features.columns:
+            self.assertIn(feature, result['feature_importance'])
+            
+        # Verify number of local explanations matches number of predictions
+        self.assertEqual(len(result['local_explanations']), len(self.predictions))
         
-        # Check return types
-        self.assertIsInstance(shap_values, np.ndarray)
-        self.assertIsInstance(features, list)
+    def test_compare_explanations(self):
+        """Test comparison of explanations between models."""
+        # Create another tracker for a different model
+        tracker2 = ModelExplainabilityTracker(model_id='test_model2')
         
-        # Check dimensions
-        self.assertEqual(shap_values.shape[0], len(self.X))
-        self.assertEqual(shap_values.shape[1], len(self.X.columns))
-        self.assertEqual(len(features), len(self.X.columns))
-
-    def test_track_explainability(self):
-        """Test tracking explainability metrics."""
-        metrics = self.tracker.track_explainability(self.model, self.X)
+        # Generate explanations for both models
+        result1 = self.tracker.track_prediction_explanations(
+            predictions=self.predictions,
+            actuals=self.actuals,
+            features=self.features
+        )
         
-        # Check return type
-        self.assertIsInstance(metrics, dict)
+        # Slightly modify predictions for second model
+        predictions2 = self.predictions + np.random.normal(0, 0.05, size=len(self.predictions))
+        predictions2 = np.clip(predictions2, 0, 1)  # Keep in [0,1] range
         
-        # Check required metrics
-        required_metrics = ['feature_importance', 'shap_values', 'importance_entropy']
-        for metric in required_metrics:
-            self.assertIn(metric, metrics)
-
-    def test_detect_significant_changes(self):
-        """Test detection of significant changes in feature importance."""
-        # First tracking
-        self.tracker.track_explainability(self.model, self.X)
+        result2 = tracker2.track_prediction_explanations(
+            predictions=predictions2,
+            actuals=self.actuals,
+            features=self.features
+        )
         
-        # Modify data to create significant changes
-        self.X['feature1'] *= 2
+        # Compare explanations
+        comparison = self.tracker.compare_explanations(
+            other_explanations=result2['global_explanations']
+        )
         
-        # Second tracking
-        changes = self.tracker.detect_significant_changes(self.model, self.X)
+        # Verify comparison result
+        self.assertIn('models_compared', comparison)
+        self.assertIn('feature_importance_diff', comparison)
+        self.assertIn('similarity_score', comparison)
         
-        # Check return type
-        self.assertIsInstance(changes, dict)
-        self.assertIn('significant_changes', changes)
-        self.assertIn('changed_features', changes)
-
-    def test_calculate_importance_entropy(self):
-        """Test entropy calculation for feature importance."""
-        importance = {'feature1': 0.5, 'feature2': 0.3, 'feature3': 0.2}
-        entropy = self.tracker.calculate_importance_entropy(importance)
+        # Verify models are correctly identified
+        self.assertEqual(comparison['models_compared']['model1'], 'test_model')
+        self.assertEqual(comparison['models_compared']['model2'], 'test_model2')
         
-        # Check return type and value range
-        self.assertIsInstance(entropy, float)
-        self.assertGreaterEqual(entropy, 0)
-        self.assertLessEqual(entropy, 1)
-
-    def test_get_explainability_summary(self):
-        """Test getting explainability summary."""
-        # Track metrics first
-        self.tracker.track_explainability(self.model, self.X)
+        # Verify similarity score is between 0 and 1
+        self.assertGreaterEqual(comparison['similarity_score'], 0)
+        self.assertLessEqual(comparison['similarity_score'], 1)
         
-        # Get summary
-        summary = self.tracker.get_explainability_summary()
+    def test_generate_explanation_report(self):
+        """Test generation of explanation report."""
+        # Track explanations first
+        self.tracker.track_prediction_explanations(
+            predictions=self.predictions,
+            actuals=self.actuals,
+            features=self.features
+        )
         
-        # Check return type and structure
-        self.assertIsInstance(summary, dict)
-        self.assertIn('top_features', summary)
-        self.assertIn('recent_changes', summary)
-        self.assertIn('importance_trend', summary)
+        # Generate report
+        report = self.tracker.generate_explanation_report()
+        
+        # Verify report contains expected sections
+        self.assertIn('model_id', report)
+        self.assertIn('global_importance', report)
+        self.assertIn('top_features', report)
+        self.assertIn('example_explanations', report)
+        
+        # Verify model ID is correct
+        self.assertEqual(report['model_id'], 'test_model')
+        
+        # Verify top features are included
+        self.assertGreaterEqual(len(report['top_features']), 1)
+        
+        # Verify example explanations are included
+        self.assertGreaterEqual(len(report['example_explanations']), 1)
 
 if __name__ == '__main__':
     unittest.main() 

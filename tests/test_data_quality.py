@@ -1,133 +1,132 @@
 import unittest
-import numpy as np
 import pandas as pd
-from datetime import datetime
-from dags.tasks.data_quality import DataQualityMonitor
+import numpy as np
+from tasks.data_quality import DataQualityMonitor
 
 class TestDataQualityMonitor(unittest.TestCase):
+    """Test the data quality monitoring functionality."""
+    
     def setUp(self):
-        """Set up test data."""
-        # Create sample data
-        np.random.seed(42)
-        self.df = pd.DataFrame({
-            'numeric1': np.random.normal(0, 1, 100),
-            'numeric2': np.random.normal(0, 1, 100),
-            'categorical': np.random.choice(['A', 'B', 'C'], 100),
-            'binary': np.random.choice([0, 1], 100),
-            'missing': np.random.choice([1, 2, 3, np.nan], 100),
-            'outlier': np.concatenate([np.random.normal(0, 1, 95), np.array([100, 200, 300, 400, 500])])
+        """Set up test data and monitor."""
+        # Create sample test data
+        self.test_data = pd.DataFrame({
+            'numeric_col1': [1.0, 2.0, 3.0, 4.0, 5.0, None],
+            'numeric_col2': [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            'categorical_col': ['A', 'B', 'C', 'A', None, 'B'],
+            'date_col': pd.date_range(start='2023-01-01', periods=6)
         })
         
-        # Initialize monitor
+        # Create quality monitor
         self.monitor = DataQualityMonitor()
-
-    def test_calculate_basic_stats(self):
-        """Test basic statistics calculation."""
-        stats = self.monitor.calculate_basic_stats(self.df)
         
-        # Check return type
-        self.assertIsInstance(stats, dict)
+    def test_check_missing_values(self):
+        """Test missing values detection."""
+        result = self.monitor.check_missing_values(self.test_data)
         
-        # Check numeric column stats
-        numeric_stats = stats['numeric1']
-        self.assertIn('mean', numeric_stats)
-        self.assertIn('std', numeric_stats)
-        self.assertIn('min', numeric_stats)
-        self.assertIn('max', numeric_stats)
-        self.assertIn('missing', numeric_stats)
-        self.assertIn('unique_values', numeric_stats)
+        # Verify result structure
+        self.assertIsInstance(result, dict)
+        self.assertIn('missing_counts', result)
+        self.assertIn('missing_percentages', result)
+        self.assertIn('total_missing_percentage', result)
         
-        # Check categorical column stats
-        categorical_stats = stats['categorical']
-        self.assertIn('missing', categorical_stats)
-        self.assertIn('unique_values', categorical_stats)
-        self.assertIn('most_common', categorical_stats)
-
-    def test_detect_outliers(self):
+        # Verify correct missing value counts
+        self.assertEqual(result['missing_counts']['numeric_col1'], 1)
+        self.assertEqual(result['missing_counts']['numeric_col2'], 0)
+        self.assertEqual(result['missing_counts']['categorical_col'], 1)
+        self.assertEqual(result['missing_counts']['date_col'], 0)
+        
+        # Verify percentages are calculated correctly
+        self.assertEqual(result['missing_percentages']['numeric_col1'], 1/6 * 100)
+        
+    def test_check_duplicate_rows(self):
+        """Test duplicate row detection."""
+        # Add a duplicate row
+        duplicate_data = pd.concat([self.test_data, pd.DataFrame([self.test_data.iloc[0]])], ignore_index=True)
+        
+        result = self.monitor.check_duplicate_rows(duplicate_data)
+        
+        # Verify result structure
+        self.assertIsInstance(result, dict)
+        self.assertIn('duplicate_count', result)
+        self.assertIn('duplicate_percentage', result)
+        self.assertIn('has_duplicates', result)
+        
+        # Verify correct duplicate count
+        self.assertEqual(result['duplicate_count'], 1)
+        self.assertEqual(result['duplicate_percentage'], 1/7 * 100)
+        self.assertTrue(result['has_duplicates'])
+        
+    def test_check_outliers(self):
         """Test outlier detection."""
-        outliers = self.monitor.detect_outliers(self.df)
+        # Add outliers
+        outlier_data = self.test_data.copy()
+        outlier_data.loc[6] = [1000.0, 2000.0, 'D', pd.Timestamp('2023-01-07')]
         
-        # Check return type
-        self.assertIsInstance(outliers, dict)
+        result = self.monitor.check_outliers(outlier_data, method='zscore')
         
-        # Check outlier detection for column with known outliers
-        self.assertTrue(any(outliers['outlier']))
+        # Verify result structure
+        self.assertIsInstance(result, dict)
+        self.assertIn('outlier_counts', result)
+        self.assertIn('outlier_percentages', result)
+        self.assertIn('outlier_rows', result)
         
-        # Check outlier detection for column without outliers
-        self.assertFalse(any(outliers['numeric1']))
-
-    def test_detect_drift(self):
-        """Test drift detection."""
-        # Set baseline
-        self.monitor.baseline_stats = self.monitor.calculate_basic_stats(self.df)
+        # Verify outliers were detected in the correct columns
+        self.assertGreater(result['outlier_counts']['numeric_col1'], 0)
+        self.assertGreater(result['outlier_counts']['numeric_col2'], 0)
         
-        # Create drifted data
-        drifted_df = self.df.copy()
-        drifted_df['numeric1'] *= 2  # Significant drift
+    def test_check_data_types(self):
+        """Test data type validation."""
+        result = self.monitor.check_data_types(self.test_data)
         
-        # Detect drift
-        drift = self.monitor.detect_drift(
-            self.monitor.calculate_basic_stats(drifted_df),
-            self.monitor.baseline_stats
-        )
+        # Verify result structure
+        self.assertIsInstance(result, dict)
+        self.assertIn('column_types', result)
+        self.assertIn('numeric_columns', result)
+        self.assertIn('categorical_columns', result)
+        self.assertIn('datetime_columns', result)
         
-        # Check return type and content
-        self.assertIsInstance(drift, dict)
-        self.assertIn('numeric1', drift)
-        self.assertGreater(drift['numeric1']['drift_score'], 0.1)
-
-    def test_detect_correlations(self):
-        """Test correlation detection."""
-        # Create correlated data
-        correlated_df = self.df.copy()
-        correlated_df['correlated'] = correlated_df['numeric1'] * 0.8 + np.random.normal(0, 0.1, 100)
+        # Verify correct classification of columns
+        self.assertIn('numeric_col1', result['numeric_columns'])
+        self.assertIn('numeric_col2', result['numeric_columns'])
+        self.assertIn('categorical_col', result['categorical_columns'])
+        self.assertIn('date_col', result['datetime_columns'])
         
-        correlations = self.monitor.detect_correlations(correlated_df)
+    def test_run_quality_checks(self):
+        """Test running all quality checks."""
+        result = self.monitor.run_quality_checks(self.test_data)
         
-        # Check return type
-        self.assertIsInstance(correlations, list)
+        # Verify result structure
+        self.assertIsInstance(result, dict)
+        self.assertIn('missing_values', result)
+        self.assertIn('duplicates', result)
+        self.assertIn('outliers', result)
+        self.assertIn('data_types', result)
+        self.assertIn('summary_statistics', result)
+        self.assertIn('quality_score', result)
         
-        # Check correlation detection
-        found_correlation = False
-        for corr in correlations:
-            if 'numeric1' in corr['features'] and 'correlated' in corr['features']:
-                found_correlation = True
-                self.assertGreater(abs(corr['correlation']), 0.7)
-        self.assertTrue(found_correlation)
-
-    def test_monitor_data_quality(self):
-        """Test data quality monitoring."""
-        # Test baseline monitoring
-        baseline_report = self.monitor.monitor_data_quality(self.df, is_baseline=True)
+        # Verify quality score is between 0 and 100
+        self.assertGreaterEqual(result['quality_score'], 0)
+        self.assertLessEqual(result['quality_score'], 100)
         
-        # Check return type and structure
-        self.assertIsInstance(baseline_report, dict)
-        self.assertIn('timestamp', baseline_report)
-        self.assertIn('basic_stats', baseline_report)
-        self.assertIn('issues', baseline_report)
+    def test_generate_quality_report(self):
+        """Test quality report generation."""
+        # Run quality checks first
+        checks_result = self.monitor.run_quality_checks(self.test_data)
         
-        # Test monitoring with issues
-        df_with_issues = self.df.copy()
-        df_with_issues['missing'] = np.nan  # Create missing values issue
+        # Generate report
+        report = self.monitor.generate_quality_report(checks_result)
         
-        report = self.monitor.monitor_data_quality(df_with_issues)
+        # Verify report structure
+        self.assertIsInstance(report, dict)
+        self.assertIn('overview', report)
+        self.assertIn('detailed_issues', report)
+        self.assertIn('recommendations', report)
         
-        # Check issues detection
-        self.assertTrue(any(issue['type'] == 'missing_values' for issue in report['issues']))
-
-    def test_get_quality_summary(self):
-        """Test quality summary generation."""
-        # Generate some history
-        self.monitor.monitor_data_quality(self.df, is_baseline=True)
-        self.monitor.monitor_data_quality(self.df)
+        # Verify overview contains quality score
+        self.assertIn('quality_score', report['overview'])
         
-        summary = self.monitor.get_quality_summary()
-        
-        # Check return type and structure
-        self.assertIsInstance(summary, dict)
-        self.assertIn('total_issues', summary)
-        self.assertIn('issues_by_type', summary)
-        self.assertIn('recent_issues', summary)
+        # Verify recommendations are provided
+        self.assertGreater(len(report['recommendations']), 0)
 
 if __name__ == '__main__':
     unittest.main() 
