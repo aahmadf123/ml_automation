@@ -52,7 +52,7 @@ const generateMockComparisonReports = () => {
       
       return {
         modelId,
-        name: `Model ${modelIndex + 1}${isBaseline ? ' (Baseline)' : ''}`,
+        name: `XGBoost ${isBaseline ? 'Baseline' : ''}`,
         metrics: modelMetrics,
         status: 'completed',
         timestamp: new Date(Date.now() - (reportIndex * 7 + modelIndex) * 24 * 60 * 60 * 1000).toISOString(),
@@ -98,7 +98,7 @@ export async function GET() {
         models: [
           {
             modelId: "model-1",
-            name: "XGBoost (v1.2)",
+            name: "XGBoost Baseline",
             isBaseline: true,
             status: "completed",
             metrics: [
@@ -111,7 +111,7 @@ export async function GET() {
           },
           {
             modelId: "model-2",
-            name: "Random Forest (v2.0)",
+            name: "XGBoost Equal Weight",
             isBaseline: false,
             status: "completed",
             metrics: [
@@ -131,7 +131,7 @@ export async function GET() {
           },
           {
             modelId: "model-3",
-            name: "Neural Network (v1.5)",
+            name: "XGBoost Linear Decay",
             isBaseline: false,
             status: "completed",
             metrics: [
@@ -151,7 +151,7 @@ export async function GET() {
           },
           {
             modelId: "model-4",
-            name: "Gradient Boosting (v0.9)",
+            name: "XGBoost Fast Decay",
             isBaseline: false,
             status: "running",
             metrics: [
@@ -217,7 +217,7 @@ export async function GET() {
         models: [
           {
             modelId: "model-old-1",
-            name: "XGBoost (v1.0)",
+            name: "XGBoost Baseline",
             isBaseline: true,
             status: "completed",
             metrics: [
@@ -229,7 +229,7 @@ export async function GET() {
           },
           {
             modelId: "model-old-2",
-            name: "Random Forest (v1.5)",
+            name: "XGBoost Equal Weight",
             isBaseline: false,
             status: "completed",
             metrics: [
@@ -247,7 +247,7 @@ export async function GET() {
           },
           {
             modelId: "model-old-3",
-            name: "Neural Network (v1.0)",
+            name: "XGBoost Fast Decay",
             isBaseline: false,
             status: "completed",
             metrics: [

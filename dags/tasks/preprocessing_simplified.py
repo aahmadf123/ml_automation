@@ -217,6 +217,12 @@ def encode_categoricals(df: pd.DataFrame) -> pd.DataFrame:
     One‑hot encode all object/categorical columns.
     """
     obj_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    
+    # Check if there are any categorical columns to encode
+    if not obj_cols:
+        logging.info("No categorical columns found to encode")
+        return df
+        
     df = pd.get_dummies(df, columns=obj_cols, drop_first=True)
     logging.info(f"One‑hot encoded columns: {obj_cols}")
     return df

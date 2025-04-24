@@ -53,11 +53,11 @@ export default function Home() {
       label: "Model",
       type: "multiselect",
       options: [
-        { value: "model1", label: "Gradient Boosting (model1)" },
-        { value: "model2", label: "Random Forest (model2)" },
-        { value: "model3", label: "XGBoost (model3)" },
-        { value: "model4", label: "Neural Network (model4)" },
-        { value: "model5", label: "LightGBM (model5)" },
+        { value: "model1", label: "XGBoost Baseline (model1)" },
+        { value: "model2", label: "XGBoost Equal Weight (model2)" },
+        { value: "model3", label: "XGBoost Linear Decay (model3)" },
+        { value: "model4", label: "XGBoost Fast Decay (model4)" },
+        { value: "model5", label: "XGBoost Slow Decay (model5)" },
       ],
     },
     {
@@ -225,11 +225,11 @@ export default function Home() {
 
   // Sample model data for the filter
   const models = [
-    { id: "model1", name: "Gradient Boosting (model1)", type: "Regression" },
-    { id: "model2", name: "Random Forest (model2)", type: "Regression" },
-    { id: "model3", name: "XGBoost (model3)", type: "Regression" },
-    { id: "model4", name: "Neural Network (model4)", type: "Classification" },
-    { id: "model5", name: "LightGBM (model5)", type: "Classification" },
+    { id: "model1", name: "XGBoost Baseline (model1)", type: "Regression" },
+    { id: "model2", name: "XGBoost Equal Weight (model2)", type: "Regression" },
+    { id: "model3", name: "XGBoost Linear Decay (model3)", type: "Regression" },
+    { id: "model4", name: "XGBoost Fast Decay (model4)", type: "Regression" },
+    { id: "model5", name: "XGBoost Slow Decay (model5)", type: "Regression" },
   ]
 
   useEffect(() => {

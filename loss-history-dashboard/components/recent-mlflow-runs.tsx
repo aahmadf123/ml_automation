@@ -147,7 +147,7 @@ export function RecentMLflowRuns() {
             },
             tags: {
               author: "john.doe",
-              experiment: "lightgbm_categorical",
+              experiment: "xgboost_equal_weight",
               version: "4",
             },
             artifacts: [
@@ -156,7 +156,7 @@ export function RecentMLflowRuns() {
               { name: "feature_importance.png", type: "Image", size: "162 KB", lastModified: "2023-04-14T22:30:45" },
               { name: "metrics.json", type: "JSON", size: "4.6 KB", lastModified: "2023-04-14T22:30:45" },
             ],
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training model with parameters: learning_rate=0.08, max_depth=5, n_estimators=250\nINFO - Training completed in 3102 seconds\nINFO - Model evaluation: RMSE=0.0921, MSE=0.0085, MAE=0.0714, R2=0.9102\nINFO - Saving model artifacts\nINFO - Run completed successfully",
+            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training XGBoost model with parameters: max_depth=6, learning_rate=0.1, n_estimators=200\nINFO - Training completed in 895 seconds\nINFO - Model evaluation: RMSE=0.1532, MSE=0.0235, MAE=0.1124, R2=0.8321\nINFO - Saving model artifacts\nINFO - Run completed successfully",
           },
           {
             runId: "run_123453",
@@ -203,7 +203,7 @@ export function RecentMLflowRuns() {
             },
             tags: {
               author: "john.doe",
-              experiment: "neural_network",
+              experiment: "xgboost_equal_weight",
               version: "2",
             },
             artifacts: [
@@ -212,7 +212,7 @@ export function RecentMLflowRuns() {
               { name: "training_history.png", type: "Image", size: "185 KB", lastModified: "2023-04-14T15:05:21" },
               { name: "metrics.json", type: "JSON", size: "5.2 KB", lastModified: "2023-04-14T15:05:21" },
             ],
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training neural network with parameters: hidden_layer_sizes=[128, 64, 32], activation=relu\nINFO - Training completed in 4256 seconds\nINFO - Model evaluation: RMSE=0.1532, MSE=0.0235, MAE=0.1124, R2=0.8321\nINFO - Saving model artifacts\nINFO - Run completed successfully",
+            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training XGBoost model with parameters: max_depth=6, learning_rate=0.1, n_estimators=200\nINFO - Training completed in 895 seconds\nINFO - Model evaluation: RMSE=0.1532, MSE=0.0235, MAE=0.1124, R2=0.8321\nINFO - Saving model artifacts\nINFO - Run completed successfully",
           },
           {
             runId: "run_123451",

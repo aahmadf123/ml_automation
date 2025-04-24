@@ -28,7 +28,7 @@ import shutil
 import sys
 import math
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, days_ago
 from pathlib import Path
 from functools import wraps
 from typing import Dict, Any, Optional, Tuple, Union, List
@@ -970,8 +970,13 @@ def train_models(**context):
                         break
         
         if not data_path:
-            logger.error("No valid processed data path found and no fallback available")
-            raise FileNotFoundError("No valid processed data path found")
+            error_msg = "No valid processed data path found and no fallback available"
+            logger.error(error_msg)
+            try:
+                slack.simple_post("❌ Model training failed: No valid data path found", channel="#data-pipeline")
+            except Exception as e:
+                logger.warning(f"Error sending Slack notification: {str(e)}")
+            raise FileNotFoundError(error_msg)
             
         logger.info(f"Training models using data from {data_path}")
         
@@ -994,9 +999,14 @@ def train_models(**context):
                     logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
                     df['trgt'] = df['il_total'] / df['eey']
                 else:
-                    logger.warning("Cannot create target variable: missing required columns")
+                    error_msg = "Cannot create target variable: missing required columns"
+                    logger.error(error_msg)
                     logger.info(f"Available columns: {df.columns.tolist()}")
-                    logger.warning("Will attempt to train without target variable, but models may fail")
+                    try:
+                        slack.simple_post("❌ Model training failed: Missing target column", channel="#data-pipeline")
+                    except Exception as e:
+                        logger.warning(f"Error sending Slack notification: {str(e)}")
+                    raise ValueError(error_msg)
                 
                 # Create weight column if not present
                 if 'wt' not in df.columns and 'eey' in df.columns:
@@ -1020,7 +1030,12 @@ def train_models(**context):
                 logger.info(f"Target variable statistics: mean={df['trgt'].mean()}, min={df['trgt'].min()}, max={df['trgt'].max()}")
                 logger.info(f"Target variable non-null count: {df['trgt'].count()} out of {len(df)}")
         except Exception as e:
-            logger.error(f"Error preparing data for training: {str(e)}")
+            error_msg = f"Error preparing data for training: {str(e)}"
+            logger.error(error_msg)
+            try:
+                slack.simple_post(f"❌ Model training failed during data preparation: {str(e)}", channel="#data-pipeline")
+            except Exception as slack_e:
+                logger.warning(f"Error sending Slack notification: {str(slack_e)}")
             raise
         
         # Check if we want to force parallel training (default: True)
@@ -1034,10 +1049,11 @@ def train_models(**context):
             logger.info("Calling training.train_multiple_models")
             # Check if the training module and function exist
             if not hasattr(training, 'train_multiple_models'):
-                logger.error("training module does not have train_multiple_models function")
+                error_msg = "training module does not have train_multiple_models function"
+                logger.error(error_msg)
                 available_funcs = [name for name in dir(training) if callable(getattr(training, name)) and not name.startswith('_')]
                 logger.info(f"Available functions in training module: {available_funcs}")
-                raise AttributeError("training module does not have train_multiple_models function")
+                raise AttributeError(error_msg)
                 
             # Call the training function
             results = training.train_multiple_models(
@@ -1049,8 +1065,13 @@ def train_models(**context):
             )
             
             if not results:
-                logger.warning("No results returned from train_multiple_models")
-                results = {"status": "warning", "message": "No results returned from training"}
+                error_msg = "No results returned from train_multiple_models"
+                logger.error(error_msg)
+                try:
+                    slack.simple_post("❌ Model training failed: No results returned", channel="#data-pipeline")
+                except Exception as e:
+                    logger.warning(f"Error sending Slack notification: {str(e)}")
+                raise ValueError(error_msg)
                 
             logger.info(f"Training completed with results for {len(results) if isinstance(results, dict) else 0} models")
             
@@ -1064,6 +1085,16 @@ def train_models(**context):
                 failed = sum(1 for r in results.values() if r.get('status') == 'failed')
                 
                 logger.info(f"Training results: {completed} completed, {skipped} skipped, {failed} failed")
+                
+                # Verify at least one model trained successfully
+                if completed == 0:
+                    error_msg = f"No models completed training successfully. {failed} models failed, {skipped} models skipped."
+                    logger.error(error_msg)
+                    try:
+                        slack.simple_post("❌ Critical Training Failure: No models completed successfully", channel="#data-pipeline")
+                    except Exception as e:
+                        logger.warning(f"Error sending Slack notification: {str(e)}")
+                    raise RuntimeError(error_msg)
                 
                 # Log details for each model
                 for model_id, result in results.items():
@@ -1082,30 +1113,34 @@ def train_models(**context):
             return results
             
         except Exception as e:
-            logger.error(f"Error training models: {str(e)}")
+            error_msg = f"Error training models: {str(e)}"
+            logger.error(error_msg)
             logger.exception("Full exception details:")
-            # Try to continue anyway
-            results = {"status": "error", "message": f"Error training models: {str(e)}"}
+            # Store error in XCom but still raise exception
+            results = {"status": "error", "message": error_msg}
             context['ti'].xcom_push(key='training_results', value=results)
             try:
-                slack.simple_post("⚠️ Model training encountered errors but pipeline continues", channel="#data-pipeline")
-            except:
-                pass
-            return results
+                slack.simple_post(f"❌ Model training failed: {str(e)}", channel="#data-pipeline")
+            except Exception as slack_e:
+                logger.warning(f"Error sending Slack notification: {str(slack_e)}")
+            raise
             
     except Exception as e:
-        logger.error(f"Error in train_models task: {str(e)}")
+        error_msg = f"Error in train_models task: {str(e)}"
+        logger.error(error_msg)
         logger.exception("Full exception details:")
         
-        try:
-            slack.simple_post("❌ Model training failed", channel="#data-pipeline")
-        except:
-            pass
-        
-        # Return a result rather than raising an exception
-        results = {"status": "error", "message": f"Error in train_models task: {str(e)}"}
+        # Store error information in XCom but still raise exception
+        results = {"status": "error", "message": error_msg}
         context['ti'].xcom_push(key='training_results', value=results)
-        return results
+        
+        try:
+            slack.simple_post(f"❌ Model training failed: {str(e)}", channel="#data-pipeline")
+        except Exception as slack_e:
+            logger.warning(f"Error sending Slack notification: {str(slack_e)}")
+        
+        # Raise exception to stop the pipeline
+        raise
 
 def run_model_explainability(**context):
     """Run model explainability on trained models"""
@@ -2228,381 +2263,282 @@ def cleanup_temp_files(**context):
     return {"status": "success", "message": f"Cleanup completed, removed {cleaned_count} files/directories"}
 
 def wait_for_data_validation(**context):
-    """Wait for human validation of data quality"""
-    logger.info("Starting data_validation task")
+    """
+    Wait for the data to be validated by a human reviewer
+    """
+    logger.info("Starting wait_for_data_validation task")
     
-    approval_status = "pending"  # Default status
-    validation_result = None
+    # Check if we should skip validation
+    skip_validation = Variable.get('SKIP_DATA_VALIDATION', default_var='False').lower() == 'true'
+    
+    if skip_validation:
+        logger.info("SKIP_DATA_VALIDATION is set to True, skipping data validation")
+        try:
+            slack.simple_post("⚠️ Data validation skipped (SKIP_DATA_VALIDATION=True)", channel="#data-pipeline")
+        except Exception as e:
+            logger.warning(f"Failed to send Slack notification: {str(e)}")
+        return True
+    
+    # Get the validation report path from XCom
+    validation_report_path = context['ti'].xcom_pull(task_ids='validate_data_task', key='validation_report_path')
+    
+    if not validation_report_path:
+        error_msg = "No validation report path provided by validate_data_task"
+        logger.error(error_msg)
+        try:
+            slack.simple_post("❌ Data validation failed: No validation report", channel="#data-pipeline")
+        except Exception as e:
+            logger.warning(f"Failed to send Slack notification: {str(e)}")
+        raise AirflowException(error_msg)
+    
+    # Get the Human in the Loop module
+    hitl = HumanInTheLoop(
+        app_id="ml_pipeline",
+        entity_type="data_validation",
+        channel="#data-pipeline"
+    )
+    
+    # Request approval with a link to the validation report
+    entity_id = os.path.basename(validation_report_path)
+    detail_link = f"{DASHBOARD_URL}/data-quality?report={urllib.parse.quote(validation_report_path)}"
+    message = f"Please review and validate the data quality report: {os.path.basename(validation_report_path)}"
     
     try:
-        # Get quality results from previous task if available
-        quality_results = context['ti'].xcom_pull(task_ids='data_quality_checks', key='quality_results') or {}
-        validation_results = context['ti'].xcom_pull(task_ids='schema_validation', key='validation_results') or {}
-        drift_results = context['ti'].xcom_pull(task_ids='drift_detection', key='drift_results') or {}
+        # Create approval request
+        request_id = hitl.request_approval(
+            entity_id=entity_id,
+            message=message,
+            detail_link=detail_link
+        )
         
-        logger.info(f"Data quality results: {quality_results}")
-        logger.info(f"Schema validation results: {validation_results}")
-        logger.info(f"Drift detection results: {drift_results}")
+        logger.info(f"Created approval request with ID: {request_id}")
         
-        # Try to call the HITL module's wait_for_data_validation function
+        # Poll for approval status
+        max_polls = 60  # 1 hour timeout (60 x 1 minute)
+        poll_interval = 60  # 1 minute between polls
+        
+        for i in range(max_polls):
+            logger.info(f"Polling for approval status (attempt {i+1}/{max_polls})")
+            
+            # Check if the request has been approved/rejected
+            status = hitl.check_approval_status(request_id)
+            logger.info(f"Current approval status: {status}")
+            
+            if status == "approved":
+                logger.info("Data validation approved by reviewer")
+                try:
+                    slack.simple_post("✅ Data validation approved by reviewer", channel="#data-pipeline")
+                except Exception as e:
+                    logger.warning(f"Failed to send Slack notification: {str(e)}")
+                return True
+            
+            elif status == "rejected":
+                error_msg = "Data validation rejected by reviewer"
+                logger.error(error_msg)
+                try:
+                    slack.simple_post("❌ Data validation rejected by reviewer, pipeline will stop", channel="#data-pipeline")
+                except Exception as e:
+                    logger.warning(f"Failed to send Slack notification: {str(e)}")
+                raise AirflowException(error_msg)
+            
+            elif status == "error":
+                error_msg = "Error checking data validation status"
+                logger.error(error_msg)
+                try:
+                    slack.simple_post("❌ Error checking data validation status", channel="#data-pipeline")
+                except Exception as e:
+                    logger.warning(f"Failed to send Slack notification: {str(e)}")
+                raise AirflowException(error_msg)
+            
+            # Sleep before polling again
+            time.sleep(poll_interval)
+        
+        # If we've reached max_polls, timeout the request
+        error_msg = f"Data validation request timed out after {max_polls * poll_interval / 60} hours"
+        logger.error(error_msg)
         try:
-            # Check if HITL module exists and has the necessary function
-            if hitl and hasattr(hitl, 'wait_for_data_validation') and callable(getattr(hitl, 'wait_for_data_validation')):
-                logger.info("Calling HITL module for data validation")
-                validation_result = hitl.wait_for_data_validation(**context)
-                logger.info(f"HITL module returned: {validation_result}")
-                
-                # Check the returned result
-                if validation_result and isinstance(validation_result, dict):
-                    approval_status = validation_result.get('status', 'unknown')
-                    
-                    # Log the result
-                    if approval_status == 'approved' or approval_status == 'auto_approved':
-                        logger.info("Data validation approved")
-                        try:
-                            slack.post(":white_check_mark: Data validation approved")
-                        except Exception as e:
-                            logger.warning(f"Error sending Slack notification: {str(e)}")
-                    elif approval_status == 'rejected':
-                        logger.warning("Data validation rejected, continuing anyway")
-                        try:
-                            slack.post(":warning: Data validation rejected but pipeline continues")
-                        except Exception as e:
-                            logger.warning(f"Error sending Slack notification: {str(e)}")
-                    else:
-                        logger.warning(f"Unexpected data validation result: {validation_result}")
-                        
-                else:
-                    logger.warning("HITL module returned invalid or empty result, proceeding with pipeline")
-                    validation_result = {
-                        "status": "default_approved",
-                        "message": "HITL module returned invalid result, proceeding with default approval",
-                        "timestamp": datetime.now().isoformat()
-                    }
-            else:
-                logger.warning("HITL module or wait_for_data_validation function not available")
-                validation_result = {
-                    "status": "default_approved",
-                    "message": "HITL module not available, proceeding with default approval",
-                    "timestamp": datetime.now().isoformat()
-                }
-        except AirflowSkipException as e:
-            # This is raised when validation is rejected in HITL
-            logger.warning(f"Data validation rejected via AirflowSkipException: {str(e)}")
-            # Instead of propagating the skip, we'll proceed with warnings
-            validation_result = {
-                "status": "rejected_continue",
-                "message": f"Data validation was rejected but pipeline will continue: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            }
-            try:
-                slack.post(f":warning: Data validation rejected but pipeline continues: {str(e)}")
-            except Exception as slack_error:
-                logger.warning(f"Error sending Slack notification: {str(slack_error)}")
+            slack.simple_post("❌ Data validation request timed out", channel="#data-pipeline")
         except Exception as e:
-            # Handle any other exceptions from HITL module
-            logger.error(f"Error in HITL data validation: {str(e)}")
-            validation_result = {
-                "status": "error_continue",
-                "message": f"Error in data validation but pipeline will continue: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            }
-            try:
-                slack.post(f":warning: Error in data validation but pipeline continues: {str(e)}")
-            except Exception as slack_error:
-                logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-        
-        # Store validation result in XCom
-        context['ti'].xcom_push(key='data_validation_result', value=validation_result)
-        
-        return validation_result
+            logger.warning(f"Failed to send Slack notification: {str(e)}")
+        raise AirflowException(error_msg)
         
     except Exception as e:
-        # Catch-all for any other exceptions
-        logger.error(f"Unexpected error in data_validation task: {str(e)}")
-        
-        # Create a result that allows the pipeline to continue
-        validation_result = {
-            "status": "unexpected_error",
-            "message": f"Unexpected error in data validation but pipeline will continue: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # Store in XCom
-        context['ti'].xcom_push(key='data_validation_result', value=validation_result)
-        
+        error_msg = f"Error in wait_for_data_validation: {str(e)}"
+        logger.error(error_msg)
+        logger.exception("Full exception details:")
         try:
-            slack.post(f":warning: Unexpected error in data validation but pipeline continues: {str(e)}")
-        except Exception as slack_error:
-            logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-        
-        # Return a valid result instead of raising an exception
-        return validation_result
+            slack.simple_post(f"❌ Error in data validation process: {str(e)}", channel="#data-pipeline")
+        except Exception as slack_e:
+            logger.warning(f"Failed to send Slack notification: {str(slack_e)}")
+        raise AirflowException(error_msg)
 
 def wait_for_model_approval(**context):
-    """Wait for human approval of trained models"""
-    logger.info("Starting model_approval task")
+    """
+    Wait for the model to be approved by a human reviewer
+    """
+    logger.info("Starting wait_for_model_approval task")
     
-    approval_status = "pending"  # Default status
-    approval_result = None
+    # Get the run_id from XCom and the model registry client
+    run_id = context['ti'].xcom_pull(task_ids='train_models_task')
+    
+    # Check if AUTO_APPROVE_MODEL is set to True
+    auto_approve = Variable.get('AUTO_APPROVE_MODEL', default_var='False').lower() == 'true'
+    
+    if auto_approve:
+        logger.info("AUTO_APPROVE_MODEL is set to True, skipping human approval")
+        try:
+            slack.simple_post("⚠️ Model automatically approved (AUTO_APPROVE_MODEL=True)", channel="#data-pipeline")
+        except Exception as e:
+            logger.warning(f"Failed to send Slack notification: {str(e)}")
+        return True
+    
+    # Get the Human in the Loop module
+    hitl = HumanInTheLoop(
+        app_id="ml_pipeline",
+        entity_type="model",
+        channel="#data-pipeline"
+    )
+    
+    # Request approval with a link to the MLflow UI
+    entity_id = run_id
+    detail_link = f"{MLFLOW_UI_URL}/#/experiments/1/runs/{run_id}"
+    message = f"Please review and approve the model (run_id: {run_id})"
     
     try:
-        # Get training and explainability results if available
-        training_results = context['ti'].xcom_pull(task_ids='train_models', key='training_results') or {}
-        explainability_results = context['ti'].xcom_pull(task_ids='model_explainability', key='explainability_results') or {}
+        # Create approval request
+        request_id = hitl.request_approval(
+            entity_id=entity_id,
+            message=message,
+            detail_link=detail_link
+        )
         
-        # Ensure training_results is a dictionary
-        if not isinstance(training_results, dict):
-            logger.warning(f"Training results is not a dictionary: {training_results}")
-            training_results = {"status": "error", "message": str(training_results) if training_results else "No training results"}
+        logger.info(f"Created approval request with ID: {request_id}")
         
-        logger.info(f"Training results: {training_results}")
-        logger.info(f"Explainability results: {explainability_results}")
+        # Poll for approval status
+        max_polls = 60  # 1 hour timeout (60 x 1 minute)
+        poll_interval = 60  # 1 minute between polls
         
-        # Try to call the HITL module's wait_for_model_approval function
+        for i in range(max_polls):
+            logger.info(f"Polling for approval status (attempt {i+1}/{max_polls})")
+            
+            # Check if the request has been approved/rejected
+            status = hitl.check_approval_status(request_id)
+            logger.info(f"Current approval status: {status}")
+            
+            if status == "approved":
+                logger.info("Model approved by reviewer")
+                try:
+                    slack.simple_post("✅ Model approved by reviewer", channel="#data-pipeline")
+                except Exception as e:
+                    logger.warning(f"Failed to send Slack notification: {str(e)}")
+                return True
+            
+            elif status == "rejected":
+                error_msg = "Model rejected by reviewer"
+                logger.error(error_msg)
+                try:
+                    slack.simple_post("❌ Model rejected by reviewer, pipeline will stop", channel="#data-pipeline")
+                except Exception as e:
+                    logger.warning(f"Failed to send Slack notification: {str(e)}")
+                raise AirflowException(error_msg)
+            
+            elif status == "error":
+                error_msg = "Error checking model approval status"
+                logger.error(error_msg)
+                try:
+                    slack.simple_post("❌ Error checking model approval status", channel="#data-pipeline")
+                except Exception as e:
+                    logger.warning(f"Failed to send Slack notification: {str(e)}")
+                raise AirflowException(error_msg)
+            
+            # Sleep before polling again
+            time.sleep(poll_interval)
+        
+        # If we've reached max_polls, timeout the request
+        error_msg = f"Model approval request timed out after {max_polls * poll_interval / 60} hours"
+        logger.error(error_msg)
         try:
-            # Check if HITL module exists and has the necessary function
-            if hitl and hasattr(hitl, 'wait_for_model_approval') and callable(getattr(hitl, 'wait_for_model_approval')):
-                logger.info("Calling HITL module for model approval")
-                approval_result = hitl.wait_for_model_approval(**context)
-                logger.info(f"HITL module returned: {approval_result}")
-                
-                # Check the returned result
-                if approval_result and isinstance(approval_result, dict):
-                    approval_status = approval_result.get('status', 'unknown')
-                    
-                    # Log the result
-                    if approval_status == 'approved' or approval_status == 'auto_approved':
-                        logger.info("Model approval granted")
-                        try:
-                            slack.simple_post("✅ Model approval granted", channel="#data-pipeline")
-                        except Exception as e:
-                            logger.warning(f"Error sending Slack notification: {str(e)}")
-                    elif approval_status == 'rejected':
-                        logger.warning("Model approval rejected, continuing anyway")
-                        try:
-                            slack.simple_post("⚠️ Model approval rejected but pipeline continues", channel="#data-pipeline")
-                        except Exception as e:
-                            logger.warning(f"Error sending Slack notification: {str(e)}")
-                    else:
-                        logger.warning(f"Unexpected model approval result: {approval_result}")
-                else:
-                    logger.warning("HITL module returned invalid or empty result, proceeding with pipeline")
-                    approval_result = {
-                        "status": "default_approved",
-                        "message": "HITL module returned invalid result, proceeding with default approval",
-                        "timestamp": datetime.now().isoformat()
-                    }
-            else:
-                logger.warning("HITL module or wait_for_model_approval function not available")
-                approval_result = {
-                    "status": "default_approved",
-                    "message": "HITL module not available, proceeding with default approval",
-                    "timestamp": datetime.now().isoformat()
-                }
-        except AirflowSkipException as e:
-            # This is raised when approval is rejected in HITL
-            logger.warning(f"Model approval rejected via AirflowSkipException: {str(e)}")
-            # Instead of propagating the skip, we'll proceed with warnings
-            approval_result = {
-                "status": "rejected_continue",
-                "message": f"Model approval was rejected but pipeline will continue: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            }
-            try:
-                slack.simple_post(f"⚠️ Model approval rejected but pipeline continues: {str(e)}", channel="#data-pipeline")
-            except Exception as slack_error:
-                logger.warning(f"Error sending Slack notification: {str(slack_error)}")
+            slack.simple_post("❌ Model approval request timed out", channel="#data-pipeline")
         except Exception as e:
-            # Handle any other exceptions from HITL module
-            logger.error(f"Error in HITL model approval: {str(e)}")
-            approval_result = {
-                "status": "error_continue",
-                "message": f"Error in model approval but pipeline will continue: {str(e)}",
-                "timestamp": datetime.now().isoformat()
-            }
-            try:
-                slack.simple_post(f"⚠️ Error in model approval but pipeline continues: {str(e)}", channel="#data-pipeline")
-            except Exception as slack_error:
-                logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-        
-        # Store approval result in XCom
-        context['ti'].xcom_push(key='model_approval_result', value=approval_result)
-        
-        return approval_result
+            logger.warning(f"Failed to send Slack notification: {str(e)}")
+        raise AirflowException(error_msg)
         
     except Exception as e:
-        # Catch-all for any other exceptions
-        logger.error(f"Unexpected error in model_approval task: {str(e)}")
-        
-        # Create a result that allows the pipeline to continue
-        approval_result = {
-            "status": "unexpected_error",
-            "message": f"Unexpected error in model_approval task: {str(e)}",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # Store in XCom
-        context['ti'].xcom_push(key='model_approval_result', value=approval_result)
-        
+        error_msg = f"Error in wait_for_model_approval: {str(e)}"
+        logger.error(error_msg)
+        logger.exception("Full exception details:")
         try:
-            slack.simple_post(f"⚠️ Unexpected error in model_approval but pipeline continues: {str(e)}", channel="#data-pipeline")
-        except Exception as slack_error:
-            logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-        
-        # Return a valid result instead of raising an exception
-        return approval_result
+            slack.simple_post(f"❌ Error in model approval process: {str(e)}", channel="#data-pipeline")
+        except Exception as e:
+            logger.warning(f"Failed to send Slack notification: {str(e)}")
+        raise AirflowException(error_msg)
 
 # Create the DAG
 dag = DAG(
     'unified_ml_pipeline',
     default_args=default_args,
-    description='Unified ML pipeline that combines functionality from multiple previous DAGs, with HITL capabilities',
+    description='Unified ML Pipeline for model training and deployment',
     schedule_interval=timedelta(days=1),
-    max_active_runs=1,
+    start_date=days_ago(1),
     catchup=False,
-    tags=['ml', 'integration', 'unified-pipeline', 'hitl'],
+    tags=['ml', 'pipeline', 'training'],
 )
 
 # Create tasks
-download_data_task = PythonOperator(
-    task_id='download_data',
-    python_callable=download_data,
+# Import task for importing raw data
+import_data_task = PythonOperator(
+    task_id='import_data_task',
+    python_callable=import_data,
     provide_context=True,
-    retries=3,
-    retry_delay=timedelta(minutes=2),
-    execution_timeout=timedelta(minutes=30),
-    dag=dag
 )
 
-process_data_task = PythonOperator(
-    task_id='process_data',
-    python_callable=process_data,
+# Preprocess task for data preprocessing
+preprocess_data_task = PythonOperator(
+    task_id='preprocess_data_task',
+    python_callable=preprocess_data,
     provide_context=True,
-    retries=2,
-    retry_delay=timedelta(minutes=5),
-    execution_timeout=timedelta(hours=2),
-    dag=dag
+    trigger_rule='all_success',  # Only run if import was successful
 )
 
-data_quality_task = PythonOperator(
-    task_id='data_quality_checks',
-    python_callable=run_data_quality_checks,
+# Data validation task
+validate_data_task = PythonOperator(
+    task_id='validate_data_task',
+    python_callable=validate_data,
     provide_context=True,
-    retries=2,
-    retry_delay=timedelta(minutes=5),
-    execution_timeout=timedelta(minutes=30),
-    dag=dag
+    trigger_rule='all_success',  # Only run if preprocessing was successful
 )
 
-schema_validation_task = PythonOperator(
-    task_id='schema_validation',
-    python_callable=run_schema_validation,
-    provide_context=True,
-    retries=2,
-    retry_delay=timedelta(minutes=5),
-    execution_timeout=timedelta(minutes=30),
-    dag=dag
-)
-
-drift_detection_task = PythonOperator(
-    task_id='drift_detection',
-    python_callable=check_for_drift,
-    provide_context=True,
-    retries=2,
-    retry_delay=timedelta(minutes=5),
-    execution_timeout=timedelta(minutes=30),
-    dag=dag
-)
-
-# Add new HITL task for data validation
-data_validation_task = PythonOperator(
-    task_id='data_validation',
+# Wait for data validation task
+wait_for_data_validation_task = PythonOperator(
+    task_id='wait_for_data_validation_task',
     python_callable=wait_for_data_validation,
     provide_context=True,
-    retries=1,  # Add one retry attempt in case of network issues
-    retry_delay=timedelta(minutes=5),
-    trigger_rule='all_done',  # Continue even if upstream tasks fail
-    execution_timeout=timedelta(hours=12),  # Generous timeout but not infinite
-    dag=dag
+    trigger_rule='all_success',  # Only run if validation was successful
 )
 
+# Train models task
 train_models_task = PythonOperator(
-    task_id='train_models',
+    task_id='train_models_task',
     python_callable=train_models,
     provide_context=True,
-    retries=1,
-    retry_delay=timedelta(minutes=10),
-    trigger_rule='all_done',  # Continue even if upstream tasks fail
-    execution_timeout=timedelta(hours=8),
-    pool='large_memory_tasks',  # Use a dedicated resource pool if configured
-    executor_config={
-        "KubernetesExecutor": {
-            "request_memory": "12Gi",
-            "limit_memory": "24Gi",
-            "request_cpu": "4",
-            "limit_cpu": "8"
-        }
-    },
-    dag=dag
+    trigger_rule='all_success',  # Only run if validation approval was given
 )
 
-model_explainability_task = PythonOperator(
-    task_id='model_explainability',
-    python_callable=run_model_explainability,
-    provide_context=True,
-    retries=2,
-    retry_delay=timedelta(minutes=5),
-    trigger_rule='all_done',  # Continue even if upstream tasks fail
-    execution_timeout=timedelta(hours=1),
-    dag=dag
-)
-
-# Add new HITL task for model approval
-model_approval_task = PythonOperator(
-    task_id='model_approval',
+# Wait for model approval task
+wait_for_model_approval_task = PythonOperator(
+    task_id='wait_for_model_approval_task',
     python_callable=wait_for_model_approval,
     provide_context=True,
-    retries=1,  # Add one retry attempt in case of network issues
-    retry_delay=timedelta(minutes=5),
-    trigger_rule='all_done',  # Continue even if upstream tasks fail 
-    execution_timeout=timedelta(hours=12),  # Generous timeout but not infinite
-    dag=dag
+    trigger_rule='all_success',  # Only run if training was successful
 )
 
-# Add new task for generating predictions
-generate_predictions_task = PythonOperator(
-    task_id='generate_predictions',
-    python_callable=generate_predictions,
+# Deploy model task
+deploy_model_task = PythonOperator(
+    task_id='deploy_model_task',
+    python_callable=deploy_model,
     provide_context=True,
-    retries=2,
-    retry_delay=timedelta(minutes=5),
-    trigger_rule='all_done',  # Continue even if upstream tasks fail
-    execution_timeout=timedelta(hours=1),
-    dag=dag
+    trigger_rule='all_success',  # Only run if model approval was given
 )
 
-archive_artifacts_task = PythonOperator(
-    task_id='archive_artifacts',
-    python_callable=archive_artifacts,
-    provide_context=True,
-    retries=3,
-    retry_delay=timedelta(minutes=2),
-    trigger_rule='all_done',  # Continue even if upstream tasks fail
-    execution_timeout=timedelta(hours=1),
-    dag=dag
-)
-
-cleanup_task = PythonOperator(
-    task_id='cleanup_temp_files',
-    python_callable=cleanup_temp_files,
-    provide_context=True,
-    retries=1,
-    retry_delay=timedelta(minutes=2),
-    trigger_rule='all_done',  # Continue regardless of upstream task status
-    execution_timeout=timedelta(minutes=15),
-    dag=dag
-)
-
-# Set task dependencies
-download_data_task >> process_data_task >> [data_quality_task, schema_validation_task, drift_detection_task] >> data_validation_task >> train_models_task >> model_explainability_task >> model_approval_task >> generate_predictions_task >> archive_artifacts_task >> cleanup_task 
+# Define task dependencies
+import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> wait_for_model_approval_task >> deploy_model_task

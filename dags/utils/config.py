@@ -161,7 +161,7 @@ AIRFLOW_DAG_BASE_CONF= {}
 
 # MODEL APPROVAL CONFIGURATION
 # Note: Set only one of these to True based on your desired workflow
-AUTO_APPROVE_MODEL = Variable.get("AUTO_APPROVE_MODEL", default_var="True").lower() == "true"
+AUTO_APPROVE_MODEL = Variable.get("AUTO_APPROVE_MODEL", default_var="False").lower() == "true"
 REQUIRE_MODEL_APPROVAL = not AUTO_APPROVE_MODEL  # Inverse of auto approve
 
 # ─── SLACK CONFIG ────────────────────────────────────────────────────────────
@@ -208,8 +208,8 @@ UI_COMPONENTS = {
 # ─── MODEL CONFIG ────────────────────────────────────────────────────────────
 MODEL_CONFIG = {
     "model1": {
-        "name": "Baseline Model",
-        "description": "Standard XGBoost model with default parameters",
+        "name": "XGBoost Baseline",
+        "description": "XGBoost regressor with default parameters using raw loss history features",
         "features": ["num_loss_3yr_", "num_loss_yrs45_", "num_loss_free_yrs_"],
         "hyperparameters": {
             "learning_rate": 0.1,
@@ -218,8 +218,8 @@ MODEL_CONFIG = {
         }
     },
     "model2": {
-        "name": "Equal Weight Model",
-        "description": "XGBoost model with equal weighting of loss history",
+        "name": "XGBoost Equal Weight",
+        "description": "XGBoost regressor with equal weighting of loss history features",
         "features": ["lhdwc_5y_1d_"],
         "hyperparameters": {
             "learning_rate": 0.1,
@@ -228,8 +228,8 @@ MODEL_CONFIG = {
         }
     },
     "model3": {
-        "name": "Linear Decay Model",
-        "description": "XGBoost model with linear decay weighting of loss history",
+        "name": "XGBoost Linear Decay",
+        "description": "XGBoost regressor with linear decay weighting of loss history features",
         "features": ["lhdwc_5y_2d_"],
         "hyperparameters": {
             "learning_rate": 0.1,
@@ -238,8 +238,8 @@ MODEL_CONFIG = {
         }
     },
     "model4": {
-        "name": "Fast Decay Model",
-        "description": "XGBoost model with fast decay weighting of loss history",
+        "name": "XGBoost Fast Decay",
+        "description": "XGBoost regressor with fast decay weighting of loss history features",
         "features": ["lhdwc_5y_3d_"],
         "hyperparameters": {
             "learning_rate": 0.1,
@@ -248,8 +248,8 @@ MODEL_CONFIG = {
         }
     },
     "model5": {
-        "name": "Slow Decay Model",
-        "description": "XGBoost model with slow decay weighting of loss history",
+        "name": "XGBoost Slow Decay",
+        "description": "XGBoost regressor with slow decay weighting of loss history features",
         "features": ["lhdwc_5y_4d_"],
         "hyperparameters": {
             "learning_rate": 0.1,

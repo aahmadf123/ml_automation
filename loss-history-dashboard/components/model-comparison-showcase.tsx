@@ -9,8 +9,8 @@ import Image from "next/image"
 // Sample model comparison data
 const modelData = [
   {
-    id: "neural_network",
-    name: "Neural Network",
+    id: "xgb_fast_decay",
+    name: "XGBoost Fast Decay",
     version: "v1.5",
     metrics: {
       accuracy: 0.942,
@@ -31,12 +31,12 @@ const modelData = [
       { name: "claim_amount", importance: 32.0 },
       { name: "claim_type", importance: 18.3 },
     ],
-    type: "Classification",
+    type: "Regression",
     status: "deployed",
   },
   {
-    id: "random_forest",
-    name: "Random Forest",
+    id: "xgb_equal_weight",
+    name: "XGBoost Equal Weight",
     version: "v2.1",
     metrics: {
       accuracy: 0.915,
@@ -57,12 +57,12 @@ const modelData = [
       { name: "claim_amount", importance: 25.3 },
       { name: "claim_type", importance: 20.5 },
     ],
-    type: "Classification",
+    type: "Regression",
     status: "deployed",
   },
   {
-    id: "xgboost",
-    name: "XGBoost",
+    id: "xgb_baseline",
+    name: "XGBoost Baseline",
     version: "v1.2",
     metrics: {
       accuracy: 0.87,
@@ -83,12 +83,12 @@ const modelData = [
       { name: "claim_amount", importance: 29.8 },
       { name: "claim_type", importance: 15.2 },
     ],
-    type: "Classification",
+    type: "Regression",
     status: "baseline",
   },
   {
-    id: "lightgbm",
-    name: "LightGBM",
+    id: "xgb_slow_decay",
+    name: "XGBoost Slow Decay",
     version: "v0.8",
     metrics: {
       accuracy: 0,
@@ -105,13 +105,13 @@ const modelData = [
       auc: 0,
     },
     features: [],
-    type: "Classification",
+    type: "Regression",
     status: "failed",
   }
 ]
 
 export function ModelComparisonShowcase() {
-  const [activeModel, setActiveModel] = useState('neural_network')
+  const [activeModel, setActiveModel] = useState('xgb_fast_decay')
   const [activeMetric, setActiveMetric] = useState('f1')
   
   const getStatusColor = (status: string) => {

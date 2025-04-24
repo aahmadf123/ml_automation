@@ -128,8 +128,7 @@ export function PerformanceMetricsComparison({
   const [radarData, setRadarData] = useState<any[]>([])
 
   // Define which metrics to show
-  const classificationMetrics = ["accuracy", "precision", "recall", "f1Score", "auc"]
-  const regressionMetrics = ["mse", "mae", "logLoss"]
+  const regressionMetrics = ["rmse", "mae", "r2"]
 
   useEffect(() => {
     // Simulate API call to get performance metrics for multiple models
@@ -146,8 +145,8 @@ export function PerformanceMetricsComparison({
         )
 
         setModelData(filteredData)
-        setBarChartData(prepareBarChartData(filteredData, classificationMetrics))
-        setRadarData(prepareRadarData(filteredData, classificationMetrics))
+        setBarChartData(prepareBarChartData(filteredData, regressionMetrics))
+        setRadarData(prepareRadarData(filteredData, regressionMetrics))
         setLoading(false)
       }, 1000)
     }
@@ -172,22 +171,12 @@ export function PerformanceMetricsComparison({
   // Format metric names for display
   const formatMetricName = (metric: string) => {
     switch (metric) {
-      case "accuracy":
-        return "Accuracy"
-      case "precision":
-        return "Precision"
-      case "recall":
-        return "Recall"
-      case "f1Score":
-        return "F1 Score"
-      case "auc":
-        return "AUC"
-      case "logLoss":
-        return "Log Loss"
-      case "mse":
-        return "MSE"
+      case "rmse":
+        return "RMSE"
       case "mae":
         return "MAE"
+      case "r2":
+        return "R²"
       default:
         return metric
     }

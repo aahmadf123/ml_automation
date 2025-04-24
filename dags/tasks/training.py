@@ -1010,6 +1010,12 @@ def train_multiple_models(
             df = pd.read_parquet(processed_path)
             GLOBAL_CACHE.store_transformed(df, df_name)
         
+        # Validate data before proceeding
+        if len(df) == 0:
+            error_msg = "Training dataset is empty"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
         # Get target column
         if target_column and target_column in df.columns:
             target_col = target_column
@@ -1025,6 +1031,16 @@ def train_multiple_models(
             logger.error(error_msg)
             raise ValueError(error_msg)
             
+        # Validate target column - critical for insurance modeling
+        target_values = df[target_col].dropna()
+        if len(target_values) < 100:  # Minimum sample size for meaningful modeling
+            error_msg = f"Insufficient non-null values in target column ({len(target_values)} found)"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        if target_values.min() < 0:
+            logger.warning(f"Negative values found in target column {target_col}. This may be problematic for insurance modeling.")
+            
         # Split features and target - do this once for all models
         X = df.drop(columns=[target_col])
         y = df[target_col]
@@ -1034,6 +1050,10 @@ def train_multiple_models(
         if weight_column and weight_column in df.columns:
             logger.info(f"Using weight column: {weight_column}")
             sample_weight = df[weight_column].values
+            
+            # Validate weights
+            if np.any(sample_weight <= 0):
+                logger.warning("Non-positive weights found. This may affect model training.")
         
         # Calculate feature statistics and cache them for future use
         GLOBAL_CACHE.compute_statistics(X, df_name)
@@ -1058,6 +1078,12 @@ def train_multiple_models(
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=0.2, random_state=42
                 )
+                
+            # Validate split data
+            if len(X_train) < 50 or len(X_test) < 20:
+                error_msg = f"Train/test split resulted in too few samples (train: {len(X_train)}, test: {len(X_test)})"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
         except Exception as e:
             logger.warning(f"Error in time-series split, falling back to random split: {e}")
             X_train, X_test, y_train, y_test = train_test_split(
@@ -1074,21 +1100,43 @@ def train_multiple_models(
             random_state=42
         )
         
-        baseline_model.fit(X_train, y_train)
+        # Train baseline with error handling
+        try:
+            baseline_model.fit(X_train, y_train)
+        except Exception as e:
+            error_msg = f"Failed to train baseline model: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         
-        # Get baseline predictions
+        # Ensure baseline model performance is reasonable
         baseline_preds = baseline_model.predict(X_test)
         baseline_rmse = np.sqrt(mean_squared_error(y_test, baseline_preds))
-        logger.info(f"Baseline RMSE: {baseline_rmse:.4f}")
+        baseline_r2 = r2_score(y_test, baseline_preds)
+        logger.info(f"Baseline RMSE: {baseline_rmse:.4f}, R²: {baseline_r2:.4f}")
+        
+        # Basic model quality check - R² should be positive for a reasonable model
+        if baseline_r2 < 0:
+            logger.warning(f"Baseline model has negative R² ({baseline_r2:.4f}), which indicates poor fit")
         
         # Pre-calculate SHAP values for baseline model using sampled test data
         logger.info("Precalculating SHAP values for baseline features")
         X_test_sample = X_test.sample(min(200, len(X_test)))
         explainer = shap.TreeExplainer(baseline_model)
-        baseline_shap_values = explainer.shap_values(X_test_sample)
+        try:
+            baseline_shap_values = explainer.shap_values(X_test_sample)
+        except Exception as e:
+            logger.warning(f"Failed to calculate SHAP values for baseline: {e}")
+            baseline_shap_values = None
         
         # Get model configs
         model_configs = list(MODEL_CONFIG.items())
+        if not model_configs:
+            error_msg = "No model configurations found in MODEL_CONFIG"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        logger.info(f"Found {len(model_configs)} model configurations to train")
+            
         results = {}
         
         # Train all models
@@ -1147,9 +1195,57 @@ def train_multiple_models(
         skipped = sum(1 for r in results.values() if r.get('status') == 'skipped')
         failed = sum(1 for r in results.values() if r.get('status') == 'failed')
         
+        # Verify that at least one model completed successfully
+        if completed == 0 and len(model_configs) > 0:
+            error_msg = f"No models completed training successfully. {failed} models failed, {skipped} models skipped."
+            logger.error(error_msg)
+            
+            # Send notification about critical failure
+            from utils.slack import post as slack_post
+            try:
+                slack_post(
+                    channel="#alerts",
+                    title="❌ Critical Training Failure",
+                    details=f"No models completed training successfully.\n{error_msg}",
+                    urgency="high"
+                )
+            except Exception as slack_e:
+                logger.error(f"Error sending Slack notification: {str(slack_e)}")
+                
+            raise RuntimeError(error_msg)
+        
         summary = f"Multi-model training complete in {time.time() - start_time:.2f} seconds.\n"
         summary += f"Models: {len(results)} total, {completed} completed, {skipped} skipped, {failed} failed"
         logger.info(summary)
+        
+        # Compare model performance
+        model_metrics = {}
+        for model_id, result in results.items():
+            if result.get('status') == 'completed' and 'metrics' in result:
+                metrics = result['metrics']
+                model_metrics[model_id] = {
+                    'rmse': metrics.get('rmse', float('inf')),
+                    'r2': metrics.get('r2', -1),
+                    'improvement': metrics.get('improvement', 0)
+                }
+                
+        if model_metrics:
+            # Find best model by RMSE
+            best_model_id = min(model_metrics.keys(), key=lambda k: model_metrics[k]['rmse'])
+            best_rmse = model_metrics[best_model_id]['rmse']
+            best_r2 = model_metrics[best_model_id]['r2']
+            best_improvement = model_metrics[best_model_id]['improvement']
+            
+            logger.info(f"Best model: {best_model_id} with RMSE: {best_rmse:.4f}, R²: {best_r2:.4f}, Improvement: {best_improvement:.2f}%")
+            
+            # Enhanced summary with best model details
+            summary += f"\nBest model: {best_model_id} (RMSE: {best_rmse:.4f}, Improvement: {best_improvement:.2f}%)"
+            
+            # Add best model info to results
+            results['best_model'] = {
+                'model_id': best_model_id,
+                'metrics': model_metrics[best_model_id]
+            }
         
         # Send notification about completion
         from utils.slack import post as slack_post

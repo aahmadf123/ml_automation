@@ -36,7 +36,7 @@ DEFAULT_ARTIFACTS_PREFIX = "model-artifacts"
 @task(multiple_outputs=True)
 def compare_model_results(
     model_results: Dict[str, Dict[str, Any]],
-    task_type: str = "classification",
+    task_type: str = "regression",
     baseline_model: Optional[str] = None,
     s3_bucket: Optional[str] = None,
     s3_prefix: Optional[str] = None,
@@ -48,7 +48,7 @@ def compare_model_results(
     
     Args:
         model_results: Dictionary of model results, keyed by model_id
-        task_type: Type of ML task ('classification' or 'regression')
+        task_type: Type of ML task ('regression')
         baseline_model: Model ID to use as baseline for comparison
         s3_bucket: S3 bucket to store comparison results (optional)
         s3_prefix: S3 prefix for comparison results (optional)

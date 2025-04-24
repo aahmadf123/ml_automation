@@ -8,7 +8,7 @@ import { ChevronLeft, ChevronRight, PauseCircle, PlayCircle, AlertTriangle, Line
 const insights = [
   {
     id: 1,
-    text: "Neural Network model shows 7.8% improved F1 score over baseline model across all claim types",
+    text: "XGBoost Fast Decay model shows 7.8% improved F1 score over baseline model across all claim types",
     type: "performance",
     icon: TrendingUp
   },
