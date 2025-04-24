@@ -185,6 +185,16 @@ prepare_data_task = PythonOperator(
     task_id='prepare_data',
     python_callable=prepare_data_fn,
     provide_context=True,
+    execution_timeout=timedelta(hours=4),  # Extended timeout for large datasets
+    pool='large_memory_tasks',  # Use a dedicated resource pool
+    executor_config={
+        "KubernetesExecutor": {
+            "request_memory": "8Gi",
+            "limit_memory": "16Gi",
+            "request_cpu": "2",
+            "limit_cpu": "4"
+        }
+    },
     dag=dag
 )
 
