@@ -252,7 +252,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     # Manual override task
     override_task = PythonOperator(
         task_id='manual_override',
-        python_callable=training.manual_override,
+        python_callable=data_quality.manual_override,
         op_kwargs={
             'model_id': 'homeowner_model',
             'override_action': 'No action required'

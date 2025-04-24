@@ -63,10 +63,10 @@ __all__: List[str] = [
 from tasks.ingestion import ingest_data_from_s3
 from tasks.preprocessing import preprocess_data
 from tasks.schema_validation import validate_schema, snapshot_schema
-from tasks.training import train_and_compare_fn, manual_override
+from tasks.training import train_and_compare_fn
 from tasks.model_explainability import ModelExplainabilityTracker
 from tasks.ab_testing import ABTestingPipeline
-from tasks.data_quality import DataQualityMonitor
+from tasks.data_quality import DataQualityMonitor, manual_override
 from tasks.drift import generate_reference_means, detect_data_drift, self_healing
 from tasks.monitoring import record_system_metrics, update_monitoring_with_ui_components
 
