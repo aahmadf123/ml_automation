@@ -22,6 +22,8 @@ import mlflow
 import sys
 from botocore.exceptions import ClientError
 from pathlib import Path
+import glob
+import re
 
 # Use direct imports for modules
 import utils.config as config
@@ -60,6 +62,7 @@ dag = DAG(
 def download_data(**context):
     """Download data from S3 or reuse existing ingested data"""
     from tempfile import NamedTemporaryFile
+    import os
     
     logger.info("Starting download_data task")
     
@@ -71,25 +74,57 @@ def download_data(**context):
     logger.info(f"Attempting to access data at s3://{bucket}/{key}")
     
     try:
+        # Create airflow data directory if it doesn't exist (for persistence between tasks)
+        data_dir = '/opt/airflow/data'
+        os.makedirs(data_dir, exist_ok=True)
+        logger.info(f"Ensuring data directory exists: {data_dir}")
+        
+        # Generate a persistent filename based on the S3 key
+        filename = os.path.basename(key)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        local_path = os.path.join(data_dir, f"raw_{timestamp}_{filename}")
+        logger.info(f"Will download to persistent location: {local_path}")
+        
         # Use the ingestion function from the full pipeline if available
         try:
             logger.info("Attempting to use pipeline ingestion function")
             data_path = ingestion.ingest_data_from_s3(
                 bucket_name=bucket,
-                key=key
+                key=key,
+                local_path=local_path  # Pass the persistent path to the function
             )
             logger.info(f"Successfully ingested data using pipeline function: {data_path}")
         except Exception as e:
             # Fall back to direct S3 download if ingestion function fails
             logger.warning(f"Pipeline ingestion failed, falling back to direct download: {str(e)}")
             
+            # Download directly to the persistent location
             s3_client = boto3.client('s3', region_name=config.AWS_REGION)
-            with NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
-                local_path = temp_file.name
-                logger.info(f"Downloading to {local_path}")
-                s3_client.download_file(bucket, key, local_path)
-                data_path = local_path
-                logger.info(f"Successfully downloaded to {local_path}")
+            logger.info(f"Downloading to {local_path}")
+            s3_client.download_file(bucket, key, local_path)
+            data_path = local_path
+            logger.info(f"Successfully downloaded to {local_path}")
+        
+        # Also create a backup copy in /tmp as fallback
+        try:
+            tmp_path = f"/tmp/raw_data_backup_{timestamp}.csv"
+            import shutil
+            shutil.copy2(local_path, tmp_path)
+            logger.info(f"Created backup copy at {tmp_path}")
+        except Exception as e:
+            logger.warning(f"Failed to create backup copy: {str(e)}")
+            
+        # Test file exists and is accessible
+        if not os.path.exists(data_path):
+            logger.error(f"Downloaded file not found at {data_path}")
+            raise FileNotFoundError(f"Downloaded file not found at {data_path}")
+            
+        file_size = os.path.getsize(data_path)
+        if file_size == 0:
+            logger.error(f"Downloaded file is empty: {data_path}")
+            raise ValueError(f"Downloaded file is empty: {data_path}")
+            
+        logger.info(f"Verified file exists with size {file_size} bytes")
                 
         # Log with ClearML if enabled
         try:
@@ -126,6 +161,134 @@ def download_data(**context):
             
         raise
 
+def verify_file_persistence(**context):
+    """Utility task to verify file persistence between tasks and fix issues if possible"""
+    import os
+    import glob
+    from pathlib import Path
+    
+    logger.info("Starting verify_file_persistence task")
+    
+    try:
+        # Get raw data path from previous task
+        raw_data_path = context['ti'].xcom_pull(task_ids='download_data', key='data_path')
+        
+        if not raw_data_path:
+            logger.error("Failed to get data_path from previous task")
+            raise ValueError("No data path provided from download_data task")
+            
+        # Check if the file exists
+        if not os.path.exists(raw_data_path):
+            logger.warning(f"File not found at expected location: {raw_data_path}")
+            
+            # Try to locate the file
+            original_filename = os.path.basename(raw_data_path)
+            search_locations = [
+                "/opt/airflow/data",
+                "/tmp"
+            ]
+            
+            found_file = False
+            for location in search_locations:
+                if not os.path.exists(location):
+                    logger.warning(f"Search location does not exist: {location}")
+                    continue
+                    
+                logger.info(f"Searching in: {location}")
+                # First try exact name
+                if os.path.exists(os.path.join(location, original_filename)):
+                    new_path = os.path.join(location, original_filename)
+                    logger.info(f"Found exact file at: {new_path}")
+                    found_file = True
+                    context['ti'].xcom_push(key='data_path', value=new_path)
+                    break
+                    
+                # Then try pattern matching
+                pattern = f"{location}/*{original_filename.split('_')[-1]}"
+                matches = glob.glob(pattern)
+                if matches:
+                    # Use the most recently modified file
+                    newest_file = max(matches, key=os.path.getmtime)
+                    logger.info(f"Found similar file at: {newest_file}")
+                    found_file = True
+                    context['ti'].xcom_push(key='data_path', value=newest_file)
+                    break
+            
+            if not found_file:
+                # Last resort: look for any CSV file
+                for location in search_locations:
+                    if not os.path.exists(location):
+                        continue
+                        
+                    csv_files = glob.glob(f"{location}/*.csv")
+                    if csv_files:
+                        newest_csv = max(csv_files, key=os.path.getmtime)
+                        logger.info(f"Found CSV file at: {newest_csv}")
+                        found_file = True
+                        context['ti'].xcom_push(key='data_path', value=newest_csv)
+                        break
+            
+            if not found_file:
+                # If still not found, download from S3
+                try:
+                    logger.warning("No existing files found, attempting direct S3 download")
+                    bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
+                    key = config.RAW_DATA_KEY
+                    s3_client = boto3.client('s3', region_name=config.AWS_REGION)
+                    
+                    # Create a persistent path
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = os.path.basename(key)
+                    data_dir = '/opt/airflow/data'
+                    os.makedirs(data_dir, exist_ok=True)
+                    recovery_path = os.path.join(data_dir, f"recovery_{timestamp}_{filename}")
+                    
+                    logger.info(f"Downloading to recovery location: {recovery_path}")
+                    s3_client.download_file(bucket, key, recovery_path)
+                    context['ti'].xcom_push(key='data_path', value=recovery_path)
+                    logger.info(f"Successfully downloaded recovery file")
+                    found_file = True
+                except Exception as e:
+                    logger.error(f"Recovery download failed: {str(e)}")
+            
+            if not found_file:
+                logger.error("Could not find or recover data file")
+                raise FileNotFoundError(f"Data file not found and recovery attempts failed")
+        else:
+            logger.info(f"Verified file exists at: {raw_data_path}")
+            
+            # Check file size
+            file_size = os.path.getsize(raw_data_path)
+            logger.info(f"File size: {file_size} bytes")
+            
+            if file_size == 0:
+                logger.error(f"File exists but is empty: {raw_data_path}")
+                raise ValueError(f"File exists but is empty: {raw_data_path}")
+                
+            # Create a backup for extra safety
+            try:
+                data_dir = '/opt/airflow/data'
+                os.makedirs(data_dir, exist_ok=True)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = os.path.basename(raw_data_path)
+                backup_path = os.path.join(data_dir, f"verified_{timestamp}_{filename}")
+                
+                import shutil
+                shutil.copy2(raw_data_path, backup_path)
+                logger.info(f"Created verified backup at: {backup_path}")
+                
+                # Push both paths to XCom
+                context['ti'].xcom_push(key='verified_data_path', value=backup_path)
+            except Exception as e:
+                logger.warning(f"Failed to create backup: {str(e)}")
+        
+        # Always return the (possibly updated) data path
+        return context['ti'].xcom_pull(key='data_path')
+        
+    except Exception as e:
+        logger.error(f"Error in verify_file_persistence task: {str(e)}")
+        raise
+
 def process_data(**context):
     """Process the data and prepare for model training"""
     import pandas as pd
@@ -148,8 +311,57 @@ def process_data(**context):
         # Verify the file exists and has content
         data_file = Path(raw_data_path)
         if not data_file.exists():
-            logger.error(f"Data file does not exist: {raw_data_path}")
-            raise FileNotFoundError(f"Data file not found: {raw_data_path}")
+            logger.warning(f"Data file does not exist at primary location: {raw_data_path}")
+            
+            # Try to find the file in alternative locations
+            potential_locations = [
+                # Check for backup in /tmp
+                Path("/tmp").glob("raw_data_backup_*.csv"),
+                # Check for files in data directory
+                Path("/opt/airflow/data").glob("raw_*.csv"),
+                # Check for any CSV files in data directory
+                Path("/opt/airflow/data").glob("*.csv"),
+                # Last resort - check for any parquet files
+                Path("/opt/airflow/data").glob("*.parquet")
+            ]
+            
+            # Try each location
+            for pattern in potential_locations:
+                files = sorted(pattern, key=os.path.getmtime, reverse=True)
+                if files:
+                    # Found files - use most recent
+                    raw_data_path = str(files[0])
+                    data_file = Path(raw_data_path)
+                    logger.info(f"Found alternative file at: {raw_data_path}")
+                    break
+            
+            # If still not found, try to list S3 and download directly
+            if not data_file.exists():
+                logger.warning("Attempting to download data directly from S3")
+                try:
+                    s3_client = boto3.client('s3', region_name=config.AWS_REGION)
+                    bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
+                    key = config.RAW_DATA_KEY
+                    
+                    # Create a new local path
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = os.path.basename(key)
+                    local_path = f"/opt/airflow/data/recovery_{timestamp}_{filename}"
+                    
+                    # Download the file
+                    logger.info(f"Downloading from s3://{bucket}/{key} to {local_path}")
+                    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                    s3_client.download_file(bucket, key, local_path)
+                    raw_data_path = local_path
+                    data_file = Path(raw_data_path)
+                    logger.info(f"Successfully downloaded recovery file to {local_path}")
+                except Exception as e:
+                    logger.error(f"Recovery download failed: {str(e)}")
+            
+            # If still not found, raise error
+            if not data_file.exists():
+                logger.error(f"Data file not found at primary or alternative locations")
+                raise FileNotFoundError(f"Data file not found: {raw_data_path}")
             
         file_size = data_file.stat().st_size
         logger.info(f"Found data file {raw_data_path} with size {file_size} bytes")
@@ -1294,6 +1506,16 @@ download_task = PythonOperator(
     dag=dag,
 )
 
+verify_task = PythonOperator(
+    task_id='verify_file_persistence',
+    python_callable=verify_file_persistence,
+    provide_context=True,
+    retries=2,
+    retry_delay=timedelta(minutes=1),
+    execution_timeout=timedelta(minutes=15),
+    dag=dag,
+)
+
 process_task = PythonOperator(
     task_id='process_data',
     python_callable=process_data,
@@ -1346,4 +1568,4 @@ test_task = PythonOperator(
 )
 
 # Define workflow
-test_task >> download_task >> process_task >> [quality_task, drift_task] >> train_task 
+test_task >> download_task >> verify_task >> process_task >> [quality_task, drift_task] >> train_task 
