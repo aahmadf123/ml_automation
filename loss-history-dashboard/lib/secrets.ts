@@ -16,6 +16,10 @@ export async function getSecrets(): Promise<Record<string, any>> {
       AIRFLOW_PASSWORD: process.env.AIRFLOW_PASSWORD,
       MLFLOW_API_URL: process.env.MLFLOW_API_URL,
       SLACK_TOKEN: process.env.SLACK_TOKEN,
+      CLEARML_API_URL: process.env.CLEARML_API_URL,
+      CLEARML_ACCESS_KEY: process.env.CLEARML_ACCESS_KEY,
+      CLEARML_SECRET_KEY: process.env.CLEARML_SECRET_KEY,
+      WEBSOCKET_ENDPOINT: process.env.WEBSOCKET_ENDPOINT
     };
   }
 

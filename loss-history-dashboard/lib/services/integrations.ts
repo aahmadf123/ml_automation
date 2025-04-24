@@ -24,12 +24,25 @@ interface SlackMessage {
   blocks?: any[];
 }
 
+interface ModelOverride {
+  modelId: string;
+  overrideReason: string;
+  userId: string;
+  approvedBy: string | null;
+  metrics: Record<string, any>;
+  notes: string;
+  timestamp: string;
+}
+
 export class IntegrationsService {
   private airflowApiUrl: string;
   private airflowUsername: string;
   private airflowPassword: string;
   private mlflowApiUrl: string;
   private slackToken: string;
+  private clearmlApiUrl: string;
+  private clearmlAccessKey: string;
+  private clearmlSecretKey: string;
   private ws: WebSocket | null = null;
   private initialized: boolean = false;
 
@@ -40,6 +53,9 @@ export class IntegrationsService {
     this.airflowPassword = '';
     this.mlflowApiUrl = '';
     this.slackToken = '';
+    this.clearmlApiUrl = '';
+    this.clearmlAccessKey = '';
+    this.clearmlSecretKey = '';
   }
 
   async initialize() {
@@ -52,6 +68,9 @@ export class IntegrationsService {
       this.airflowPassword = secrets.AIRFLOW_PASSWORD;
       this.mlflowApiUrl = secrets.MLFLOW_API_URL;
       this.slackToken = secrets.SLACK_TOKEN;
+      this.clearmlApiUrl = secrets.CLEARML_API_URL || 'https://app.clear.ml/api';
+      this.clearmlAccessKey = secrets.CLEARML_ACCESS_KEY || '';
+      this.clearmlSecretKey = secrets.CLEARML_SECRET_KEY || '';
       this.initialized = true;
     } catch (error) {
       console.error('Failed to initialize IntegrationsService with secrets:', error);
@@ -63,6 +82,98 @@ export class IntegrationsService {
   private async ensureInitialized() {
     if (!this.initialized) {
       await this.initialize();
+    }
+  }
+
+  // ClearML Integration - Log model override
+  async logOverrideToClearML(override: ModelOverride): Promise<string> {
+    await this.ensureInitialized();
+    
+    if (!this.clearmlAccessKey || !this.clearmlSecretKey) {
+      console.warn('ClearML credentials not configured');
+      return 'mock-task-id';
+    }
+    
+    try {
+      // Create a new task in ClearML to log the override
+      const createTaskResponse = await fetch(`${this.clearmlApiUrl}/tasks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Buffer.from(`${this.clearmlAccessKey}:${this.clearmlSecretKey}`).toString('base64')}`
+        },
+        body: JSON.stringify({
+          name: `Model Override: ${override.modelId}`,
+          type: 'data_processing',
+          tags: ['override', 'manual', 'human-in-the-loop'],
+          comment: override.overrideReason,
+          project: 'Model Management'
+        })
+      });
+      
+      const taskData = await createTaskResponse.json();
+      const taskId = taskData.data.id;
+      
+      // Add custom fields to the task
+      await fetch(`${this.clearmlApiUrl}/tasks/${taskId}/add_or_update_custom_field`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Buffer.from(`${this.clearmlAccessKey}:${this.clearmlSecretKey}`).toString('base64')}`
+        },
+        body: JSON.stringify({
+          customFields: [
+            {
+              name: 'override_reason',
+              value: override.overrideReason
+            },
+            {
+              name: 'user_id',
+              value: override.userId
+            },
+            {
+              name: 'approved_by',
+              value: override.approvedBy || 'N/A'
+            },
+            {
+              name: 'model_id',
+              value: override.modelId
+            },
+            {
+              name: 'override_timestamp',
+              value: override.timestamp
+            },
+            {
+              name: 'notes',
+              value: override.notes
+            }
+          ]
+        })
+      });
+      
+      // Log any metrics provided
+      if (Object.keys(override.metrics).length > 0) {
+        await fetch(`${this.clearmlApiUrl}/tasks/${taskId}/metrics`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Buffer.from(`${this.clearmlAccessKey}:${this.clearmlSecretKey}`).toString('base64')}`
+          },
+          body: JSON.stringify({
+            metrics: Object.entries(override.metrics).map(([key, value]) => ({
+              name: key,
+              value: value,
+              timestamp: Date.now()
+            }))
+          })
+        });
+      }
+      
+      return taskId;
+    } catch (error) {
+      console.error('Error logging to ClearML:', error);
+      // Return a mock ID so the process can continue even if ClearML logging fails
+      return `error-mock-${Date.now()}`;
     }
   }
 
