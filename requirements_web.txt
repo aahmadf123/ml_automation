@@ -1,0 +1,12 @@
+# WebSocket and Real-time Communication
+websockets==11.0.3
+aiohttp==3.10.5
+fastapi==0.100.0
+uvicorn==0.23.0
+
+# Streamlit Dashboard (older version for better compatibility)
+streamlit==1.29.0  # Downgraded from 1.30.0 for better compatibility
+st-annotated-text==4.0.0
+streamlit-aggrid==0.3.4
+streamlit-elements==0.1.0
+
