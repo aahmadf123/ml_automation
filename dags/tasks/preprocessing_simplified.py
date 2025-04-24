@@ -467,9 +467,9 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
     
     # 5. Check for data quality issues
     logger.info("Running data quality checks")
-    quality_issues = quality_monitor.run_checks(df)
+    quality_issues = quality_monitor.run_quality_checks(df)
     if quality_issues:
-        logger.warning(f"Found {len(quality_issues)} data quality issues")
+        logger.warning(f"Found {quality_issues.get('total_issues', 0)} data quality issues")
         # Report issues but continue processing
         
     # 6. Encode categorical variables

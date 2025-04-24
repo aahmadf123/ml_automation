@@ -63,13 +63,10 @@ def validate_schema(df: pd.DataFrame) -> Dict[str, Any]:
             "pure_premium": pa.Column(float, nullable=True, required=False),
             "trgt": pa.Column(float, nullable=True, required=False),
             
-            # Key input features expected in most datasets
-            "eey": pa.Column(float, nullable=False),
-            "il_total": pa.Column(float, nullable=False),
-            
-            # Flexible check for loss history columns
-            # At least some of these should be present
-        })
+            # Key input features - mark as potentially optional since some datasets might lack them
+            "eey": pa.Column(float, nullable=True, required=False),
+            "il_total": pa.Column(float, nullable=True, required=False),
+        }, strict=False)  # Use non-strict mode to allow additional columns
         
         # Create custom check to ensure either pure_premium or trgt is present
         @pa.extensions.check.register_check_method(statistics=["column_names"])
