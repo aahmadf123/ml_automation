@@ -19,15 +19,15 @@ import json
 import requests
 import tempfile
 import mlflow
-from utils.config import (
-    MLFLOW_URI, MLFLOW_EXPERIMENT, DATA_BUCKET,
-    S3_BUCKET, RAW_DATA_KEY
-)
-from utils.clearml_config import init_clearml, log_dataset_to_clearml
-from tasks.training import train_and_compare_fn
-from tasks.data_quality import DataQualityMonitor
-from tasks.drift import detect_data_drift
-from utils.slack import post as slack_post
+import sys
+
+# Use direct imports for modules
+import utils.config as config
+import utils.clearml_config as clearml_config
+import tasks.training as training
+import tasks.data_quality as data_quality
+import tasks.drift as drift
+import utils.slack as slack
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -65,18 +65,18 @@ def download_data(**context):
     with NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
         local_path = temp_file.name
         s3_client.download_file(
-            S3_BUCKET,
-            RAW_DATA_KEY,
+            config.S3_BUCKET,
+            config.RAW_DATA_KEY,
             local_path
         )
     
     # Log with ClearML if enabled
     try:
-        clearml_task = init_clearml("Data_Download")
+        clearml_task = clearml_config.init_clearml("Data_Download")
         if clearml_task:
-            clearml_task.set_parameter("s3_bucket", S3_BUCKET)
-            clearml_task.set_parameter("s3_key", RAW_DATA_KEY)
-            log_dataset_to_clearml(
+            clearml_task.set_parameter("s3_bucket", config.S3_BUCKET)
+            clearml_task.set_parameter("s3_key", config.RAW_DATA_KEY)
+            clearml_config.log_dataset_to_clearml(
                 dataset_name="Raw_Data",
                 dataset_path=local_path,
                 dataset_tags=["raw", "csv"]
@@ -87,7 +87,7 @@ def download_data(**context):
     
     # Return local path for downstream tasks
     context['ti'].xcom_push(key='data_path', value=local_path)
-    slack_post(f":white_check_mark: Data downloaded from s3://{S3_BUCKET}/{RAW_DATA_KEY}")
+    slack.post(f":white_check_mark: Data downloaded from s3://{config.S3_BUCKET}/{config.RAW_DATA_KEY}")
     return local_path
 
 def process_data(**context):
@@ -102,13 +102,13 @@ def process_data(**context):
     raw_data_path = context['ti'].xcom_pull(task_ids='download_data', key='data_path')
     
     # Initialize MLflow
-    mlflow.set_tracking_uri(MLFLOW_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    mlflow.set_tracking_uri(config.MLFLOW_URI)
+    mlflow.set_experiment(config.MLFLOW_EXPERIMENT)
     
     # Start ClearML task
     clearml_task = None
     try:
-        clearml_task = init_clearml("Data_Processing")
+        clearml_task = clearml_config.init_clearml("Data_Processing")
     except Exception as e:
         logger.warning(f"Error initializing ClearML: {str(e)}")
     
@@ -148,10 +148,10 @@ def process_data(**context):
         # Upload to S3
         s3_client = boto3.client('s3')
         processed_s3_key = f"processed/processed_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
-        s3_client.upload_file(processed_path, S3_BUCKET, processed_s3_key)
+        s3_client.upload_file(processed_path, config.S3_BUCKET, processed_s3_key)
         
         # Log location in MLflow
-        mlflow.log_param("processed_data_s3_path", f"s3://{S3_BUCKET}/{processed_s3_key}")
+        mlflow.log_param("processed_data_s3_path", f"s3://{config.S3_BUCKET}/{processed_s3_key}")
     
     # Close ClearML task if available
     if clearml_task:
@@ -167,7 +167,7 @@ def process_data(**context):
     except Exception as e:
         logger.warning(f"Error removing raw data file: {str(e)}")
     
-    slack_post(f":white_check_mark: Data processed successfully. Rows: {len(df)}")
+    slack.post(f":white_check_mark: Data processed successfully. Rows: {len(df)}")
     return processed_path
 
 def check_data_quality(**context):
@@ -185,13 +185,13 @@ def check_data_quality(**context):
     df = pd.read_parquet(processed_data_path)
     
     # Initialize MLflow
-    mlflow.set_tracking_uri(MLFLOW_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    mlflow.set_tracking_uri(config.MLFLOW_URI)
+    mlflow.set_experiment(config.MLFLOW_EXPERIMENT)
     
     # Start ClearML task
     clearml_task = None
     try:
-        clearml_task = init_clearml("Data_Quality_Check")
+        clearml_task = clearml_config.init_clearml("Data_Quality_Check")
     except Exception as e:
         logger.warning(f"Error initializing ClearML: {str(e)}")
     
@@ -238,12 +238,12 @@ def check_data_quality(**context):
     force_continue = Variable.get("FORCE_CONTINUE", default_var="false").lower() == "true"
     
     if quality_results["total_issues"] > data_quality_threshold and not force_continue:
-        slack_post(f":x: Data quality issues ({quality_results['total_issues']}) exceed threshold ({data_quality_threshold}). Workflow stopped.")
+        slack.post(f":x: Data quality issues ({quality_results['total_issues']}) exceed threshold ({data_quality_threshold}). Workflow stopped.")
         raise ValueError(f"Data quality issues ({quality_results['total_issues']}) exceed threshold ({data_quality_threshold})")
     
     # Push quality results for downstream tasks
     context['ti'].xcom_push(key='quality_results', value=quality_results)
-    slack_post(f":white_check_mark: Data quality check completed. Issues: {quality_results['total_issues']}")
+    slack.post(f":white_check_mark: Data quality check completed. Issues: {quality_results['total_issues']}")
     return quality_results
 
 def train_model(**context):
@@ -256,14 +256,14 @@ def train_model(**context):
     
     try:
         # Train model - this function already handles both MLflow and ClearML logging
-        train_and_compare_fn(model_id, processed_data_path)
+        training.train_and_compare_fn(model_id, processed_data_path)
         
         # Push model ID for downstream tasks
         context['ti'].xcom_push(key='model_id', value=model_id)
-        slack_post(f":white_check_mark: Model {model_id} trained successfully")
+        slack.post(f":white_check_mark: Model {model_id} trained successfully")
         return model_id
     except Exception as e:
-        slack_post(f":x: Model training failed: {str(e)}")
+        slack.post(f":x: Model training failed: {str(e)}")
         raise
 
 def check_for_drift(**context):
@@ -275,13 +275,13 @@ def check_for_drift(**context):
     current_data = pd.read_parquet(processed_data_path)
     
     # Initialize MLflow
-    mlflow.set_tracking_uri(MLFLOW_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    mlflow.set_tracking_uri(config.MLFLOW_URI)
+    mlflow.set_experiment(config.MLFLOW_EXPERIMENT)
     
     # Start ClearML task
     clearml_task = None
     try:
-        clearml_task = init_clearml("Drift_Detection")
+        clearml_task = clearml_config.init_clearml("Drift_Detection")
     except Exception as e:
         logger.warning(f"Error initializing ClearML: {str(e)}")
     
@@ -290,7 +290,7 @@ def check_for_drift(**context):
         run_id = run.info.run_id
         
         # Detect drift using the function from drift.py
-        drift_results = detect_data_drift(processed_data_path)
+        drift_results = drift.detect_data_drift(processed_data_path)
         
         # Log results to MLflow
         mlflow.log_params({
@@ -334,11 +334,11 @@ def check_for_drift(**context):
     
     if drift_results["overall_drift_score"] > drift_threshold and not force_continue:
         # Send alert but continue workflow
-        slack_post(f":warning: Data drift detected! Score: {drift_results['overall_drift_score']:.4f}, Threshold: {drift_threshold}")
+        slack.post(f":warning: Data drift detected! Score: {drift_results['overall_drift_score']:.4f}, Threshold: {drift_threshold}")
     
     # Push drift results for downstream tasks
     context['ti'].xcom_push(key='drift_results', value=drift_results)
-    slack_post(f":white_check_mark: Drift detection completed. Score: {drift_results['overall_drift_score']:.4f}")
+    slack.post(f":white_check_mark: Drift detection completed. Score: {drift_results['overall_drift_score']:.4f}")
     return drift_results
 
 # Define tasks

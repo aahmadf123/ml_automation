@@ -20,15 +20,10 @@ from airflow.exceptions import AirflowSkipException
 from airflow.decorators import task
 import mlflow
 
-# Fix import paths to use absolute imports
-from utils.metrics import (
-    calculate_metrics,
-    compare_models,
-    create_comparison_plots,
-    should_retrain
-)
-from utils.s3 import upload_to_s3, download_from_s3
-from utils.notifications import send_slack_notification
+# Fix import paths - use absolute imports
+import utils.metrics as metrics
+import utils.s3 as s3_utils
+import utils.notifications as notifications
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +90,7 @@ def compare_model_results(
     
     # Compare models
     logger.info(f"Comparing {complete_models} models")
-    comparison_results = compare_models(
+    comparison_results = metrics.compare_models(
         model_results=model_results,
         task_type=task_type,
         baseline_model=baseline_model
@@ -108,7 +103,7 @@ def compare_model_results(
     
     # Create comparison plots
     logger.info("Generating comparison plots")
-    plot_paths = create_comparison_plots(
+    plot_paths = metrics.create_comparison_plots(
         model_results=model_results,
         output_dir=output_dir,
         task_type=task_type
@@ -151,19 +146,19 @@ def compare_model_results(
         
         # Upload summary
         summary_s3_key = f"{prefix}/comparison_summary.json"
-        upload_to_s3(summary_path, bucket, summary_s3_key)
+        s3_utils.upload_to_s3(summary_path, bucket, summary_s3_key)
         s3_locations["summary"] = f"s3://{bucket}/{summary_s3_key}"
         
         # Upload plots
         for plot_name, plot_path in plot_paths.items():
             plot_filename = os.path.basename(plot_path)
             plot_s3_key = f"{prefix}/{plot_filename}"
-            upload_to_s3(plot_path, bucket, plot_s3_key)
+            s3_utils.upload_to_s3(plot_path, bucket, plot_s3_key)
             s3_locations[plot_name] = f"s3://{bucket}/{plot_s3_key}"
         
         # Upload comparison results
         comparison_s3_key = f"{prefix}/comparison_results.json"
-        upload_to_s3(comparison_json_path, bucket, comparison_s3_key)
+        s3_utils.upload_to_s3(comparison_json_path, bucket, comparison_s3_key)
         s3_locations["comparison_results"] = f"s3://{bucket}/{comparison_s3_key}"
     
     # Send notification if configured
@@ -183,7 +178,7 @@ def compare_model_results(
                 if s3_locations:
                     message += f"Full report: {s3_locations.get('summary')}"
                 
-                send_slack_notification(webhook_url, message)
+                notifications.send_slack_notification(webhook_url, message)
                 logger.info("Slack notification sent with comparison results")
         except Exception as e:
             logger.error(f"Failed to send Slack notification: {str(e)}")
@@ -268,7 +263,7 @@ def identify_models_for_retraining(
             continue
         
         # Check if model should be retrained
-        should_retrain_flag, reason = should_retrain(
+        should_retrain_flag, reason = metrics.should_retrain(
             model_id=model_id,
             current_metrics=current_metrics,
             historical_metrics=model_history,

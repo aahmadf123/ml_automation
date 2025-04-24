@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from typing import Any, Dict, Optional, List, Union
+import sys
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -36,12 +37,12 @@ def send_to_slack(
         Dict containing the Slack API response
     """
     from tenacity import retry, stop_after_attempt, wait_fixed
-    from utils.slack import post as post_message
+    import utils.slack as slack
     
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     def _send():
         log.info(f"Posting to Slack {channel}: {title}")
-        return post_message(
+        return slack.post(
             channel=channel,
             title=title,
             details=details,
@@ -69,15 +70,15 @@ def trigger_airflow_dag(
         Dict containing the Airflow API response
     """
     from tenacity import retry, stop_after_attempt, wait_fixed
-    from utils.airflow_api import trigger_dag as api_trigger_dag
-    from utils.config import AIRFLOW_DAG_BASE_CONF
+    import utils.airflow_api as airflow_api
+    import utils.config as config
     
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
     def _trigger():
         log.info(f"Triggering DAG {dag_id}")
-        return api_trigger_dag(
+        return airflow_api.trigger_dag(
             dag_id=dag_id,
-            conf=conf or AIRFLOW_DAG_BASE_CONF
+            conf=conf or config.AIRFLOW_DAG_BASE_CONF
         )
     
     try:

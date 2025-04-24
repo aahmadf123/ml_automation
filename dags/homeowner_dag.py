@@ -17,6 +17,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
+import sys
 
 # Airflow imports
 from airflow import DAG
@@ -74,33 +75,27 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     Returns:
         Dict[str, PythonOperator]: Dictionary of task operators
     """
-    from tasks import (
-        ingest_data_from_s3,
-        preprocess_data,
-        validate_schema,
-        snapshot_schema,
-        DataQualityMonitor,
-        generate_reference_means,
-        detect_data_drift,
-        self_healing,
-        record_system_metrics,
-        update_monitoring_with_ui_components,
-        ModelExplainabilityTracker,
-        ABTestingPipeline,
-        train_and_compare_fn,
-        manual_override
-    )
+    # Import task modules directly
+    import tasks.ingestion as ingestion
+    import tasks.preprocessing as preprocessing
+    import tasks.schema_validation as schema_validation
+    import tasks.data_quality as data_quality
+    import tasks.monitoring as monitoring
+    import tasks.drift as drift
+    import tasks.model_explainability as model_explainability
+    import tasks.ab_testing as ab_testing
+    import tasks.training as training
     
     # Data ingestion and preprocessing tasks
     ingest_task = PythonOperator(
         task_id='ingest_data',
-        python_callable=ingest_data_from_s3,
+        python_callable=ingestion.ingest_data_from_s3,
         dag=dag
     )
     
     preprocess_task = PythonOperator(
         task_id='preprocess_data',
-        python_callable=preprocess_data,
+        python_callable=preprocessing.preprocess_data,
         op_kwargs={
             'data_path': "{{ ti.xcom_pull(task_ids='ingest_data') }}",
             'output_path': LOCAL_PROCESSED_PATH,
@@ -120,7 +115,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     # Schema validation tasks
     validate_task = PythonOperator(
         task_id='validate_schema',
-        python_callable=lambda **kwargs: validate_schema(
+        python_callable=lambda **kwargs: schema_validation.validate_schema(
             pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow')
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
         executor_config={
@@ -134,7 +129,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     snapshot_task = PythonOperator(
         task_id='snapshot_schema',
-        python_callable=lambda **kwargs: snapshot_schema(
+        python_callable=lambda **kwargs: schema_validation.snapshot_schema(
             # Just need dtypes, so read a small sample with only 1000 rows for memory efficiency
             pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=None)
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
@@ -150,7 +145,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     # Monitoring tasks
     quality_monitor = PythonOperator(
         task_id='monitor_data_quality',
-        python_callable=lambda **kwargs: DataQualityMonitor().run_quality_checks(
+        python_callable=lambda **kwargs: data_quality.DataQualityMonitor().run_quality_checks(
             pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=None)
         ) if os.path.exists(LOCAL_PROCESSED_PATH) else {"status": "error", "message": "Data file not found"},
         executor_config={
@@ -164,7 +159,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     reference_task = PythonOperator(
         task_id='generate_reference_means',
-        python_callable=generate_reference_means,
+        python_callable=monitoring.generate_reference_means,
         op_kwargs={
             'processed_data_path': LOCAL_PROCESSED_PATH
         },
@@ -173,7 +168,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     drift_task = PythonOperator(
         task_id='detect_drift',
-        python_callable=detect_data_drift,
+        python_callable=drift.detect_data_drift,
         op_kwargs={
             'processed_data_path': LOCAL_PROCESSED_PATH
         },
@@ -182,7 +177,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     healing_task = PythonOperator(
         task_id='self_healing',
-        python_callable=self_healing,
+        python_callable=drift.self_healing,
         op_kwargs={
             'drift_results': "{{ ti.xcom_pull(task_ids='detect_drift') }}",
             'processed_data_path': LOCAL_PROCESSED_PATH
@@ -192,20 +187,20 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     metrics_task = PythonOperator(
         task_id='record_metrics',
-        python_callable=record_system_metrics,
+        python_callable=monitoring.record_system_metrics,
         dag=dag
     )
     
     ui_task = PythonOperator(
         task_id='update_ui',
-        python_callable=update_monitoring_with_ui_components,
+        python_callable=monitoring.update_monitoring_with_ui_components,
         dag=dag
     )
     
     # Model tasks
     explainability_tracker = PythonOperator(
         task_id='track_explainability',
-        python_callable=lambda **kwargs: ModelExplainabilityTracker('homeowner_model').track_model_and_data(
+        python_callable=lambda **kwargs: model_explainability.ModelExplainabilityTracker('homeowner_model').track_model_and_data(
             model=kwargs.get('ti').xcom_pull(task_ids='train_compare_model1'),
             X=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow').drop(columns=['claim_amount'], errors='ignore'),
             y=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=['claim_amount'])['claim_amount'],
@@ -222,7 +217,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     ab_testing = PythonOperator(
         task_id='ab_testing',
-        python_callable=lambda **kwargs: ABTestingPipeline('homeowner_model').run_ab_test(
+        python_callable=lambda **kwargs: ab_testing.ABTestingPipeline('homeowner_model').run_ab_test(
             new_model=kwargs.get('ti').xcom_pull(task_ids='train_compare_model1'),
             X_test=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow').drop(columns=['claim_amount'], errors='ignore'),
             y_test=pd.read_parquet(LOCAL_PROCESSED_PATH, engine='pyarrow', columns=['claim_amount'])['claim_amount']
@@ -238,7 +233,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     train_task = PythonOperator(
         task_id='train_compare_model1',
-        python_callable=train_and_compare_fn,
+        python_callable=training.train_and_compare_fn,
         op_kwargs={
             'model_id': 'homeowner_model',
             'processed_path': LOCAL_PROCESSED_PATH
@@ -257,7 +252,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     # Manual override task
     override_task = PythonOperator(
         task_id='manual_override',
-        python_callable=manual_override,
+        python_callable=training.manual_override,
         op_kwargs={
             'model_id': 'homeowner_model',
             'override_action': 'No action required'

@@ -16,26 +16,19 @@ import os
 import sys
 from typing import List
 
-# Add the dags directory to the Python path
-dags_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if dags_dir not in sys.path:
-    sys.path.append(dags_dir)
+# Ensure the correct Python paths are set up
+# In a container environment like Airflow, the dags directory is already in the path
+# but we need to handle local development environment as well
+current_dir = os.path.dirname(os.path.abspath(__file__))
+dags_dir = os.path.dirname(current_dir)
+parent_dir = os.path.dirname(dags_dir)
 
-# Import all task functions and classes to properly expose them
-from .ingestion import ingest_data_from_s3
-from .preprocessing import preprocess_data
-from .schema_validation import validate_schema, snapshot_schema
-from .training import train_and_compare_fn
-from .model_explainability import ModelExplainabilityTracker
-from .ab_testing import ABTestingPipeline
-from .data_quality import DataQualityMonitor, manual_override
-from .drift import generate_reference_means, detect_data_drift, self_healing
-from .monitoring import record_system_metrics, update_monitoring_with_ui_components
+# Add paths if they don't exist
+for path in [current_dir, dags_dir, parent_dir]:
+    if path not in sys.path:
+        sys.path.append(path)
 
-# Import the caching system for use across modules
-from utils.cache import GLOBAL_CACHE, cache_result, DataFrameCache
-
-# Define exports
+# Define exports - these are exposed when doing 'from tasks import X'
 __all__: List[str] = [
     # Data ingestion and preprocessing
     'ingest_data_from_s3',
@@ -64,6 +57,21 @@ __all__: List[str] = [
     'cache_result',
     'DataFrameCache'
 ]
+
+# Import all task functions and classes to properly expose them
+# These imports need to be AFTER the path setup and AFTER the __all__ definition
+from tasks.ingestion import ingest_data_from_s3
+from tasks.preprocessing import preprocess_data
+from tasks.schema_validation import validate_schema, snapshot_schema
+from tasks.training import train_and_compare_fn, manual_override
+from tasks.model_explainability import ModelExplainabilityTracker
+from tasks.ab_testing import ABTestingPipeline
+from tasks.data_quality import DataQualityMonitor
+from tasks.drift import generate_reference_means, detect_data_drift, self_healing
+from tasks.monitoring import record_system_metrics, update_monitoring_with_ui_components
+
+# Import the caching system for use across modules
+from utils.cache import GLOBAL_CACHE, cache_result, DataFrameCache
 
 # Version information
 __version__ = "1.0.0"

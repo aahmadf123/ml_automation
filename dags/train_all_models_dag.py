@@ -10,8 +10,10 @@ import os
 import json
 import logging
 import tempfile
+import sys
 from datetime import datetime, timedelta
 
+# Adjust import path to include the dags directory
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable, XCom
@@ -19,12 +21,12 @@ from airflow.exceptions import AirflowException
 from airflow.hooks.S3_hook import S3Hook
 from airflow.providers.amazon.aws.operators.s3 import S3CopyObjectOperator
 
-from tasks.data_prep import prepare_dataset
-from tasks.training import train_multiple_models
-from tasks.archiving import archive_to_s3
-from tasks.model_comparison import compare_model_results
-
-from utils.config import S3_BUCKET, MODEL_CONFIG
+# Import necessary modules - use direct imports
+import tasks.data_prep as data_prep
+import tasks.training as training
+import tasks.archiving as archiving
+import tasks.model_comparison as model_comparison
+import utils.config as config
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ def prepare_data_fn(**context):
         temp_dir = tempfile.mkdtemp(prefix="airflow_data_")
         
         # Generate processed dataframe
-        processed_path = prepare_dataset(
+        processed_path = data_prep.prepare_dataset(
             source_path=data_path, 
             output_dir=temp_dir,
             apply_feature_engineering=True
@@ -96,7 +98,7 @@ def train_all_models_fn(**context):
         logger.info(f"Parallel training: {parallel}, Max workers: {MAX_WORKERS}")
         
         # Train all models
-        results = train_multiple_models(
+        results = training.train_multiple_models(
             processed_path=processed_path,
             parallel=parallel,
             max_workers=MAX_WORKERS
@@ -163,7 +165,7 @@ def archive_artifacts_fn(**context):
                                     s3_hook.load_file(
                                         filename=local_path,
                                         key=s3_key,
-                                        bucket_name=S3_BUCKET,
+                                        bucket_name=config.S3_BUCKET,
                                         replace=True
                                     )
                             
