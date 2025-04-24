@@ -3,15 +3,15 @@
 ## Overview
 
 The `unified_ml_pipeline.py` file consolidates three previously separate pipelines:
-1. `integrated_ml_workflow.py`
-2. `homeowner_dag.py`
-3. `train_all_models_dag.py`
+1. `integrated_ml_workflow.py` (removed)
+2. `homeowner_dag.py` (removed)
+3. `train_all_models_dag.py` (removed)
 
 This consolidation eliminates cross-pipeline dependencies that were causing cascading errors and simplifies testing and maintenance.
 
 ## Pipeline Structure
 
-The unified pipeline follows a logical ML workflow with these primary stages:
+The unified pipeline follows a streamlined ML workflow with these primary stages:
 
 1. **Data Ingestion** - Downloads data from the S3 bucket (`grange-seniordesign-bucket`)
 2. **Data Processing** - Applies preprocessing and optional feature engineering 
@@ -28,6 +28,18 @@ The unified pipeline follows a logical ML workflow with these primary stages:
 - **Improved error handling**: Consistent error handling across all tasks
 - **Robust data management**: Multiple fallbacks for data access and storage
 - **Resource optimization**: Parallel task execution where appropriate
+- **Reduced redundancy**: Eliminated overlapping functionality between modules
+
+## Task Modules Used
+
+The pipeline uses these key task modules:
+- `tasks.ingestion` - Handles data retrieval from S3
+- `tasks.preprocessing` - Performs data cleaning and feature engineering 
+- `tasks.data_quality` - Runs quality checks on processed data
+- `tasks.schema_validation` - Validates data schema
+- `tasks.drift` - Detects data drift
+- `tasks.training` - Trains and evaluates models
+- `tasks.model_explainability` - Generates model explanations
 
 ## Configuration
 
@@ -93,8 +105,16 @@ If you were previously using the separate pipelines:
 
 3. Update any scripts or external systems that were triggering the old pipelines to use the new unified pipeline.
 
-### Notes
+### Files Removed
 
-- The unified pipeline maintains the same data processing logic and model training as the previous pipelines
-- No changes needed for S3 bucket configuration
-- Error notifications (Slack) remain consistent with previous implementations 
+The following files have been removed as they are no longer needed:
+- `integrated_ml_workflow.py` - Consolidated into unified pipeline
+- `homeowner_dag.py` - Consolidated into unified pipeline
+- `train_all_models_dag.py` - Consolidated into unified pipeline
+- `cross_dag_dependencies.py` - No longer needed as there are no cross-DAG dependencies
+
+### Simplified Components
+
+- Eliminated redundancy between `preprocessing.py` and `data_prep.py`
+- Streamlined error handling and data flow
+- Removed unused imports and modules 

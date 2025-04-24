@@ -44,15 +44,20 @@ import mlflow
 import utils.config as config
 import utils.clearml_config as clearml_config
 import utils.slack as slack
-import tasks.training as training
-import tasks.data_quality as data_quality
-import tasks.drift as drift
+
+# Import task modules that are actively used
 import tasks.ingestion as ingestion
-import tasks.preprocessing as preprocessing
+import tasks.preprocessing as preprocessing  # Primary data processing module
+import tasks.data_quality as data_quality
 import tasks.schema_validation as schema_validation
+import tasks.drift as drift
+import tasks.training as training
 import tasks.model_explainability as model_explainability
-import tasks.ab_testing as ab_testing
-import tasks.model_comparison as model_comparison
+
+# Additional modules that may be used in specific scenarios
+# import tasks.data_prep as data_prep  # Alternative data processing - redundant with preprocessing
+# import tasks.ab_testing as ab_testing  # Not directly used in the current pipeline
+# import tasks.model_comparison as model_comparison  # Not directly used in the current pipeline
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -379,27 +384,19 @@ def process_data(**context):
             if apply_feature_engineering or not input_is_parquet:
                 logger.info(f"Processing data from {raw_data_path} to {processed_path}")
                 
-                # Use preprocessing directly or via data_prep depending on implementation
+                # Use preprocessing module for data processing
                 try:
-                    # Try direct preprocessing call
+                    # Call the preprocess_data function with appropriate parameters
                     processed_data = preprocessing.preprocess_data(
                         data_path=raw_data_path,
                         output_path=processed_path,
                         force_reprocess=True,
                         apply_feature_engineering=apply_feature_engineering
                     )
-                    logger.info(f"Data processed with preprocessing.preprocess_data to {processed_path}")
+                    logger.info(f"Data processed successfully to {processed_path}")
                 except Exception as e:
-                    logger.warning(f"Error with direct preprocessing: {str(e)}, trying via data_prep")
-                    # Fall back to data_prep if available
-                    import tasks.data_prep as data_prep
-                    processed_data = data_prep.prepare_dataset(
-                        source_path=raw_data_path,
-                        output_dir=output_dir,
-                        apply_feature_engineering=apply_feature_engineering
-                    )
-                    processed_path = processed_data if isinstance(processed_data, str) else processed_path
-                    logger.info(f"Data processed with data_prep.prepare_dataset to {processed_path}")
+                    logger.error(f"Error in data preprocessing: {str(e)}")
+                    raise
             
             # Ensure we have a valid processed path
             if not processed_path or not os.path.exists(processed_path):
