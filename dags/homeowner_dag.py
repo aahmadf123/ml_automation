@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple, Union
 from functools import wraps
 import sys
+import time
 
 # Airflow imports
 from airflow import DAG
@@ -175,7 +176,7 @@ def check_integrated_ml_workflow(**context):
         context: Airflow context
         
     Returns:
-        str: 'start_pipeline' if the DAG completed or timed out, 'wait_for_integrated' if still waiting
+        str: 'start_pipeline' if the DAG completed or timed out, 'wait_longer' if still waiting
     """
     from cross_dag_dependencies import check_dag_status
     
@@ -191,7 +192,7 @@ def check_integrated_ml_workflow(**context):
             return 'start_pipeline'
         else:
             log.info(f"Upstream DAG {upstream_dag_id} status: {status}, waiting")
-            return 'wait_for_integrated'
+            return 'wait_longer'
             
     except Exception as e:
         log.error(f"Error checking upstream DAG status: {str(e)}")
@@ -438,9 +439,17 @@ def create_tasks(dag: DAG) -> Dict[str, Union[PythonOperator, BranchPythonOperat
         dag=dag
     )
     
-    # Task to wait for integrated_ml_workflow DAG
-    wait_task = EmptyOperator(
-        task_id='wait_for_integrated',
+    # Task to wait longer before checking again
+    wait_longer_task = EmptyOperator(
+        task_id='wait_longer',
+        dag=dag
+    )
+    
+    # Sensor to wait a specific amount of time before trying again
+    wait_sensor = PythonOperator(
+        task_id='wait_sensor',
+        python_callable=lambda **kwargs: time.sleep(300),  # Wait 5 minutes
+        provide_context=True,
         dag=dag
     )
     
@@ -685,7 +694,8 @@ def create_tasks(dag: DAG) -> Dict[str, Union[PythonOperator, BranchPythonOperat
     
     return {
         'check_integrated': check_integrated_task,
-        'wait_for_integrated': wait_task,
+        'wait_longer': wait_longer_task,
+        'wait_sensor': wait_sensor,
         'start_pipeline': start_pipeline,
         'ingest': ingest_task,
         'preprocess': preprocess_task,
@@ -714,9 +724,9 @@ def setup_dependencies(tasks: Dict[str, Union[PythonOperator, BranchPythonOperat
     Args:
         tasks: Dictionary of task operators
     """
-    # Cross-DAG dependency flow
-    tasks['check_integrated'] >> [tasks['wait_for_integrated'], tasks['start_pipeline']]
-    tasks['wait_for_integrated'] >> tasks['check_integrated']
+    # Cross-DAG dependency flow - Fixed to remove cycle
+    tasks['check_integrated'] >> [tasks['wait_longer'], tasks['start_pipeline']]
+    tasks['wait_longer'] >> tasks['wait_sensor'] >> tasks['check_integrated']
     tasks['start_pipeline'] >> tasks['ingest']
     
     # Data pipeline flow
