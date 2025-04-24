@@ -1,0 +1,29 @@
+# Airflow and Workflow Management
+apache-airflow==2.10.1
+apache-airflow-providers-databricks==7.3.2
+apache-airflow-providers-amazon==8.15.0
+apache-airflow-providers-http==4.5.0
+apache-airflow-providers-postgres==5.6.0
+apache-airflow-providers-redis==3.3.1
+apache-airflow-providers-slack==7.3.0
+
+# Database and Monitoring
+sqlalchemy==1.4.54  # Keep this version for Airflow compatibility
+psycopg2-binary==2.9.9
+redis==4.6.0
+prometheus-client==0.17.0
+python-json-logger==2.0.7
+structlog==23.1.0
+grafana-api==1.0.3
+
+# ML Flow and Experiment Tracking
+mlflow==2.9.2
+hyperopt==0.2.7
+clearml==1.14.2
+
+# Testing
+pytest==7.4.0 
+pytest-cov==4.1.0
+pytest-asyncio==0.21.1 
+pytest-mock==3.11.1
+
