@@ -81,7 +81,7 @@ def load_data_to_dataframe(parquet_path: str) -> pd.DataFrame:
     import pyarrow.parquet as pq
     
     # Use multi-threaded reading for better performance
-    table = pq.read_table(parquet_path, use_threads=True, memory_pool=pa.default_memory_pool())
+    table = pq.read_table(parquet_path, use_threads=True)
     
     # Convert to pandas
     df = table.to_pandas()
