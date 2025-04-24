@@ -76,7 +76,7 @@ quality_monitor = DataQualityMonitor()
 def load_data_to_dataframe(file_path: str) -> pd.DataFrame:
     """
     Read data from file into DataFrame with automatic file format detection.
-    Supports Parquet and CSV formats.
+    Supports Parquet and CSV formats with fallback encoding options.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -93,9 +93,34 @@ def load_data_to_dataframe(file_path: str) -> pd.DataFrame:
         # Clean up the Arrow table to free memory
         del table
     elif file_extension == '.csv':
-        # Use pandas for CSV files
+        # Try multiple encodings for CSV files
         logging.info(f"Loading CSV file: {file_path}")
-        df = pd.read_csv(file_path)
+        
+        # List of encodings to try in order of preference
+        encodings_to_try = ['utf-8', 'latin-1', 'windows-1252', 'iso-8859-1', 'cp1252']
+        
+        # Try each encoding until successful
+        for encoding in encodings_to_try:
+            try:
+                logging.info(f"Attempting to read CSV with encoding: {encoding}")
+                df = pd.read_csv(file_path, encoding=encoding)
+                logging.info(f"Successfully loaded CSV with encoding: {encoding}")
+                break
+            except UnicodeDecodeError as e:
+                logging.warning(f"Failed to read with encoding {encoding}: {str(e)}")
+                continue
+            except Exception as e:
+                logging.warning(f"Error reading CSV with encoding {encoding}: {str(e)}")
+                continue
+        else:
+            # If all encodings fail, try with Python engine and error handling as last resort
+            logging.warning("All standard encodings failed, trying with Python engine and error handling")
+            try:
+                df = pd.read_csv(file_path, encoding='latin-1', engine='python', on_bad_lines='skip')
+                logging.info("Successfully loaded CSV with Python engine and latin-1 encoding")
+            except Exception as e:
+                logging.error(f"Failed to read CSV file with all methods: {str(e)}")
+                raise ValueError(f"Could not read CSV file {file_path}. Error: {str(e)}")
     else:
         # Try to infer format from content
         logging.warning(f"Unknown file extension: {file_extension}. Attempting to detect format.")
@@ -107,10 +132,21 @@ def load_data_to_dataframe(file_path: str) -> pd.DataFrame:
                 del table
                 logging.info(f"Successfully read file as Parquet: {file_path}")
             except Exception as e:
-                # If parquet fails, try CSV
+                # If parquet fails, try CSV with various encodings
                 logging.info(f"Parquet read failed, trying CSV: {str(e)}")
-                df = pd.read_csv(file_path)
-                logging.info(f"Successfully read file as CSV: {file_path}")
+                
+                # Try each encoding until successful
+                for encoding in ['utf-8', 'latin-1', 'windows-1252']:
+                    try:
+                        df = pd.read_csv(file_path, encoding=encoding)
+                        logging.info(f"Successfully read file as CSV with encoding {encoding}")
+                        break
+                    except Exception:
+                        continue
+                else:
+                    # Last resort
+                    df = pd.read_csv(file_path, encoding='latin-1', engine='python', on_bad_lines='skip')
+                    logging.info("Successfully read as CSV with Python engine and latin-1 encoding")
         except Exception as e:
             logging.error(f"Failed to read file with auto-detection: {str(e)}")
             raise ValueError(f"Could not determine format for {file_path}. Error: {str(e)}")
