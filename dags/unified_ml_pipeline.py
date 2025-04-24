@@ -353,7 +353,7 @@ def download_data(**context):
             logger.warning(f"Error logging to ClearML: {str(e)}")
         
         try:
-            slack.post(f":white_check_mark: Data accessed from s3://{bucket}/{key}")
+            slack.simple_post(f"✅ Data accessed from s3://{bucket}/{key}", channel="#data-pipeline")
         except Exception as e:
             logger.warning(f"Error sending Slack notification: {str(e)}")
             
@@ -363,7 +363,7 @@ def download_data(**context):
         logger.error(f"Error in download_data task: {str(e)}")
         
         try:
-            slack.post(f":x: Failed to access data: {str(e)}")
+            slack.simple_post(f"❌ Failed to access data: {str(e)}", channel="#data-pipeline")
         except:
             pass
             
@@ -537,7 +537,7 @@ def process_data(**context):
             # Log completion
             logger.info(f"Data processing complete. Output at {processed_path}")
             try:
-                slack.post(f":white_check_mark: Data processing completed: {processed_path}")
+                slack.simple_post(f"✅ Data processing completed: {processed_path}", channel="#data-pipeline")
             except Exception as e:
                 logger.warning(f"Error sending Slack notification: {str(e)}")
                 
@@ -551,7 +551,7 @@ def process_data(**context):
         logger.error(f"Error in process_data task: {str(e)}")
         
         try:
-            slack.post(f":x: Data processing failed: {str(e)}")
+            slack.simple_post(f"❌ Data processing failed: {str(e)}", channel="#data-pipeline")
         except:
             pass
             
@@ -600,7 +600,7 @@ def run_data_quality_checks(**context):
             if quality_passed:
                 logger.info("Data quality checks passed")
                 try:
-                    slack.post(":white_check_mark: Data quality checks passed")
+                    slack.simple_post("✅ Data quality checks passed", channel="#data-pipeline")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
             else:
@@ -608,7 +608,7 @@ def run_data_quality_checks(**context):
                 try:
                     message = quality_results.get('message', 'Unknown issue')
                     issues = quality_results.get('total_issues', 0)
-                    slack.post(f":warning: Data quality checks had {issues} issues: {message}")
+                    slack.simple_post(f"❌ Data quality checks failed: {issues} issues: {message}", channel="#data-pipeline")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
                     
@@ -622,7 +622,7 @@ def run_data_quality_checks(**context):
         logger.error(f"Error in data_quality_checks task: {str(e)}")
         
         try:
-            slack.post(f":x: Data quality checks failed: {str(e)}")
+            slack.simple_post(f"❌ Data quality checks failed: {str(e)}", channel="#data-pipeline")
         except:
             pass
             
@@ -682,17 +682,17 @@ def run_schema_validation(**context):
             if validation_passed:
                 logger.info("Schema validation passed")
                 try:
-                    slack.post(":white_check_mark: Schema validation passed")
+                    slack.simple_post("✅ Schema validation passed", channel="#data-pipeline")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
             else:
                 logger.warning(f"Schema validation failed: {validation_results.get('message', 'Unknown issue')}")
                 try:
                     details = validation_results.get('details', {})
-                    message = f":warning: Schema validation had issues: {validation_results.get('message')}"
+                    message = f"⚠️ Schema validation had issues: {validation_results.get('message', 'Unknown issue')}"
                     if details.get('target_info'):
                         message += f"\n{details.get('target_info')}"
-                    slack.post(message)
+                    slack.simple_post(message, channel="#data-pipeline")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
                     
@@ -706,7 +706,7 @@ def run_schema_validation(**context):
         logger.error(f"Error in schema_validation task: {str(e)}")
         
         try:
-            slack.post(f":x: Schema validation failed: {str(e)}")
+            slack.simple_post(f"❌ Schema validation failed: {str(e)}", channel="#data-pipeline")
         except:
             pass
             
@@ -806,12 +806,7 @@ def check_for_drift(**context):
             
             # Notify about failure but don't raise an exception
             try:
-                slack.post(
-                    channel="#data-pipeline",
-                    title="❌ Drift Detection Failed",
-                    details="No valid processed data path found. Using default drift status (no drift).",
-                    urgency="high"
-                )
+                slack.simple_post("❌ Drift Detection Failed", channel="#data-pipeline")
             except Exception as e:
                 logger.warning(f"Error sending Slack notification: {str(e)}")
                 
@@ -882,23 +877,13 @@ def check_for_drift(**context):
         if drift_detected:
             logger.warning("Data drift detected")
             try:
-                slack.post(
-                    channel="#data-pipeline",
-                    title="⚠️ Data Drift Detected",
-                    details=f"Data drift detected: {drift_results.get('message', 'Unknown issue')}",
-                    urgency="high"
-                )
+                slack.simple_post("⚠️ Data Drift Detected", channel="#data-pipeline")
             except Exception as e:
                 logger.warning(f"Error sending Slack notification: {str(e)}")
         else:
             logger.info("No data drift detected")
             try:
-                slack.post(
-                    channel="#data-pipeline",
-                    title="✅ No Data Drift",
-                    details="No significant data drift detected in the current dataset.",
-                    urgency="normal"
-                )
+                slack.simple_post("✅ No Data Drift", channel="#data-pipeline")
             except Exception as e:
                 logger.warning(f"Error sending Slack notification: {str(e)}")
                 
@@ -920,12 +905,7 @@ def check_for_drift(**context):
         context['ti'].xcom_push(key='drift_detected', value=False)
         
         try:
-            slack.post(
-                channel="#data-pipeline",
-                title="❌ Drift Detection Failed",
-                details=f"Error in drift detection: {str(e)}",
-                urgency="high"
-            )
+            slack.simple_post("❌ Drift Detection Failed", channel="#data-pipeline")
         except Exception as slack_error:
             logger.warning(f"Error sending Slack notification: {str(slack_error)}")
         
@@ -1095,7 +1075,7 @@ def train_models(**context):
                 # Send notification with summary
                 try:
                     emoji = ":white_check_mark:" if completed > 0 else ":warning:"
-                    slack.post(f"{emoji} Training completed: {completed} models trained, {skipped} skipped, {failed} failed")
+                    slack.simple_post(f"{emoji} Training completed: {completed} models trained, {skipped} skipped, {failed} failed", channel="#data-pipeline")
                 except Exception as e:
                     logger.warning(f"Failed to send Slack notification: {str(e)}")
             
@@ -1108,7 +1088,7 @@ def train_models(**context):
             results = {"status": "error", "message": f"Error training models: {str(e)}"}
             context['ti'].xcom_push(key='training_results', value=results)
             try:
-                slack.post(f":warning: Model training encountered errors but pipeline continues: {str(e)}")
+                slack.simple_post("⚠️ Model training encountered errors but pipeline continues", channel="#data-pipeline")
             except:
                 pass
             return results
@@ -1118,7 +1098,7 @@ def train_models(**context):
         logger.exception("Full exception details:")
         
         try:
-            slack.post(f":x: Model training failed: {str(e)}")
+            slack.simple_post("❌ Model training failed", channel="#data-pipeline")
         except:
             pass
         
@@ -1307,7 +1287,7 @@ def run_model_explainability(**context):
             }
             context['ti'].xcom_push(key='explainability_results', value=explainability_results)
             try:
-                slack.post(f":warning: Model explainability encountered an error but pipeline continues: {str(e)}")
+                slack.simple_post("⚠️ Model explainability encountered an error but pipeline continues", channel="#data-pipeline")
             except Exception as slack_error:
                 logger.warning(f"Error sending Slack notification: {str(slack_error)}")
             return explainability_results
@@ -1322,7 +1302,7 @@ def run_model_explainability(**context):
         }
         context['ti'].xcom_push(key='explainability_results', value=explainability_results)
         try:
-            slack.post(f":warning: Model explainability failed but pipeline continues: {str(e)}")
+            slack.simple_post("⚠️ Model explainability failed but pipeline continues", channel="#data-pipeline")
         except Exception as slack_error:
             logger.warning(f"Error sending Slack notification: {str(slack_error)}")
         return explainability_results
@@ -1884,12 +1864,7 @@ def generate_predictions(**context):
             
             # Send notification
             try:
-                slack.post(
-                    channel="#data-pipeline",
-                    title="✅ Future Projections Generated",
-                    details=f"Projections have been generated and uploaded to S3: s3://{bucket}/{s3_key}",
-                    urgency="normal"
-                )
+                slack.simple_post(f"✅ Future Projections Generated", channel="#data-pipeline")
             except Exception as slack_error:
                 logger.warning(f"Error sending Slack notification: {str(slack_error)}")
             
@@ -1906,12 +1881,7 @@ def generate_predictions(**context):
             context['ti'].xcom_push(key='prediction_results', value=prediction_results)
             
             try:
-                slack.post(
-                    channel="#data-pipeline",
-                    title="❌ Failed to Upload Projections",
-                    details=f"Error uploading projections to S3: {str(e)}",
-                    urgency="high"
-                )
+                slack.simple_post(f"❌ Failed to Upload Projections", channel="#data-pipeline")
             except Exception as slack_error:
                 logger.warning(f"Error sending Slack notification: {str(slack_error)}")
             
@@ -2196,6 +2166,11 @@ def wait_for_model_approval(**context):
         training_results = context['ti'].xcom_pull(task_ids='train_models', key='training_results') or {}
         explainability_results = context['ti'].xcom_pull(task_ids='model_explainability', key='explainability_results') or {}
         
+        # Ensure training_results is a dictionary
+        if not isinstance(training_results, dict):
+            logger.warning(f"Training results is not a dictionary: {training_results}")
+            training_results = {"status": "error", "message": str(training_results) if training_results else "No training results"}
+        
         logger.info(f"Training results: {training_results}")
         logger.info(f"Explainability results: {explainability_results}")
         
@@ -2215,13 +2190,13 @@ def wait_for_model_approval(**context):
                     if approval_status == 'approved' or approval_status == 'auto_approved':
                         logger.info("Model approval granted")
                         try:
-                            slack.post(":white_check_mark: Model approval granted")
+                            slack.simple_post("✅ Model approval granted", channel="#data-pipeline")
                         except Exception as e:
                             logger.warning(f"Error sending Slack notification: {str(e)}")
                     elif approval_status == 'rejected':
                         logger.warning("Model approval rejected, continuing anyway")
                         try:
-                            slack.post(":warning: Model approval rejected but pipeline continues")
+                            slack.simple_post("⚠️ Model approval rejected but pipeline continues", channel="#data-pipeline")
                         except Exception as e:
                             logger.warning(f"Error sending Slack notification: {str(e)}")
                     else:
@@ -2250,7 +2225,7 @@ def wait_for_model_approval(**context):
                 "timestamp": datetime.now().isoformat()
             }
             try:
-                slack.post(f":warning: Model approval rejected but pipeline continues: {str(e)}")
+                slack.simple_post(f"⚠️ Model approval rejected but pipeline continues: {str(e)}", channel="#data-pipeline")
             except Exception as slack_error:
                 logger.warning(f"Error sending Slack notification: {str(slack_error)}")
         except Exception as e:
@@ -2262,7 +2237,7 @@ def wait_for_model_approval(**context):
                 "timestamp": datetime.now().isoformat()
             }
             try:
-                slack.post(f":warning: Error in model approval but pipeline continues: {str(e)}")
+                slack.simple_post(f"⚠️ Error in model approval but pipeline continues: {str(e)}", channel="#data-pipeline")
             except Exception as slack_error:
                 logger.warning(f"Error sending Slack notification: {str(slack_error)}")
         
@@ -2286,7 +2261,7 @@ def wait_for_model_approval(**context):
         context['ti'].xcom_push(key='model_approval_result', value=approval_result)
         
         try:
-            slack.post(f":warning: Unexpected error in model_approval but pipeline continues: {str(e)}")
+            slack.simple_post(f"⚠️ Unexpected error in model_approval but pipeline continues: {str(e)}", channel="#data-pipeline")
         except Exception as slack_error:
             logger.warning(f"Error sending Slack notification: {str(slack_error)}")
         

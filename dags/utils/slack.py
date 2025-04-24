@@ -234,6 +234,31 @@ def post(
     """
     return get_manager().post(channel, title, details, urgency)
 
+def simple_post(message: str, channel: str = "#alerts", urgency: str = "normal") -> Dict[str, Any]:
+    """
+    Simplified function to post a message to Slack with just a message string.
+    
+    Args:
+        message: The message to post
+        channel: Slack channel to post to
+        urgency: Message urgency level (normal/high/critical)
+        
+    Returns:
+        Dict[str, Any]: Slack API response
+    """
+    # Split the message into title and details if it contains a newline
+    if "\n" in message:
+        parts = message.split("\n", 1)
+        title = parts[0]
+        details = parts[1]
+    else:
+        # Otherwise use the message as both title and details
+        title = message
+        details = " "  # Use empty space to avoid None
+    
+    # Call the original post function
+    return post(channel, title, details, urgency)
+
 def update_slack_notification_process_with_ui_components():
     """
     Placeholder function to update the Slack notification process with new UI components and endpoints.

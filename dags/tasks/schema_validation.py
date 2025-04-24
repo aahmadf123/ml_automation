@@ -66,15 +66,11 @@ def validate_schema(df: pd.DataFrame) -> Dict[str, Any]:
             # Key input features - mark as potentially optional since some datasets might lack them
             "eey": pa.Column(float, nullable=True, required=False),
             "il_total": pa.Column(float, nullable=True, required=False),
-        }, strict=False)  # Use non-strict mode to allow additional columns
+        }, strict=False)
         
-        # Create custom check to ensure either pure_premium or trgt is present
-        @pa.extensions.check.register_check_method(statistics=["column_names"])
-        def has_target_column(df, *, column_names):
-            return "pure_premium" in column_names or "trgt" in column_names
-        
-        # Add the custom check to the schema
-        schema.add_check(has_target_column())
+        # Manual check to ensure either pure_premium or trgt is present
+        if "pure_premium" not in df.columns and "trgt" not in df.columns:
+            raise ValueError("Schema validation failed: neither 'pure_premium' nor 'trgt' column is present")
         
         # Validate the dataframe against the schema
         schema.validate(df)

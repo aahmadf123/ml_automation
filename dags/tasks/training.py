@@ -724,33 +724,32 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
 # backward‑compatibility alias
 train_xgboost_hyperopt = train_and_compare_fn
 
-def train_multiple_models(processed_path: str, parallel: bool = True, max_workers: int = 3) -> Dict[str, Dict]:
+def train_multiple_models(
+    processed_path: str,
+    parallel: bool = True,
+    max_workers: int = 3,
+    target_column: str = None,
+    weight_column: str = None
+) -> Dict[str, Dict]:
     """
-    Train multiple models in parallel using shared data preparation.
+    Train multiple models on the same dataset with different configurations.
     
     Args:
-        processed_path: Path to processed data file
+        processed_path: Path to the processed data file
         parallel: Whether to train models in parallel
-        max_workers: Maximum number of worker processes for parallel training
+        max_workers: Maximum number of worker processes when parallel=True
+        target_column: Name of the target column (defaults to 'claim_amount' if not specified)
+        weight_column: Name of the weight column (optional)
         
     Returns:
-        Dict mapping model_id to training results
+        Dict mapping model names to their results
     """
-    start_time = time.time()
-    logger.info(f"Starting training for multiple models using data: {processed_path}")
-    
-    # Initialize MLflow
-    mlflow.set_tracking_uri(MLFLOW_URI)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT)
-    
-    # Send notification
-    from utils.slack import post as send_message
-    send_message(
-        channel="#ml-training",
-        title="🚀 Multi-Model Training Started",
-        details=f"Training all 5 models using data from {os.path.basename(processed_path)}",
-        urgency="normal"
-    )
+    logger.info(f"Starting training of multiple models from {processed_path}")
+    logger.info(f"Parallel: {parallel}, Max workers: {max_workers}")
+    if target_column:
+        logger.info(f"Using target column: {target_column}")
+    if weight_column:
+        logger.info(f"Using weight column: {weight_column}")
     
     try:
         # Load data once for all models - shared preparation
@@ -769,7 +768,14 @@ def train_multiple_models(processed_path: str, parallel: bool = True, max_worker
             GLOBAL_CACHE.store_transformed(df, df_name)
         
         # Get target column
-        target_col = "claim_amount"
+        if target_column and target_column in df.columns:
+            target_col = target_column
+            logger.info(f"Using specified target column: {target_col}")
+        else:
+            # Default target column
+            target_col = "claim_amount"
+            if target_column and target_column not in df.columns:
+                logger.warning(f"Specified target column '{target_column}' not found, using default '{target_col}'")
         
         if target_col not in df.columns:
             error_msg = f"Target column '{target_col}' not found in the data"
@@ -779,6 +785,12 @@ def train_multiple_models(processed_path: str, parallel: bool = True, max_worker
         # Split features and target - do this once for all models
         X = df.drop(columns=[target_col])
         y = df[target_col]
+        
+        # Apply weights if provided
+        sample_weight = None
+        if weight_column and weight_column in df.columns:
+            logger.info(f"Using weight column: {weight_column}")
+            sample_weight = df[weight_column].values
         
         # Calculate feature statistics and cache them for future use
         GLOBAL_CACHE.compute_statistics(X, df_name)
