@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { getSecrets } from '../secrets';
 
 interface AirflowDAG {
   dag_id: string;
@@ -25,26 +26,54 @@ interface SlackMessage {
 
 export class IntegrationsService {
   private airflowApiUrl: string;
+  private airflowUsername: string;
+  private airflowPassword: string;
   private mlflowApiUrl: string;
   private slackToken: string;
   private ws: WebSocket | null = null;
+  private initialized: boolean = false;
 
-  constructor(
-    airflowApiUrl: string = process.env.AIRFLOW_API_URL || 'http://localhost:8080',
-    mlflowApiUrl: string = process.env.MLFLOW_API_URL || 'http://localhost:5000',
-    slackToken: string = process.env.SLACK_TOKEN || ''
-  ) {
-    this.airflowApiUrl = airflowApiUrl;
-    this.mlflowApiUrl = mlflowApiUrl;
-    this.slackToken = slackToken;
+  constructor() {
+    // Default values that will be overridden during initialization
+    this.airflowApiUrl = '';
+    this.airflowUsername = '';
+    this.airflowPassword = '';
+    this.mlflowApiUrl = '';
+    this.slackToken = '';
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+    
+    try {
+      const secrets = await getSecrets();
+      this.airflowApiUrl = secrets.AIRFLOW_API_URL;
+      this.airflowUsername = secrets.AIRFLOW_USERNAME;
+      this.airflowPassword = secrets.AIRFLOW_PASSWORD;
+      this.mlflowApiUrl = secrets.MLFLOW_API_URL;
+      this.slackToken = secrets.SLACK_TOKEN;
+      this.initialized = true;
+    } catch (error) {
+      console.error('Failed to initialize IntegrationsService with secrets:', error);
+      throw error;
+    }
+  }
+
+  // Helper method to ensure initialization
+  private async ensureInitialized() {
+    if (!this.initialized) {
+      await this.initialize();
+    }
   }
 
   // Airflow Integration
   async getDAGs(): Promise<AirflowDAG[]> {
+    await this.ensureInitialized();
+    
     try {
       const response = await fetch(`${this.airflowApiUrl}/api/v1/dags`, {
         headers: {
-          'Authorization': `Basic ${Buffer.from(process.env.AIRFLOW_USERNAME + ':' + process.env.AIRFLOW_PASSWORD).toString('base64')}`
+          'Authorization': `Basic ${Buffer.from(this.airflowUsername + ':' + this.airflowPassword).toString('base64')}`
         }
       });
       const data = await response.json();
@@ -56,12 +85,14 @@ export class IntegrationsService {
   }
 
   async triggerDAG(dagId: string, conf?: Record<string, any>): Promise<boolean> {
+    await this.ensureInitialized();
+    
     try {
       const response = await fetch(`${this.airflowApiUrl}/api/v1/dags/${dagId}/dagRuns`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Basic ${Buffer.from(process.env.AIRFLOW_USERNAME + ':' + process.env.AIRFLOW_PASSWORD).toString('base64')}`
+          'Authorization': `Basic ${Buffer.from(this.airflowUsername + ':' + this.airflowPassword).toString('base64')}`
         },
         body: JSON.stringify({ conf: conf || {} })
       });
@@ -74,6 +105,8 @@ export class IntegrationsService {
 
   // MLflow Integration
   async getExperiments(): Promise<any[]> {
+    await this.ensureInitialized();
+    
     try {
       const response = await fetch(`${this.mlflowApiUrl}/api/2.0/mlflow/experiments/list`);
       const data = await response.json();
@@ -85,6 +118,8 @@ export class IntegrationsService {
   }
 
   async getRuns(experimentId: string): Promise<MLflowRun[]> {
+    await this.ensureInitialized();
+    
     try {
       const response = await fetch(`${this.mlflowApiUrl}/api/2.0/mlflow/runs/search`, {
         method: 'POST',
@@ -106,6 +141,8 @@ export class IntegrationsService {
 
   // Slack Integration
   async sendSlackMessage(message: SlackMessage): Promise<boolean> {
+    await this.ensureInitialized();
+    
     if (!this.slackToken) {
       console.warn('Slack token not configured');
       return false;
@@ -129,8 +166,13 @@ export class IntegrationsService {
   }
 
   // WebSocket connection for real-time updates
-  connectWebSocket() {
-    this.ws = new WebSocket('ws://localhost:8000/ws/metrics');
+  async connectWebSocket() {
+    await this.ensureInitialized();
+    
+    // The WebSocket endpoint might also come from secrets
+    const wsEndpoint = process.env.WEBSOCKET_ENDPOINT || 'ws://localhost:8000/ws/metrics';
+    
+    this.ws = new WebSocket(wsEndpoint);
 
     this.ws.on('open', () => {
       console.log('Connected to WebSocket server');

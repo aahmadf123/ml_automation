@@ -1,12 +1,6 @@
 import { NextResponse } from 'next/server'
 import { AirflowClient } from '@/lib/airflow'
 
-const airflowClient = new AirflowClient({
-  baseUrl: process.env.AIRFLOW_API_URL || 'http://localhost:8080',
-  username: process.env.AIRFLOW_USERNAME || 'airflow',
-  password: process.env.AIRFLOW_PASSWORD || 'airflow'
-})
-
 export async function POST(request: Request) {
   try {
     const { modelId } = await request.json()
@@ -17,6 +11,9 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+
+    // Get a client from secrets
+    const airflowClient = await AirflowClient.fromSecrets()
 
     // Trigger the retraining DAG
     const response = await airflowClient.triggerDag({

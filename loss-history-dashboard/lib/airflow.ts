@@ -22,6 +22,19 @@ export class AirflowClient {
     this.auth = Buffer.from(`${config.username}:${config.password}`).toString('base64')
   }
 
+  // Static factory method to create client from secrets
+  static async fromSecrets(): Promise<AirflowClient> {
+    // For server-side use, import dynamically to avoid client-side bundling
+    const { getSecrets } = await import('./secrets');
+    const secrets = await getSecrets();
+    
+    return new AirflowClient({
+      baseUrl: secrets.AIRFLOW_API_URL,
+      username: secrets.AIRFLOW_USERNAME,
+      password: secrets.AIRFLOW_PASSWORD
+    });
+  }
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
