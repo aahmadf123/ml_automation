@@ -17,6 +17,8 @@ import {
   GitCompare,
   Workflow,
   ChevronDown,
+  PieChart,
+  TrendingUp,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
@@ -34,9 +36,9 @@ interface NavGroup {
   items: NavItem[]
 }
 
-export function DashboardSidebar() {
+export default function DashboardSidebar() {
   const pathname = usePathname()
-  const [expandedGroups, setExpandedGroups] = useState<string[]>(["monitoring", "models"])
+  const [expandedGroups, setExpandedGroups] = useState<string[]>(["monitoring", "models", "analytics"])
 
   const isActive = (path: string) => {
     return pathname === path
@@ -59,6 +61,23 @@ export function DashboardSidebar() {
           href: "/",
           icon: Home,
           active: isActive("/"),
+        },
+      ],
+    },
+    {
+      title: "Analytics",
+      items: [
+        {
+          title: "Business Insights",
+          href: "/business-insights",
+          icon: TrendingUp,
+          active: isActive("/business-insights"),
+        },
+        {
+          title: "Visualizations",
+          href: "/visualizations",
+          icon: BarChart3,
+          active: isActive("/visualizations"),
         },
       ],
     },
@@ -122,12 +141,6 @@ export function DashboardSidebar() {
           href: "/data-ingestion",
           icon: Database,
           active: isActive("/data-ingestion"),
-        },
-        {
-          title: "Visualizations",
-          href: "/visualizations",
-          icon: BarChart3,
-          active: isActive("/visualizations"),
         },
       ],
     },

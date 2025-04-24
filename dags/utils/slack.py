@@ -241,6 +241,61 @@ def update_slack_notification_process_with_ui_components():
     logging.info("Updating Slack notification process with new UI components and endpoints.")
     # Placeholder for actual implementation
 
+def ensure_default_channels() -> Dict[str, bool]:
+    """
+    Ensure that default notification channels exist in Slack.
+    If they don't exist, messages will fall back to #general or logging.
+    
+    Returns:
+        Dict mapping channel names to whether they exist
+    """
+    manager = get_manager()
+    
+    # Default channels for different message types
+    default_channels = [
+        "#data-pipeline",  # Primary channel for data pipeline notifications
+        "#alerts",         # Channel for urgent alerts
+        "#ml-approvals"    # Channel for approval requests
+    ]
+    
+    results = {}
+    
+    # Check and log each channel's availability
+    for channel in default_channels:
+        exists = manager.validate_channel(channel)
+        log.info(f"Slack channel {channel} {'exists' if exists else 'does not exist'}")
+        results[channel] = exists
+        
+        # If channel doesn't exist, try to determine if we have permissions to create it
+        if not exists:
+            try:
+                # Try to create the channel if we have sufficient permissions
+                log.info(f"Attempting to create channel {channel}")
+                # Note: This requires the channels:write scope
+                # This may fail if the app doesn't have sufficient permissions
+                response = manager._client.conversations_create(
+                    name=channel.lstrip('#'),
+                    is_private=False
+                )
+                
+                if response['ok']:
+                    log.info(f"Successfully created channel {channel}")
+                    results[channel] = True
+                else:
+                    log.warning(f"Failed to create channel {channel}: {response.get('error', 'Unknown error')}")
+            except Exception as e:
+                log.warning(f"Failed to create channel {channel}: {str(e)}")
+                # Fall back to more reliable channels
+                log.info(f"Messages meant for {channel} will be sent to #general or logged only")
+    
+    return results
+
+# Call this function on module import to ensure channels exist
+try:
+    ensure_default_channels()
+except Exception as e:
+    log.warning(f"Failed to ensure default channels: {str(e)}")
+
 # backwards‐compatible aliases
 send_message = post
 post_message = post

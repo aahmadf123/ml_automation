@@ -6,19 +6,24 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { UserButton } from "@/components/ui/user-button"
 
-export function DashboardHeader() {
+interface DashboardHeaderProps {
+  title?: string
+}
+
+export default function DashboardHeader({ title = "Dashboard" }: DashboardHeaderProps) {
   return (
     <header className="sticky top-0 z-50 flex h-16 items-center justify-between border-b bg-background px-4 md:px-6 lg:pl-64">
-      <div className="flex items-center gap-2 md:hidden">
-        <Link href="/" className="flex items-center gap-2">
+      <div className="flex items-center gap-2 md:mr-auto">
+        <Link href="/" className="flex items-center gap-2 md:hidden">
           <span className="text-xl font-bold">Loss History Agent</span>
           <Badge variant="outline" className="bg-green-500 text-white">
             Live
           </Badge>
         </Link>
+        <h1 className="hidden text-xl font-bold md:block">{title}</h1>
       </div>
 
-      <div className="flex items-center gap-4 md:ml-auto">
+      <div className="flex items-center gap-4">
         <Button variant="outline" size="sm">
           Test Grouped Notifications
         </Button>
