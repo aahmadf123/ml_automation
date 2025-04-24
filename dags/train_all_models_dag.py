@@ -24,7 +24,6 @@ from airflow.providers.amazon.aws.operators.s3 import S3CopyObjectOperator
 # Import necessary modules - use direct imports
 import tasks.data_prep as data_prep
 import tasks.training as training
-import tasks.archiving as archiving
 import tasks.model_comparison as model_comparison
 import utils.config as config
 

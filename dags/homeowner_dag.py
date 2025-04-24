@@ -159,7 +159,7 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
     
     reference_task = PythonOperator(
         task_id='generate_reference_means',
-        python_callable=monitoring.generate_reference_means,
+        python_callable=drift.generate_reference_means,
         op_kwargs={
             'processed_data_path': LOCAL_PROCESSED_PATH
         },
