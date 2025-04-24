@@ -12,6 +12,7 @@ pandera==0.17.1
 pyarrow==14.0.2
 smart_open[s3]==6.4.0
 swifter[notebook,groupby]==1.4.0
+packaging==23.2
 
 # Experiment tracking & HPO
 mlflow==2.8.1
