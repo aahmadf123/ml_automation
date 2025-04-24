@@ -1509,49 +1509,234 @@ def generate_predictions(**context):
                                         
                                     # Create decile analysis plot and data
                                     try:
-                                        # Create decile buckets based on predictions
-                                        df_eval = pd.DataFrame({'actual': y, 'predicted': predictions})
-                                        df_eval['decile'] = pd.qcut(df_eval['predicted'], 10, labels=False) + 1
+                                        # Create a prior_loss_ind indicator if needed
+                                        # First, identify loss history columns for the current model
+                                        model_id_lower = best_model_id.lower().split('_')[0] if '_' in best_model_id else best_model_id.lower()
                                         
-                                        # Calculate average values by decile
-                                        decile_analysis = df_eval.groupby('decile').agg({
+                                        # Get feature prefixes for this model
+                                        if model_id_lower == 'model1':
+                                            feature_prefixes = ["num_loss_3yr_", "num_loss_yrs45_", "num_loss_free_yrs_"]
+                                        elif model_id_lower == 'model2':
+                                            feature_prefixes = ["lhdwc_5y_1d_"]
+                                        elif model_id_lower == 'model3':
+                                            feature_prefixes = ["lhdwc_5y_2d_"]
+                                        elif model_id_lower == 'model4':
+                                            feature_prefixes = ["lhdwc_5y_3d_"]
+                                        elif model_id_lower == 'model5':
+                                            feature_prefixes = ["lhdwc_5y_4d_"]
+                                        else:
+                                            feature_prefixes = []
+                                            
+                                        # Identify model columns
+                                        model_columns = []
+                                        for prefix in feature_prefixes:
+                                            model_columns.extend([col for col in X.columns if col.startswith(prefix)])
+                                        
+                                        if model_columns:
+                                            # Create prior_loss_ind (1 if no prior loss, 0 if has prior loss)
+                                            is_no_prior_loss = (X[model_columns].sum(axis=1) == 0).astype(int)
+                                        else:
+                                            # Fallback if model columns not found - check for total loss columns
+                                            potential_cols = ["num_loss_3yr_total", "lhdwc_5y_1d_total", 
+                                                             "lhdwc_5y_2d_total", "lhdwc_5y_3d_total", "lhdwc_5y_4d_total"]
+                                            for col in potential_cols:
+                                                if col in X.columns:
+                                                    is_no_prior_loss = (X[col] == 0).astype(int)
+                                                    break
+                                            else:
+                                                # If we can't determine prior loss, use a dummy value
+                                                logger.warning("Could not determine prior loss status, using dummy values")
+                                                is_no_prior_loss = pd.Series(0, index=X.index)
+                                        
+                                        # Calculate sample weights
+                                        # Use 'eey' if available as weight, otherwise use 1.0
+                                        if 'eey' in X.columns:
+                                            weights = X['eey']
+                                        elif 'wt' in X.columns:
+                                            weights = X['wt']
+                                        else:
+                                            weights = pd.Series(1.0, index=X.index)
+                                                
+                                        # Create dataframe for analysis
+                                        df_eval = pd.DataFrame({
+                                            'actual': y,
+                                            'predicted': predictions,
+                                            'prior_loss_ind': is_no_prior_loss,
+                                            'wt': weights
+                                        })
+                                        
+                                        # Split data into records with and without prior claims
+                                        rslta = df_eval.loc[df_eval['prior_loss_ind'] == 1].copy()  # No prior claims
+                                        rsltb = df_eval.loc[df_eval['prior_loss_ind'] == 0].copy()  # With prior claims
+                                        
+                                        # Sort records with prior claims by predicted target
+                                        rsltb.sort_values(by='predicted', ascending=True, inplace=True)
+                                        
+                                        # Create bins/groups for records with prior claims
+                                        num_bins = 4  # We can adjust this as needed
+                                        
+                                        # Calculate cumulative weights
+                                        if len(rsltb) > 0:
+                                            cumulative_weights = rsltb['wt'].cumsum() / rsltb['wt'].sum()
+                                            
+                                            # Cap cumulative weights at 1 to prevent exceeding num_bins
+                                            cumulative_weights = np.minimum(cumulative_weights, 1)
+                                            
+                                            # Assign groups, ensuring they don't exceed num_bins
+                                            rsltb['grp'] = (cumulative_weights * num_bins).apply(np.ceil).astype(int)
+                                            rsltb['grp'] = rsltb['grp'].clip(upper=num_bins)
+                                        
+                                        # Assign group 0 to records with no prior claims
+                                        rslta['grp'] = 0
+                                        
+                                        # Combine the DataFrames
+                                        if len(rsltb) > 0:
+                                            rslt_combined = pd.concat([rslta, rsltb], ignore_index=True)
+                                        else:
+                                            rslt_combined = rslta.copy()
+                                            
+                                        # Calculate 'act_loss' and 'pred_loss'
+                                        rslt_combined['act_loss'] = rslt_combined['actual'] * rslt_combined['wt']
+                                        rslt_combined['pred_loss'] = rslt_combined['predicted'] * rslt_combined['wt']
+                                        
+                                        # Rebalance, so that total predicted loss = total actual loss
+                                        if rslt_combined['pred_loss'].sum() != 0:
+                                            rebalance_factor = rslt_combined['act_loss'].sum() / rslt_combined['pred_loss'].sum()
+                                            rslt_combined['pred_loss'] = rslt_combined['pred_loss'] * rebalance_factor
+                                        
+                                        # Aggregate by 'grp'
+                                        decile_analysis = rslt_combined.groupby('grp').agg({
+                                            'wt': 'sum',
+                                            'act_loss': 'sum',
+                                            'pred_loss': 'sum'
+                                        }).reset_index()
+                                        
+                                        # Calculate average targets
+                                        decile_analysis['actual'] = decile_analysis['act_loss'] / decile_analysis['wt']
+                                        decile_analysis['predicted'] = decile_analysis['pred_loss'] / decile_analysis['wt']
+                                        
+                                        # Save to CSV and log
+                                        decile_path = "/tmp/insurance_decile_analysis.csv"
+                                        decile_analysis.to_csv(decile_path, index=False)
+                                        mlflow.log_artifact(decile_path, "decile_analysis")
+                                        
+                                        # Create more detailed insurance-specific decile plot
+                                        plt.figure(figsize=(14, 8))
+                                        
+                                        # Define custom colors and plotting style
+                                        actual_color = '#22c55e'  # Green
+                                        predicted_color = '#3b82f6'  # Blue
+                                        
+                                        # Sort by group for plotting
+                                        decile_analysis = decile_analysis.sort_values('grp')
+                                        
+                                        # Create bar chart
+                                        bar_width = 0.35
+                                        index = np.arange(len(decile_analysis))
+                                        
+                                        plt.bar(index, decile_analysis['predicted'], bar_width, 
+                                                label='Predicted', color=predicted_color, alpha=0.8)
+                                        plt.bar(index + bar_width, decile_analysis['actual'], bar_width, 
+                                                label='Actual', color=actual_color, alpha=0.8)
+                                        
+                                        # Add percentage difference labels
+                                        for i, (_, row) in enumerate(decile_analysis.iterrows()):
+                                            if row['predicted'] != 0:
+                                                pct_diff = ((row['actual'] / row['predicted']) - 1) * 100
+                                                if abs(pct_diff) >= 1.0:  # Only show if 1% or greater difference
+                                                    plt.text(i + bar_width/2, max(row['predicted'], row['actual']) + 0.01, 
+                                                            f"{pct_diff:.1f}%", ha='center', va='bottom', fontsize=9)
+                                        
+                                        # Group labels
+                                        group_labels = []
+                                        for grp in decile_analysis['grp']:
+                                            if grp == 0:
+                                                group_labels.append("No Prior\nClaims")
+                                            else:
+                                                group_labels.append(f"Group {grp}\n(Prior Claims)")
+                                        
+                                        # Customize plot appearance
+                                        plt.xlabel('Risk Group', fontsize=12)
+                                        plt.ylabel('Average Pure Premium', fontsize=12)
+                                        plt.title('Insurance Risk Segmentation: Actual vs. Predicted Pure Premium by Group', 
+                                                fontsize=14)
+                                        plt.xticks(index + bar_width / 2, group_labels)
+                                        plt.legend(fontsize=10)
+                                        plt.tight_layout()
+                                        
+                                        # Add explanatory annotation
+                                        plt.figtext(0.5, 0.01, 
+                                                    'Group 0: Policies with no prior claims\nGroups 1-4: Policies with prior claims, '
+                                                    'segmented by predicted severity (1=lowest, 4=highest)',
+                                                    ha='center', fontsize=9, style='italic')
+                                        
+                                        # Save insurance-specific plot
+                                        decile_plot_path = "/tmp/insurance_decile_analysis.png"
+                                        plt.savefig(decile_plot_path, dpi=120, bbox_inches='tight')
+                                        plt.close()
+                                        
+                                        mlflow.log_artifact(decile_plot_path, "decile_analysis")
+                                        logger.info(f"Logged insurance-specific decile analysis to MLflow")
+                                        
+                                        # Also create traditional decile analysis for comparison
+                                        df_eval['decile'] = pd.qcut(df_eval['predicted'], 10, labels=False) + 1
+                                        trad_decile = df_eval.groupby('decile').agg({
                                             'actual': 'mean',
                                             'predicted': 'mean'
                                         }).reset_index()
                                         
-                                        # Save to CSV and log
-                                        decile_path = "/tmp/decile_analysis.csv"
-                                        decile_analysis.to_csv(decile_path, index=False)
-                                        mlflow.log_artifact(decile_path, "decile_analysis")
+                                        # Save traditional decile analysis
+                                        trad_path = "/tmp/traditional_decile_analysis.csv"
+                                        trad_decile.to_csv(trad_path, index=False)
+                                        mlflow.log_artifact(trad_path, "decile_analysis")
                                         
-                                        # Create decile plot
-                                        plt.figure(figsize=(12, 7))
-                                        bar_width = 0.35
-                                        index = np.arange(len(decile_analysis))
-                                        
-                                        plt.bar(index, decile_analysis['predicted'], bar_width, label='Predicted', color='blue', alpha=0.7)
-                                        plt.bar(index + bar_width, decile_analysis['actual'], bar_width, label='Actual', color='green', alpha=0.7)
-                                        
-                                        plt.xlabel('Decile')
-                                        plt.ylabel('Average Value')
-                                        plt.title('Predicted vs Actual by Decile')
-                                        plt.xticks(index + bar_width / 2, decile_analysis['decile'])
-                                        plt.legend()
-                                        
-                                        # Add labels for prediction accuracy
-                                        for i, (_, row) in enumerate(decile_analysis.iterrows()):
-                                            accuracy = abs(row['actual'] / row['predicted'] - 1) * 100
-                                            plt.text(i + bar_width/2, max(row['predicted'], row['actual']), 
-                                                    f"{accuracy:.1f}%", ha='center', va='bottom')
-                                        
-                                        decile_plot_path = "/tmp/decile_analysis.png"
-                                        plt.savefig(decile_plot_path)
-                                        plt.close()
-                                        
-                                        mlflow.log_artifact(decile_plot_path, "decile_analysis")
-                                        logger.info(f"Logged decile analysis to MLflow")
                                     except Exception as decile_err:
-                                        logger.warning(f"Error creating decile analysis: {str(decile_err)}")
+                                        logger.warning(f"Error creating insurance-specific decile analysis: {str(decile_err)}")
+                                        # Fallback to traditional decile analysis if insurance-specific approach fails
+                                        try:
+                                            # Create decile buckets based on predictions
+                                            df_eval = pd.DataFrame({'actual': y, 'predicted': predictions})
+                                            df_eval['decile'] = pd.qcut(df_eval['predicted'], 10, labels=False) + 1
+                                            
+                                            # Calculate average values by decile
+                                            decile_analysis = df_eval.groupby('decile').agg({
+                                                'actual': 'mean',
+                                                'predicted': 'mean'
+                                            }).reset_index()
+                                            
+                                            # Save to CSV and log
+                                            decile_path = "/tmp/decile_analysis.csv"
+                                            decile_analysis.to_csv(decile_path, index=False)
+                                            mlflow.log_artifact(decile_path, "decile_analysis")
+                                            
+                                            # Create decile plot
+                                            plt.figure(figsize=(12, 7))
+                                            bar_width = 0.35
+                                            index = np.arange(len(decile_analysis))
+                                            
+                                            plt.bar(index, decile_analysis['predicted'], bar_width, label='Predicted', color='blue', alpha=0.7)
+                                            plt.bar(index + bar_width, decile_analysis['actual'], bar_width, label='Actual', color='green', alpha=0.7)
+                                            
+                                            plt.xlabel('Decile')
+                                            plt.ylabel('Average Value')
+                                            plt.title('Predicted vs Actual by Decile')
+                                            plt.xticks(index + bar_width / 2, decile_analysis['decile'])
+                                            plt.legend()
+                                            
+                                            # Add labels for prediction accuracy
+                                            for i, (_, row) in enumerate(decile_analysis.iterrows()):
+                                                accuracy = abs(row['actual'] / row['predicted'] - 1) * 100
+                                                plt.text(i + bar_width/2, max(row['predicted'], row['actual']), 
+                                                        f"{accuracy:.1f}%", ha='center', va='bottom')
+                                            
+                                            decile_plot_path = "/tmp/decile_analysis.png"
+                                            plt.savefig(decile_plot_path)
+                                            plt.close()
+                                            
+                                            mlflow.log_artifact(decile_plot_path, "decile_analysis")
+                                            logger.info(f"Logged traditional decile analysis to MLflow (fallback)")
+                                        except Exception as fallback_err:
+                                            logger.warning(f"Error creating fallback decile analysis: {str(fallback_err)}")
                             except Exception as metrics_err:
                                 logger.warning(f"Error calculating metrics: {str(metrics_err)}")
                         except Exception as pred_err:

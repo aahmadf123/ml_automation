@@ -282,6 +282,54 @@ def process_column_group(df, columns, process_func):
     return result
 
 
+@cache_result
+def create_prior_loss_indicator(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create a prior_loss_ind feature that indicates whether a policy has any prior losses.
+    1 means no prior losses (loss-free), 0 means has prior losses.
+    
+    This is an important feature for insurance rating and risk segmentation.
+    """
+    model_id = (
+        os.getenv("MODEL_ID")
+        or Variable.get("MODEL_ID", default_var="model1")
+    ).strip().lower()
+    
+    # Get model-specific loss history columns
+    if model_id == "model1":
+        model_columns = [col for col in df.columns if any(col.startswith(p) for p in RAW_PREFIXES)]
+        # Special handling for model1 which often uses loss_free_yrs_total
+        if 'loss_free_yrs_total' in df.columns:
+            df['prior_loss_ind'] = (df['loss_free_yrs_total'] == 5).astype(int)
+            logging.info("Created prior_loss_ind based on loss_free_yrs_total")
+            return df
+    elif model_id in DECAY_PREFIXES:
+        prefix = DECAY_PREFIXES[model_id][0]
+        model_columns = [col for col in df.columns if col.startswith(prefix)]
+    else:
+        # Try to find any loss history columns
+        prefixes = RAW_PREFIXES + sum(DECAY_PREFIXES.values(), [])
+        model_columns = [col for col in df.columns if any(col.startswith(p) for p in prefixes)]
+    
+    # If we found relevant columns, create the indicator
+    if model_columns:
+        df['prior_loss_ind'] = (df[model_columns].sum(axis=1) == 0).astype(int)
+        logging.info(f"Created prior_loss_ind based on {len(model_columns)} loss history columns")
+    else:
+        # If no relevant columns found, check for summary columns
+        total_cols = [col for col in df.columns if col.endswith('_total') and any(
+            col.startswith(p) for p in prefixes)]
+        if total_cols:
+            df['prior_loss_ind'] = (df[total_cols].sum(axis=1) == 0).astype(int)
+            logging.info(f"Created prior_loss_ind based on {len(total_cols)} summary columns")
+        else:
+            # Default to 0 if we can't determine
+            df['prior_loss_ind'] = 0
+            logging.warning("Could not find loss history columns to create prior_loss_ind, defaulting to 0")
+    
+    return df
+
+
 def preprocess_data(data_path, output_path, force_reprocess=False):
     """
     Main preprocessing function that orchestrates all data transformation steps.
@@ -378,11 +426,15 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
     logger.info("Selecting model-specific features")
     df = select_model_features(df)
     
-    # 10. Generate final profile report
+    # 10. Create prior loss indicator (insurance-specific feature)
+    logger.info("Creating prior loss indicator")
+    df = create_prior_loss_indicator(df)
+    
+    # 11. Generate final profile report
     logger.info("Generating final profile report")
     generate_profile_report(df, PROFILE_REPORT_PATH)
     
-    # 11. Calculate correlations
+    # 12. Calculate correlations
     logger.info("Analyzing feature correlations")
     target_col = "pure_premium" if "pure_premium" in df.columns else None
     if target_col:
@@ -390,7 +442,7 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
         top_correlations = correlations.abs().sort_values(ascending=False).head(10)
         logger.info(f"Top correlations with {target_col}: \n{top_correlations}")
     
-    # 12. Save processed data
+    # 13. Save processed data
     logger.info(f"Saving processed data to {output_path}")
     
     # Get directory of output path
@@ -401,7 +453,7 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
     # Use efficient Parquet writing
     df.to_parquet(output_path, index=False, compression="snappy")
     
-    # 13. Validate final schema
+    # 14. Validate final schema
     try:
         logger.info("Validating final data schema")
         validate_schema(df)
@@ -409,7 +461,7 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
     except Exception as e:
         logger.warning(f"Schema validation failed: {str(e)}")
     
-    # 14. Log summary statistics
+    # 15. Log summary statistics
     final_shape = df.shape
     elapsed_time = time.time() - start_time
     
@@ -425,7 +477,7 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
     logger.info(f"Preprocessing completed in {elapsed_time:.2f} seconds")
     logger.info(f"Summary: {summary}")
     
-    # 15. Upload profile report to S3 if configured
+    # 16. Upload profile report to S3 if configured
     try:
         s3_bucket = os.getenv("REPORTS_BUCKET")
         if s3_bucket:
@@ -436,7 +488,7 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
     except Exception as e:
         logger.error(f"Failed to upload profile report: {str(e)}")
     
-    # 16. Send notification about completion
+    # 17. Send notification about completion
     try:
         message = f"✅ Preprocessing completed\n• Rows: {orig_shape[0]} → {final_shape[0]}\n• Columns: {orig_shape[1]} → {final_shape[1]}\n• Time: {elapsed_time:.2f}s"
         send_message(message, "#data-pipeline")

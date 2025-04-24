@@ -123,8 +123,33 @@ DRIFT_THRESHOLD = float(get_ssm_parameter('DRIFT_THRESHOLD', '0.1'))
 validate_numeric_parameter('DRIFT_THRESHOLD', DRIFT_THRESHOLD, 0, 1)
 
 # ─── MLFLOW CONFIG ────────────────────────────────────────────────────────────
-MLFLOW_URI          = get_ssm_parameter('MLFLOW_TRACKING_URI')
-MLFLOW_EXPERIMENT   = Variable.get(
+# Get MLflow tracking URI with fallback to local storage
+try:
+    MLFLOW_URI = get_ssm_parameter('MLFLOW_TRACKING_URI')
+    # Test if the URI is valid
+    if not MLFLOW_URI or not MLFLOW_URI.strip():
+        logger.warning("MLflow tracking URI is empty, using local storage")
+        MLFLOW_URI = "file:/tmp/mlruns"
+except Exception as e:
+    logger.warning(f"Failed to get MLflow tracking URI: {str(e)}, using local storage")
+    MLFLOW_URI = "file:/tmp/mlruns"
+
+# Get artifact store URI with fallback to S3 bucket path
+MLFLOW_ARTIFACT_URI = get_ssm_parameter(
+    'MLFLOW_ARTIFACT_URI', 
+    's3://grange-seniordesign-bucket/mlflow-artifacts/'
+)
+
+# Get database URI with fallback to SQLite
+MLFLOW_DB_URI = get_ssm_parameter(
+    'MLFLOW_DB_URI', 
+    'sqlite:////tmp/mlflow.db'
+)
+
+# Get model registry URI, defaults to tracking URI if not specified
+MODEL_REGISTRY_URI = get_ssm_parameter('MODEL_REGISTRY_URI', MLFLOW_URI)
+
+MLFLOW_EXPERIMENT = Variable.get(
     "MLFLOW_EXPERIMENT_NAME",
     default_var="Homeowner_Loss_Hist_Proj"
 )
@@ -133,6 +158,11 @@ MLFLOW_EXPERIMENT   = Variable.get(
 DEFAULT_START_DATE   = "2025-01-01"
 SCHEDULE_CRON        = "0 10 * * *"  # daily at 10 AM
 AIRFLOW_DAG_BASE_CONF= {}
+
+# MODEL APPROVAL CONFIGURATION
+# Note: Set only one of these to True based on your desired workflow
+AUTO_APPROVE_MODEL = Variable.get("AUTO_APPROVE_MODEL", default_var="True").lower() == "true"
+REQUIRE_MODEL_APPROVAL = not AUTO_APPROVE_MODEL  # Inverse of auto approve
 
 # ─── SLACK CONFIG ────────────────────────────────────────────────────────────
 SLACK_WEBHOOK_URL    = get_ssm_parameter('SLACK_WEBHOOK_URL')

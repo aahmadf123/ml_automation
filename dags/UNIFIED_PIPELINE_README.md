@@ -222,3 +222,43 @@ The following files have been removed as they are no longer needed:
 ### Simplified Components
 
 - Eliminated redundancy between `preprocessing.py` and `data_prep.py`
+
+## Insurance-Specific Risk Segmentation
+
+The pipeline implements an insurance-industry specific approach to risk segmentation that provides more meaningful insights than traditional decile analysis:
+
+### Prior Claims Segmentation
+
+Rather than simply dividing predictions into deciles, the pipeline:
+
+1. **Separates policies by prior claims status**:
+   - Group 0: Policies with no prior claims
+   - Groups 1-4: Policies with prior claims, divided into quartiles by predicted pure premium
+
+2. **Uses weighted segmentation**:
+   - Groups are created based on earned exposure years (EEY) rather than just record count
+   - This ensures that each non-zero group represents an equal portion of the insured risk 
+
+3. **Calibrates predicted losses**:
+   - Rebalances predicted losses to match total actual losses
+   - Provides more accurate comparisons between actual and predicted values
+
+This approach is more aligned with insurance actuarial practices and provides better insights into:
+- The performance of the model on loss-free policies vs. policies with prior claims
+- How well the model predicts across different risk segments
+- Whether the model is over or under-predicting in specific segments
+
+### Implementation Details
+
+The insurance-specific decile analysis is implemented in two places:
+
+1. **Preprocessing**: The `create_prior_loss_indicator` function creates the `prior_loss_ind` feature
+   - 1 = no prior claims, 0 = has prior claims
+   - Used to separate policies in the risk segmentation
+
+2. **Prediction Analysis**: The modified decile generation code in `generate_predictions`
+   - Creates the insurance-specific risk groups
+   - Generates weighted analysis by group
+   - Produces specialized visualizations that highlight the differences between groups
+
+This approach is more useful for insurance pricing and risk assessment than traditional decile analysis, as it directly addresses how insurers typically segment their portfolios.

@@ -280,7 +280,12 @@ def ensure_default_channels() -> Dict[str, bool]:
     default_channels = [
         "#data-pipeline",  # Primary channel for data pipeline notifications
         "#alerts",         # Channel for urgent alerts
-        "#ml-approvals"    # Channel for approval requests
+        "#ml-approvals",   # Channel for approval requests
+        "#fix-proposals",  # Channel for fix proposals
+        "#incidents",      # Channel for incidents
+        "#data-engineering",# Channel for data engineering
+        "#ml-training",    # Channel for ml training
+        "#general"         # Fallback channel
     ]
     
     results = {}
@@ -324,3 +329,17 @@ except Exception as e:
 # backwards‐compatible aliases
 send_message = post
 post_message = post
+
+# Default settings
+DEFAULT_CHANNEL = "#alerts"
+DEFAULT_CHANNELS = [
+    "#alerts", 
+    "#data-pipeline", 
+    "#ml-approvals", 
+    "#fix-proposals", 
+    "#incidents", 
+    "#data-engineering", 
+    "#ml-training",
+    "#general"
+]
+DEFAULT_TIMEOUT = 10  # seconds

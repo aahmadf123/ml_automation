@@ -56,6 +56,13 @@ def validate_schema(df: pd.DataFrame) -> Dict[str, Any]:
             logger.info("Using 'trgt' as 'pure_premium' for schema validation")
             df['pure_premium'] = df['trgt']
         
+        # Convert float32 columns to float64 if needed
+        float_columns = ['eey', 'il_total', 'trgt', 'pure_premium', 'wt']
+        for col in float_columns:
+            if col in df.columns and df[col].dtype == 'float32':
+                logger.info(f"Converting column '{col}' from float32 to float64")
+                df[col] = df[col].astype('float64')
+        
         # Define the schema - focused on key columns
         # This is a simplified schema that checks only the most important columns
         schema = pa.DataFrameSchema({
