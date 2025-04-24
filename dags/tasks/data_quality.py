@@ -1,427 +1,830 @@
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Union
 from datetime import datetime, timedelta
 from scipy import stats
 import mlflow
 import gc
 from utils.cache import GLOBAL_CACHE, cache_result
 import os
+import warnings
+
+# Suppress warnings during data quality checks
+warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 logger = logging.getLogger(__name__)
 
 class DataQualityMonitor:
-    def __init__(self, config: Dict = None):
-        self.config = config or {
-            'missing_threshold': 0.05,
-            'outlier_threshold': 3.0,
-            'drift_threshold': 0.1,
-            'correlation_threshold': 0.7
-        }
-        self.history = []
-        self.baseline_stats = None
-        
-    def calculate_basic_stats(self, df: pd.DataFrame) -> Dict:
-        """Calculate basic statistics for each column with memory optimization."""
-        # Use the global cache instead of recalculating
-        df_name = f"data_quality_{id(df)}"
-        return GLOBAL_CACHE.compute_statistics(df, df_name)
+    """Monitor for data quality checks and drift detection.
+    Optimized for memory efficiency with large datasets."""
     
-    @cache_result
-    def detect_missing_values(self, df: pd.DataFrame) -> Dict:
-        """Detect missing values above threshold with memory optimization."""
-        missing = {}
+    def __init__(self, 
+                 reference_data_path=None, 
+                 missing_value_threshold=0.05, 
+                 outlier_threshold=3.0,
+                 drift_threshold=0.1,
+                 correlation_threshold=0.3,
+                 max_columns_analyzed=30,
+                 sample_size=10000,
+                 chunk_size=100000,
+                 memory_limit_mb=8000):
+        """
+        Initialize the DataQualityMonitor with configurable thresholds.
         
-        # Get cached statistics if available
-        df_name = f"data_quality_{id(df)}"
-        stats = GLOBAL_CACHE.statistics_cache.get(df_name)
+        Args:
+            reference_data_path: Path to reference data for drift detection
+            missing_value_threshold: Threshold for flagging columns with missing values
+            outlier_threshold: Z-score threshold for outlier detection
+            drift_threshold: Threshold for detecting data drift
+            correlation_threshold: Threshold for detecting correlation changes
+            max_columns_analyzed: Maximum number of columns to analyze for memory efficiency
+            sample_size: Sample size for large datasets to use during statistical tests
+            chunk_size: Process data in chunks of this size for extreme memory efficiency
+            memory_limit_mb: Memory limit in MB to trigger more aggressive optimizations
+        """
+        self.reference_data_path = reference_data_path
+        self.missing_value_threshold = missing_value_threshold
+        self.outlier_threshold = outlier_threshold
+        self.drift_threshold = drift_threshold
+        self.correlation_threshold = correlation_threshold
+        self.max_columns_analyzed = max_columns_analyzed
+        self.sample_size = sample_size
+        self.chunk_size = chunk_size
+        self.memory_limit_mb = memory_limit_mb
+        self.reference_data = None
+        self.logger = logging.getLogger(__name__)
         
-        # If stats are already computed, use them
-        if stats:
-            for column, col_stats in stats.items():
-                if 'missing_pct' in col_stats and col_stats['missing_pct'] > self.config['missing_threshold']:
-                    missing[column] = float(col_stats['missing_pct'])
-        else:
-            # Process in smaller batches of columns
-            column_batches = [df.columns[i:i+20] for i in range(0, len(df.columns), 20)]
-            
-            for batch in column_batches:
-                for column in batch:
-                    missing_rate = df[column].isnull().mean()
-                    if missing_rate > self.config['missing_threshold']:
-                        missing[column] = float(missing_rate)  # Convert to native Python float
-                gc.collect()  # Clear memory after each batch
+        # Add memory tracking
+        self.enable_memory_tracking = True
         
-        if missing:
-            # Import slack only when needed
-            from utils.slack import post as send_message
-            send_message(
-                channel="#alerts",
-                title="🔍 Missing Data Alert",
-                details=f"Missing data detected in {len(missing)} columns:\n" +
-                        "\n".join([f"{col}: {rate:.2%}" for col, rate in missing.items()]),
-                urgency="high"
-            )
-            
-        return missing
-    
-    @cache_result
-    def detect_outliers(self, df: pd.DataFrame) -> Dict:
-        """Detect outliers using z-score with memory optimization."""
-        outliers = {}
-        try:
-            # Process numeric columns in batches
-            numeric_cols = df.select_dtypes(include=['number']).columns
-            
-            # For large datasets, sample the data for outlier detection
-            sample_rows = None
-            if df.shape[0] > 100000:
-                sample_rows = 100000
-                logger.info(f"Using {sample_rows} rows sample for outlier detection")
-                
-            # Use the parallel processing function from cache module
-            def process_col(df, col):
-                try:
-                    # For large dataframes, use a sample
-                    if sample_rows and df.shape[0] > sample_rows:
-                        df_sample = df[[col]].sample(sample_rows, random_state=42)
-                    else:
-                        df_sample = df[[col]]
-                    
-                    mean_val = GLOBAL_CACHE.get_statistic(f"data_quality_{id(df)}", col, 'mean')
-                    std_val = GLOBAL_CACHE.get_statistic(f"data_quality_{id(df)}", col, 'std')
-                    
-                    if mean_val is None or std_val is None or std_val == 0:
-                        # Calculate if not in cache or std is zero (constant column)
-                        mean_val = df_sample[col].mean()
-                        std_val = df_sample[col].std()
-                        if std_val == 0:
-                            return 0
-                            
-                    # Calculate z-scores in chunks to avoid large arrays
-                    chunk_size = min(10000, len(df_sample))
-                    n_chunks = len(df_sample) // chunk_size + 1
-                    outlier_count = 0
-                    
-                    for i in range(n_chunks):
-                        start_idx = i * chunk_size
-                        end_idx = min((i + 1) * chunk_size, len(df_sample))
-                        chunk = df_sample[col].iloc[start_idx:end_idx]
-                        
-                        # Calculate z-scores and count outliers
-                        z_scores = np.abs((chunk - mean_val) / std_val)
-                        chunk_outliers = (z_scores > self.config['outlier_threshold']).sum()
-                        outlier_count += chunk_outliers
-                        
-                        # Clean up
-                        del z_scores
-                        
-                    return outlier_count / len(df_sample) if outlier_count > 0 else 0
-                except Exception as e:
-                    logger.warning(f"Error processing outliers for column {col}: {str(e)}")
-                    return 0
-                    
-            # Use parallel processing from the cache module with timeout
-            max_workers = min(os.cpu_count() or 4, 4)  # Limit workers based on CPUs available
-            if len(numeric_cols) > 10:
-                col_results = GLOBAL_CACHE.parallel_column_processing(
-                    df, process_col, numeric_cols, n_workers=max_workers
-                )
-                outliers = {col: rate for col, rate in col_results.items() if rate > 0}
-            else:
-                for col in numeric_cols:
-                    rate = process_col(df, col)
-                    if rate > 0:
-                        outliers[col] = float(rate)
-            
-            if outliers:
-                # Import slack only when needed
-                try:
-                    from utils.slack import post as send_message
-                    send_message(
-                        channel="#alerts",
-                        title="⚠️ Outlier Alert",
-                        details=f"Outliers detected in {len(outliers)} columns:\n" +
-                                "\n".join([f"{col}: {rate:.2%}" for col, rate in outliers.items()]),
-                        urgency="medium"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send Slack notification: {e}")
-                
-            return outliers
-            
-        except Exception as e:
-            logger.error(f"Error in outlier detection: {str(e)}")
-            # Return empty dict instead of failing the pipeline
-            return {}
-    
-    @cache_result
-    def detect_data_drift(self, df: pd.DataFrame) -> Dict:
-        """Detect drift in numerical columns with memory optimization."""
-        if self.baseline_stats is None:
-            logger.warning("No baseline stats available for drift detection")
-            return {}
-        
-        drift = {}
-        # Get cached statistics for current data
-        df_name = f"data_quality_{id(df)}"
-        current_stats = GLOBAL_CACHE.statistics_cache.get(df_name)
-        
-        # Process in smaller batches with cached statistics if available
-        if current_stats:
-            for column, stats in current_stats.items():
-                if column in self.baseline_stats and 'mean' in stats:
-                    current_mean = stats['mean']
-                    baseline_mean = self.baseline_stats[column]['mean']
-                    
-                    if baseline_mean != 0:
-                        drift_pct = abs(current_mean - baseline_mean) / baseline_mean
-                        if drift_pct > self.config['drift_threshold']:
-                            drift[column] = float(drift_pct)
-        else:
-            # Fallback to direct calculation
-            column_batches = [df.columns[i:i+20] for i in range(0, len(df.columns), 20)]
-            
-            for batch in column_batches:
-                for column in batch:
-                    if column in self.baseline_stats and pd.api.types.is_numeric_dtype(df[column]):
-                        current_mean = float(df[column].mean())
-                        baseline_mean = self.baseline_stats[column]['mean']
-                        
-                        if baseline_mean != 0:
-                            drift_pct = abs(current_mean - baseline_mean) / baseline_mean
-                            if drift_pct > self.config['drift_threshold']:
-                                drift[column] = float(drift_pct)
-                
-                # Clear memory after each batch
-                gc.collect()
-        
-        if drift:
-            # Import slack only when needed
-            from utils.slack import post as send_message
-            send_message(
-                channel="#alerts",
-                title="🚨 Data Drift Detected",
-                details=f"Drift detected in {len(drift)} columns:\n" +
-                        "\n".join([f"{col}: {drift_pct:.2%}" for col, drift_pct in drift.items()]),
-                urgency="critical"
-            )
-            
-        return drift
-    
-    @cache_result
-    def detect_correlation_changes(self, df: pd.DataFrame) -> Dict:
-        """Detect changes in correlation between numeric columns with memory optimization."""
-        if self.baseline_stats is None or 'correlation' not in self.baseline_stats:
-            logger.warning("No baseline correlation available")
-            return {}
-        
-        # Limit to a subset of numeric columns to reduce memory usage
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        
-        # Further limit columns for very large datasets
-        if len(numeric_cols) > 30:
-            logger.info(f"Limiting correlation analysis to 30 columns out of {len(numeric_cols)}")
-            numeric_cols = numeric_cols[:30]  # Take first 30 columns
-        elif len(numeric_cols) > 10 and df.shape[0] > 1000000:
-            # For very large datasets, restrict even more
-            logger.info(f"Large dataset detected ({df.shape[0]} rows). Limiting to 10 columns.")
-            numeric_cols = numeric_cols[:10]
-            
-        try:
-            # Compute correlations with caching and sample to reduce memory usage
-            # For very large datasets, use a sample
-            sample_size = min(100000, df.shape[0])
-            if df.shape[0] > 200000:
-                logger.info(f"Using {sample_size} rows sample for correlation calculation")
-                df_sample = df[numeric_cols].sample(sample_size, random_state=42)
-                df_name = f"data_quality_sample_{id(df)}"
-                current_corr = GLOBAL_CACHE.compute_correlations(df_sample, df_name)
-            else:
-                df_name = f"data_quality_{id(df)}"
-                current_corr = GLOBAL_CACHE.compute_correlations(df[numeric_cols], df_name)
-                
-            baseline_corr = self.baseline_stats['correlation']
-            
-            correlation_changes = {}
-            # Compare correlations
-            for i, col1 in enumerate(numeric_cols):
-                for col2 in numeric_cols[i+1:]:  # Only check each pair once
-                    if col1 in baseline_corr and col2 in baseline_corr and col1 in current_corr.index and col2 in current_corr.columns:
-                        try:
-                            current = current_corr.loc[col1, col2]
-                            baseline = baseline_corr.loc[col1, col2]
-                            
-                            # Handle NaN values
-                            if pd.isna(current) or pd.isna(baseline):
-                                continue
-                                
-                            change = abs(current - baseline)
-                            
-                            if change > self.config['correlation_threshold']:
-                                correlation_changes[f"{col1} ↔ {col2}"] = float(change)
-                        except (KeyError, ValueError) as e:
-                            logger.warning(f"Error comparing correlation for {col1} and {col2}: {e}")
-            
-            # Clear memory
-            gc.collect()
-            
-            if correlation_changes:
-                # Import slack only when needed
-                try:
-                    from utils.slack import post as send_message
-                    send_message(
-                        channel="#alerts",
-                        title="🔄 Correlation Changes Detected",
-                        details=f"Correlation changes detected in {len(correlation_changes)} pairs:\n" +
-                                "\n".join([f"{pair}: {change:.2f}" for pair, change in correlation_changes.items()]),
-                        urgency="medium"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send Slack notification: {e}")
-                
-            return correlation_changes
-            
-        except Exception as e:
-            logger.error(f"Error in correlation change detection: {str(e)}")
-            # Return empty dict instead of failing
-            return {}
-    
-    def set_baseline(self, df: pd.DataFrame) -> None:
-        """Set baseline statistics for drift detection."""
-        df_name = f"baseline_{id(df)}"
-        stats = GLOBAL_CACHE.compute_statistics(df, df_name)
-        
-        # Calculate correlation for a limited subset of columns
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        # If too many numeric columns, sample them
-        if len(numeric_cols) > 30:
-            logger.info(f"Limiting correlation baseline to 30 columns out of {len(numeric_cols)}")
-            numeric_cols = numeric_cols[:30]
-        
-        stats['correlation'] = GLOBAL_CACHE.compute_correlations(df[numeric_cols], df_name)
-        self.baseline_stats = stats
-        logger.info("Baseline statistics set")
-        
-        # Clear memory
-        gc.collect()
-        
-    def run_quality_checks(self, df: pd.DataFrame) -> Dict:
-        """Run all quality checks on the dataframe with memory optimization."""
-        # Initialize result dictionary
-        results = {
-            'timestamp': datetime.now().isoformat(),
-            'missing_values': {},
-            'outliers': {},
-            'data_drift': {},
-            'correlation_changes': {},
-            'total_issues': 0,
-            'missing_value_issues': 0,
-            'outlier_issues': 0
-        }
-        
-        try:
-            # Compute statistics once and store in cache
-            df_name = f"data_quality_{id(df)}"
-            GLOBAL_CACHE.compute_statistics(df, df_name)
-            
-            # Run each check separately with garbage collection in between
-            # Wrap each check in try-except to ensure pipeline continues even if one check fails
+        # Load reference data if provided
+        if reference_data_path and os.path.exists(reference_data_path):
             try:
-                logger.info("Running missing value detection")
-                missing_values = self.detect_missing_values(df)
-                results['missing_values'] = missing_values
-                results['missing_value_issues'] = len(missing_values)
-                gc.collect()
+                self._load_reference_data()
             except Exception as e:
-                logger.error(f"Error in missing value detection: {str(e)}")
-                results['missing_values'] = {}
-                results['missing_value_issues'] = 0
-            
-            try:
-                logger.info("Running outlier detection")
-                outliers = self.detect_outliers(df)
-                results['outliers'] = outliers
-                results['outlier_issues'] = len(outliers)
-                gc.collect()
-            except Exception as e:
-                logger.error(f"Error in outlier detection: {str(e)}")
-                results['outliers'] = {}
-                results['outlier_issues'] = 0
-            
-            try:
-                logger.info("Running data drift detection")
-                data_drift = self.detect_data_drift(df)
-                results['data_drift'] = data_drift
-                gc.collect()
-            except Exception as e:
-                logger.error(f"Error in data drift detection: {str(e)}")
-                results['data_drift'] = {}
-            
-            try:
-                logger.info("Running correlation change detection")
-                correlation_changes = self.detect_correlation_changes(df)
-                results['correlation_changes'] = correlation_changes
-                gc.collect()
-            except Exception as e:
-                logger.error(f"Error in correlation change detection: {str(e)}")
-                results['correlation_changes'] = {}
-            
-            # Calculate total issues
-            issues = sum(len(check) for check in [
-                results['missing_values'], 
-                results['outliers'], 
-                results['data_drift'], 
-                results['correlation_changes']
-            ])
-            results['total_issues'] = issues
-            
-            self.history.append(results)
-            
-            # Log the results and determine overall status
-            # Import slack only when needed
-            if issues > 0:
-                try:
-                    from utils.slack import post as send_message
-                    summary = f"Data quality checks completed with {issues} issues detected:\n"
-                    if results['missing_values']:
-                        summary += f"- Missing values: {len(results['missing_values'])} columns\n"
-                    if results['outliers']:
-                        summary += f"- Outliers: {len(results['outliers'])} columns\n"
-                    if results['data_drift']:
-                        summary += f"- Data drift: {len(results['data_drift'])} columns\n"
-                    if results['correlation_changes']:
-                        summary += f"- Correlation changes: {len(results['correlation_changes'])} pairs\n"
-                        
-                    send_message(
-                        channel="#data-quality",
-                        title="📊 Data Quality Report",
-                        details=summary,
-                        urgency="high" if issues > 5 else "medium"
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send Slack notification: {str(e)}")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Critical error in run_quality_checks: {str(e)}")
-            # Return a minimal valid result to avoid pipeline failure
-            results['error'] = str(e)
-            return results
+                self.logger.error(f"Failed to load reference data: {str(e)}")
     
-    def export_report(self, filepath: str) -> None:
-        """Export a data quality report to a file."""
-        if not self.history:
-            logger.warning("No history to export")
+    def _log_memory_usage(self, step_name):
+        """Log memory usage at a specific step if enabled"""
+        if not self.enable_memory_tracking:
             return
             
-        with open(filepath, 'w') as f:
-            import json
-            json.dump(self.history[-1], f, indent=2)
+        try:
+            import psutil
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            self.logger.info(f"Memory usage at {step_name}: {memory_mb:.2f} MB")
+            
+            # Trigger aggressive GC if memory usage is too high
+            if memory_mb > self.memory_limit_mb:
+                self.logger.warning(f"Memory usage too high ({memory_mb:.2f} MB). Triggering aggressive garbage collection.")
+                self._reduce_memory_footprint()
+        except Exception as e:
+            self.logger.warning(f"Could not log memory usage: {str(e)}")
+    
+    def _reduce_memory_footprint(self):
+        """Aggressively reduce memory footprint"""
+        try:
+            # Force full garbage collection
+            gc.collect(2)
+            
+            # Clear any cached objects in global cache if available
+            if 'GLOBAL_CACHE' in globals():
+                try:
+                    for key in list(GLOBAL_CACHE.keys()):
+                        if 'temp_' in key or 'cache_' in key:
+                            GLOBAL_CACHE.pop(key, None)
+                except:
+                    pass
+            
+            # Try to release memory back to OS on Linux
+            if hasattr(gc, 'malloc_trim'):
+                gc.malloc_trim(0)
+        except Exception as e:
+            self.logger.warning(f"Error during memory reduction: {str(e)}")
+            
+    def _load_reference_data(self):
+        """Load reference data for drift detection with memory optimization"""
+        if not self.reference_data_path:
+            return None
+            
+        try:
+            # Check if file exists
+            if not os.path.exists(self.reference_data_path):
+                self.logger.warning(f"Reference data file not found: {self.reference_data_path}")
+                return None
+                
+            # Use pyarrow to get metadata before loading
+            import pyarrow.parquet as pq
+            metadata = pq.read_metadata(self.reference_data_path)
+            num_rows = metadata.num_rows
+            
+            # For large reference datasets, use sampling
+            if num_rows > self.sample_size:
+                self.logger.info(f"Reference dataset has {num_rows} rows, sampling to {self.sample_size}")
+                
+                # Use efficient pyarrow-based sampling
+                import pyarrow as pa
+                
+                # Read the file
+                table = pq.read_table(self.reference_data_path)
+                
+                # Sample down to manageable size
+                import numpy as np
+                indices = sorted(np.random.choice(num_rows, size=self.sample_size, replace=False))
+                sampled_table = table.take(pa.array(indices))
+                
+                # Convert to pandas
+                self.reference_data = sampled_table.to_pandas()
+                
+                # Clean up
+                del table
+                del sampled_table
+                gc.collect()
+            else:
+                # For small files, load directly
+                self.reference_data = pd.read_parquet(self.reference_data_path)
+                
+            self.logger.info(f"Loaded reference data with shape {self.reference_data.shape}")
+            
+            # Optimize dtypes to reduce memory usage
+            self.reference_data = self._optimize_dtypes(self.reference_data)
+            
+            return self.reference_data
+            
+        except Exception as e:
+            self.logger.error(f"Error loading reference data: {str(e)}")
+            return None
+    
+    def _optimize_dtypes(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Optimize data types to reduce memory usage"""
+        try:
+            # Process numeric columns
+            for col in df.select_dtypes(include=['int']).columns:
+                # Downcast integers
+                if df[col].min() >= 0:  # Unsigned int
+                    if df[col].max() <= 255:
+                        df[col] = df[col].astype(np.uint8)
+                    elif df[col].max() <= 65535:
+                        df[col] = df[col].astype(np.uint16)
+                    elif df[col].max() <= 4294967295:
+                        df[col] = df[col].astype(np.uint32)
+                    else:
+                        df[col] = df[col].astype(np.uint64)
+                else:  # Signed int
+                    if df[col].min() >= -128 and df[col].max() <= 127:
+                        df[col] = df[col].astype(np.int8)
+                    elif df[col].min() >= -32768 and df[col].max() <= 32767:
+                        df[col] = df[col].astype(np.int16)
+                    elif df[col].min() >= -2147483648 and df[col].max() <= 2147483647:
+                        df[col] = df[col].astype(np.int32)
+                    else:
+                        df[col] = df[col].astype(np.int64)
+            
+            # Downcast floats
+            for col in df.select_dtypes(include=['float']).columns:
+                df[col] = pd.to_numeric(df[col], downcast='float')
+                
+            # Convert object columns to categorical if cardinality is low
+            for col in df.select_dtypes(include=['object']).columns:
+                if df[col].nunique() / len(df) < 0.5:  # If less than 50% unique values
+                    df[col] = df[col].astype('category')
+                    
+            return df
+        except Exception as e:
+            self.logger.warning(f"Error optimizing dtypes: {str(e)}")
+            return df
+            
+    def _select_columns_for_analysis(self, df, analysis_type="numerical"):
+        """
+        Intelligently select columns for analysis, limiting to most relevant ones
+        for memory efficiency.
         
-        logger.info(f"Data quality report exported to {filepath}")
+        Args:
+            df: DataFrame to analyze
+            analysis_type: Type of analysis. Can be "numerical", "categorical", or "all"
+            
+        Returns:
+            List of column names to analyze
+        """
+        # First filter by type
+        if analysis_type == "numerical":
+            candidate_cols = df.select_dtypes(include=['number']).columns.tolist()
+        elif analysis_type == "categorical":
+            candidate_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        else:  # "all"
+            candidate_cols = df.columns.tolist()
+            
+        # If number of columns exceeds max, prioritize
+        if len(candidate_cols) > self.max_columns_analyzed:
+            self.logger.info(f"Limiting analysis to {self.max_columns_analyzed} columns")
+            
+            if analysis_type == "numerical":
+                # For numerical, prioritize by variance and missing values
+                try:
+                    # Calculate variance-to-mean ratio (VMR) to find most variable columns
+                    vmr = {}
+                    for col in candidate_cols:
+                        mean = df[col].mean()
+                        if mean != 0:  # Avoid division by zero
+                            vmr[col] = df[col].var() / mean if not np.isnan(mean) else 0
+                        else:
+                            vmr[col] = df[col].var()  # Just use variance if mean is zero
+                            
+                    # Sort columns by VMR and select top N
+                    sorted_cols = sorted(vmr.items(), key=lambda x: x[1], reverse=True)
+                    selected_cols = [col for col, _ in sorted_cols[:self.max_columns_analyzed]]
+                    
+                    # Make sure we include key columns by name patterns
+                    key_patterns = ['id', 'target', 'label', 'score', 'probability', 'prediction']
+                    for col in candidate_cols:
+                        if any(pattern in col.lower() for pattern in key_patterns) and col not in selected_cols:
+                            # Replace the least variable column
+                            if len(selected_cols) >= self.max_columns_analyzed:
+                                selected_cols.pop()
+                            selected_cols.append(col)
+                            
+                    return selected_cols
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error during column selection: {str(e)}")
+                    # Fall back to simple selection
+            
+            # Simple selection method as fallback
+            # Include ID and target columns first
+            selected_cols = []
+            
+            # Add suspected ID columns
+            id_cols = [col for col in candidate_cols if 'id' in col.lower()]
+            selected_cols.extend(id_cols[:min(3, len(id_cols))])  # Max 3 ID columns
+            
+            # Add suspected target columns
+            target_cols = [col for col in candidate_cols if any(name in col.lower() for name in 
+                          ['target', 'label', 'class', 'prediction', 'score', 'probability'])]
+            selected_cols.extend(target_cols[:min(5, len(target_cols))])  # Max 5 target columns
+            
+            # Add remaining columns up to the limit
+            remaining_slots = self.max_columns_analyzed - len(selected_cols)
+            if remaining_slots > 0:
+                other_cols = [col for col in candidate_cols if col not in selected_cols]
+                selected_cols.extend(other_cols[:remaining_slots])
+                
+            return selected_cols
+            
+        # If under the limit, return all candidates
+        return candidate_cols
+     
+    def _process_in_chunks(self, df: pd.DataFrame, func, chunk_size: Optional[int] = None) -> Dict:
+        """
+        Process a DataFrame in chunks to save memory
+        
+        Args:
+            df: DataFrame to process
+            func: Function to apply to each chunk, should accept DataFrame and return dict
+            chunk_size: Size of chunks to process
+            
+        Returns:
+            Combined results from all chunks
+        """
+        if chunk_size is None:
+            chunk_size = self.chunk_size
+            
+        # If DataFrame is small enough, process directly
+        if len(df) <= chunk_size:
+            return func(df)
+            
+        # Otherwise process in chunks
+        self.logger.info(f"Processing DataFrame with {len(df)} rows in chunks of {chunk_size}")
+        
+        results = {}
+        # Process DataFrame in chunks
+        for i in range(0, len(df), chunk_size):
+            chunk = df.iloc[i:i+chunk_size]
+            chunk_results = func(chunk)
+            
+            # Merge chunk results with overall results
+            for key, value in chunk_results.items():
+                if key not in results:
+                    results[key] = value
+                elif isinstance(value, dict):
+                    results[key].update(value)
+                elif isinstance(value, (int, float)):
+                    results[key] = (results[key] + value) / 2  # Average numeric values
+                    
+            # Clean up
+            del chunk
+            gc.collect()
+            
+        return results   
+        
+    def check_missing_values(self, df):
+        """
+        Check for missing values in each column.
+        Memory-optimized for large datasets.
+        
+        Args:
+            df: DataFrame to check
+            
+        Returns:
+            Dictionary of columns with missing values above threshold
+        """
+        self._log_memory_usage("before_missing_values_check")
+        
+        # Define a function to process a chunk
+        def process_chunk(chunk_df):
+            # Select columns for analysis - check all columns for missing values
+            columns_to_check = chunk_df.columns.tolist()
+            
+            # For very large DataFrames, process in smaller batches to save memory
+            missing_values = {}
+            batch_size = min(50, max(1, len(columns_to_check) // 10))  # Process 10 batches, or 50 columns at once max
+            
+            for i in range(0, len(columns_to_check), batch_size):
+                batch_columns = columns_to_check[i:i+batch_size]
+                
+                # Process this batch
+                for column in batch_columns:
+                    # Calculate missing value percentage efficiently using isnull().mean()
+                    # which is memory-efficient for large datasets
+                    missing_pct = chunk_df[column].isnull().mean()
+                    
+                    if missing_pct > self.missing_value_threshold:
+                        missing_values[column] = float(missing_pct)  # Convert to float for JSON serialization
+                
+                # Explicit garbage collection
+                gc.collect()
+                
+            return {'missing_values': missing_values}
+            
+        # Process in chunks if needed
+        if len(df) > self.chunk_size:
+            # For missing values, we need accurate counts across the entire dataset
+            # So we'll use our chunking with a different approach
+            missing_values = {}
+            
+            # Calculate missing count for each column across entire dataset
+            for col in df.columns:
+                # Count non-null values in chunks to save memory
+                non_null_count = 0
+                total_count = 0
+                
+                for i in range(0, len(df), self.chunk_size):
+                    chunk = df.iloc[i:i+self.chunk_size]
+                    non_null_count += chunk[col].count()
+                    total_count += len(chunk)
+                    del chunk
+                
+                # Calculate missing percentage
+                if total_count > 0:
+                    missing_pct = 1.0 - (non_null_count / total_count)
+                    if missing_pct > self.missing_value_threshold:
+                        missing_values[col] = float(missing_pct)
+                
+                # Clean up after each column
+                gc.collect()
+        else:
+            result = process_chunk(df)
+            missing_values = result['missing_values']
+        
+        self._log_memory_usage("after_missing_values_check")
+        return missing_values
+        
+    def check_outliers(self, df):
+        """
+        Check for outliers in numerical columns using z-score method.
+        Memory-optimized for large datasets.
+        
+        Args:
+            df: DataFrame to check
+            
+        Returns:
+            Dictionary of columns with outlier counts
+        """
+        self._log_memory_usage("before_outlier_check")
+        
+        # Define function to process a subset of data
+        def process_outliers(subset_df):
+            # Select only numerical columns for outlier detection
+            num_columns = self._select_columns_for_analysis(subset_df, "numerical")
+            outliers = {}
+            
+            for column in num_columns:
+                try:
+                    # Skip columns with too many missing values
+                    missing_rate = subset_df[column].isnull().mean()
+                    if missing_rate > 0.5:  # Skip if more than 50% missing
+                        continue
+                        
+                    # Get only finite values for z-score calculation
+                    series = subset_df[column].dropna()
+                    
+                    if len(series) < 10:  # Need sufficient data
+                        continue
+                        
+                    # For very large series, sample to calculate stats
+                    if len(series) > 10000:
+                        series = series.sample(10000, random_state=42)
+                        
+                    # Calculate z-scores efficiently by chunks if needed
+                    mean = series.mean()
+                    std = series.std()
+                    
+                    if std == 0:  # Avoid division by zero
+                        continue
+                    
+                    # Calculate z-scores without creating a full series
+                    # This is more memory efficient for large datasets
+                    outlier_count = 0
+                    # Process in small chunks of 1000 values
+                    for i in range(0, len(series), 1000):
+                        chunk = series.iloc[i:i+1000]
+                        z_scores = np.abs((chunk - mean) / std)
+                        outlier_count += (z_scores > self.outlier_threshold).sum()
+                        del z_scores
+                        
+                    outlier_percent = outlier_count / len(subset_df) * 100
+                    
+                    # Only include if we found substantial outliers
+                    if outlier_count > 10 or outlier_percent > 1.0:
+                        outliers[column] = {
+                            'count': int(outlier_count),
+                            'percent': float(outlier_percent)
+                        }
+                        
+                except Exception as e:
+                    self.logger.warning(f"Error detecting outliers in column {column}: {str(e)}")
+                    
+                # Clean up after each column
+                gc.collect()
+                
+            return {'outliers': outliers}
+            
+        # For very large datasets, sample down before outlier detection
+        df_sample = df
+        if len(df) > self.sample_size:
+            self.logger.info(f"Sampling {self.sample_size} rows for outlier detection")
+            df_sample = df.sample(min(self.sample_size, len(df)), random_state=42)
+            
+        # Process the sample
+        result = process_outliers(df_sample)
+        outliers = result['outliers']
+        
+        # Clean up
+        if df_sample is not df:
+            del df_sample
+            gc.collect()
+        
+        self._log_memory_usage("after_outlier_check")
+        return outliers
+    
+    def check_data_drift(self, df):
+        """
+        Check for data drift compared to reference data.
+        Memory-optimized for large datasets.
+        
+        Args:
+            df: DataFrame to check
+            
+        Returns:
+            Dictionary of columns with detected drift
+        """
+        self._log_memory_usage("before_drift_check")
+        
+        # If no reference data, we can't check for drift
+        if self.reference_data is None:
+            if self.reference_data_path:
+                self.logger.warning("No reference data available for drift detection")
+            return {}
+            
+        # Get common columns
+        common_columns = list(set(df.columns) & set(self.reference_data.columns))
+        
+        # Select columns to analyze - prioritize numerical for statistical tests
+        numerical_columns = self._select_columns_for_analysis(
+            df[common_columns], 
+            "numerical"
+        )
+        
+        # For very large datasets, use sampling for both current and reference
+        current_sample = df
+        reference_sample = self.reference_data
+        
+        # Sample with a two-phase approach for very large datasets
+        if len(df) > self.sample_size * 10:  # For extremely large datasets
+            # First sample to intermediate size
+            intermediate_size = min(len(df) // 10, self.sample_size * 2)
+            current_sample = df.sample(intermediate_size, random_state=42)
+            # Then sample to final size
+            current_sample = current_sample.sample(min(self.sample_size, len(current_sample)), random_state=42)
+        elif len(df) > self.sample_size:
+            current_sample = df.sample(min(self.sample_size, len(df)), random_state=42)
+            
+        if len(self.reference_data) > self.sample_size:
+            reference_sample = self.reference_data.sample(min(self.sample_size, len(self.reference_data)), random_state=42)
+            
+        # Check for drift in each column
+        drift_detected = {}
+        
+        # Process columns in batches to save memory
+        batch_size = min(10, len(numerical_columns))
+        for i in range(0, len(numerical_columns), batch_size):
+            batch_columns = numerical_columns[i:i+batch_size]
+            
+            for column in batch_columns:
+                try:
+                    # Get data from both datasets, dropping nulls
+                    current_data = current_sample[column].dropna()
+                    reference_data = reference_sample[column].dropna()
+                    
+                    # Skip if we don't have enough data
+                    if len(current_data) < 30 or len(reference_data) < 30:
+                        continue
+                    
+                    # For very large series, sample down to a reasonable size for statistical tests
+                    max_size_for_test = 5000  # Reasonable size for KS test
+                    if len(current_data) > max_size_for_test:
+                        current_data = current_data.sample(max_size_for_test, random_state=42)
+                    if len(reference_data) > max_size_for_test:
+                        reference_data = reference_data.sample(max_size_for_test, random_state=42)
+                        
+                    # Use KS test for detecting distribution differences
+                    from scipy import stats
+                    ks_statistic, p_value = stats.ks_2samp(current_data, reference_data)
+                    
+                    # Check if drift detected based on p-value
+                    if p_value < 0.05 and ks_statistic > self.drift_threshold:
+                        # Calculate additional statistics for the report
+                        current_mean = float(current_data.mean())
+                        reference_mean = float(reference_data.mean())
+                        mean_diff_pct = abs((current_mean - reference_mean) / reference_mean) * 100 if reference_mean != 0 else 0
+                        
+                        drift_detected[column] = {
+                            'ks_statistic': float(ks_statistic),
+                            'p_value': float(p_value),
+                            'current_mean': current_mean,
+                            'reference_mean': reference_mean,
+                            'mean_diff_pct': float(mean_diff_pct)
+                        }
+                        
+                    # Clean up
+                    del current_data
+                    del reference_data
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error detecting drift for column {column}: {str(e)}")
+            
+            # Clean up after each batch
+            gc.collect()
+                
+        self._log_memory_usage("after_drift_check")
+        return drift_detected
+        
+    def check_correlation_changes(self, df):
+        """
+        Check for correlation changes compared to reference data.
+        Memory-optimized implementation for large datasets.
+        
+        Args:
+            df: DataFrame to check
+            
+        Returns:
+            Dictionary of column pairs with correlation changes
+        """
+        self._log_memory_usage("before_correlation_check")
+        
+        # If no reference data, we can't check for correlation changes
+        if self.reference_data is None:
+            return {}
+            
+        # Get common columns
+        common_columns = list(set(df.columns) & set(self.reference_data.columns))
+        
+        # Select numerical columns for correlation analysis
+        # Use fewer columns for correlation to limit memory use (correlations are quadratic)
+        numerical_columns = self._select_columns_for_analysis(
+            df[common_columns], 
+            "numerical"
+        )[:min(15, self.max_columns_analyzed)]  # Further reduce to 15 for correlation analysis
+        
+        if len(numerical_columns) < 2:
+            self.logger.info("Not enough numerical columns for correlation analysis")
+            return {}
+            
+        # Sample data if needed
+        current_sample = df[numerical_columns]
+        reference_sample = self.reference_data[numerical_columns]
+        
+        # More aggressive sampling for correlation analysis
+        max_sample = min(5000, self.sample_size)  # Smaller sample for correlation
+        
+        if len(df) > max_sample:
+            current_sample = df[numerical_columns].sample(max_sample, random_state=42)
+            
+        if len(self.reference_data) > max_sample:
+            reference_sample = self.reference_data[numerical_columns].sample(max_sample, random_state=42)
+            
+        # Calculate correlations - memory efficient implementation
+        correlation_changes = {}
+        
+        try:
+            # For extreme memory efficiency, calculate correlation pairwise instead of full matrix
+            # This approach uses much less memory for large column sets
+            if len(numerical_columns) > 10:  # Only use this approach for many columns
+                self.logger.info("Using pairwise correlation calculation to save memory")
+                
+                for i, col1 in enumerate(numerical_columns):
+                    # Only process every other pair to reduce computation
+                    for col2 in numerical_columns[i+1:]:
+                        try:
+                            # Get data for just these two columns
+                            curr_df = current_sample[[col1, col2]].dropna()
+                            ref_df = reference_sample[[col1, col2]].dropna()
+                            
+                            # Skip if insufficient data
+                            if len(curr_df) < 30 or len(ref_df) < 30:
+                                continue
+                                
+                            # Calculate correlation for this pair
+                            curr_corr_val = curr_df[col1].corr(curr_df[col2])
+                            ref_corr_val = ref_df[col1].corr(ref_df[col2])
+                            
+                            # Skip if NaN
+                            if pd.isna(curr_corr_val) or pd.isna(ref_corr_val):
+                                continue
+                                
+                            # Check if correlation change is significant
+                            corr_diff = abs(curr_corr_val - ref_corr_val)
+                            
+                            if corr_diff > self.correlation_threshold:
+                                correlation_changes[f"{col1}~{col2}"] = {
+                                    'current': float(curr_corr_val),
+                                    'reference': float(ref_corr_val),
+                                    'difference': float(corr_diff)
+                                }
+                                
+                            # Clean up for this pair
+                            del curr_df
+                            del ref_df
+                            gc.collect()
+                            
+                        except Exception as e:
+                            self.logger.warning(f"Error comparing correlation for {col1}-{col2}: {str(e)}")
+            else:
+                # For smaller column sets, use the full correlation matrix approach
+                # Calculate current correlations
+                current_corr = current_sample.corr(method='pearson', numeric_only=True)
+                
+                # Calculate reference correlations
+                reference_corr = reference_sample.corr(method='pearson', numeric_only=True)
+                
+                # Find correlation changes
+                for i, col1 in enumerate(numerical_columns):
+                    # Only compare with columns after this one to avoid duplicates
+                    for col2 in numerical_columns[i+1:]:
+                        try:
+                            # Get correlations
+                            curr_corr_val = current_corr.loc[col1, col2]
+                            ref_corr_val = reference_corr.loc[col1, col2]
+                            
+                            # Skip if NaN
+                            if pd.isna(curr_corr_val) or pd.isna(ref_corr_val):
+                                continue
+                                
+                            # Check if correlation change is significant
+                            corr_diff = abs(curr_corr_val - ref_corr_val)
+                            
+                            if corr_diff > self.correlation_threshold:
+                                correlation_changes[f"{col1}~{col2}"] = {
+                                    'current': float(curr_corr_val),
+                                    'reference': float(ref_corr_val),
+                                    'difference': float(corr_diff)
+                                }
+                        except Exception as e:
+                            self.logger.warning(f"Error comparing correlation for {col1}-{col2}: {str(e)}")
+                            
+                # Cleanup
+                del current_corr
+                del reference_corr
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating correlations: {str(e)}")
+            
+        # Final cleanup
+        del current_sample
+        del reference_sample
+        gc.collect()
+            
+        self._log_memory_usage("after_correlation_check")
+        return correlation_changes
+        
+    def run_quality_checks(self, df):
+        """
+        Run all data quality checks.
+        
+        Args:
+            df: DataFrame to check
+            
+        Returns:
+            Dictionary with quality check results
+        """
+        self.logger.info(f"Running data quality checks on DataFrame with shape {df.shape}")
+        
+        # Optimize data types first to reduce memory usage
+        try:
+            df = self._optimize_dtypes(df)
+            self.logger.info("Optimized DataFrame data types for memory efficiency")
+        except Exception as e:
+            self.logger.warning(f"Error optimizing data types: {str(e)}")
+        
+        # Create timestamp
+        from datetime import datetime
+        timestamp = datetime.now().isoformat()
+        
+        # Initialize results
+        quality_results = {
+            'timestamp': timestamp,
+            'data_shape': {
+                'rows': len(df),
+                'columns': len(df.columns)
+            }
+        }
+        
+        # Run checks with memory tracking
+        self._log_memory_usage("start_quality_checks")
+        
+        # Check for missing values
+        try:
+            self.logger.info("Checking for missing values")
+            missing_values = self.check_missing_values(df)
+            quality_results['missing_values'] = missing_values
+            quality_results['missing_value_issues'] = len(missing_values)
+            self.logger.info(f"Found {len(missing_values)} columns with missing values above threshold")
+        except Exception as e:
+            self.logger.error(f"Error checking missing values: {str(e)}")
+            quality_results['missing_values'] = {}
+            quality_results['missing_value_issues'] = 0
+            
+        # Memory cleanup
+        gc.collect()
+        
+        # Check for outliers
+        try:
+            self.logger.info("Checking for outliers")
+            outliers = self.check_outliers(df)
+            quality_results['outliers'] = outliers
+            quality_results['outlier_issues'] = len(outliers)
+            self.logger.info(f"Found {len(outliers)} columns with outliers")
+        except Exception as e:
+            self.logger.error(f"Error checking outliers: {str(e)}")
+            quality_results['outliers'] = {}
+            quality_results['outlier_issues'] = 0
+            
+        # Memory cleanup
+        gc.collect()
+        
+        # Check for data drift if reference data is available
+        if self.reference_data is not None:
+            try:
+                self.logger.info("Checking for data drift")
+                data_drift = self.check_data_drift(df)
+                quality_results['data_drift'] = data_drift
+                self.logger.info(f"Found data drift in {len(data_drift)} columns")
+            except Exception as e:
+                self.logger.error(f"Error checking data drift: {str(e)}")
+                quality_results['data_drift'] = {}
+                
+            # Memory cleanup
+            gc.collect()
+            
+            # Check for correlation changes
+            try:
+                self.logger.info("Checking for correlation changes")
+                correlation_changes = self.check_correlation_changes(df)
+                quality_results['correlation_changes'] = correlation_changes
+                self.logger.info(f"Found correlation changes in {len(correlation_changes)} column pairs")
+            except Exception as e:
+                self.logger.error(f"Error checking correlation changes: {str(e)}")
+                quality_results['correlation_changes'] = {}
+                
+            # Memory cleanup
+            gc.collect()
+        else:
+            quality_results['data_drift'] = {}
+            quality_results['correlation_changes'] = {}
+            
+        # Calculate total issues
+        quality_results['total_issues'] = (
+            quality_results.get('missing_value_issues', 0) +
+            quality_results.get('outlier_issues', 0) +
+            len(quality_results.get('data_drift', {})) +
+            len(quality_results.get('correlation_changes', {}))
+        )
+        
+        self._log_memory_usage("end_quality_checks")
+        
+        return quality_results
 
 
 def manual_override(model_id: str, override_action: str) -> Dict:

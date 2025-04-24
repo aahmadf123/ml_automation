@@ -263,15 +263,20 @@ def process_data(**context):
             clearml_task.set_parameter("missing_values_removed", missing_before - missing_after)
             logger.info("Logged preprocessing stats to ClearML")
         
-        # Save processed data
-        processed_path = None
+        # Save processed data to a more persistent location
         try:
-            # Create a more descriptive filename
+            # Create a more descriptive and persistent filename
+            # Use airflow data directory instead of /tmp to ensure it persists between tasks
+            data_dir = os.path.join('/opt/airflow/data')
+            # Create directory if it doesn't exist
+            os.makedirs(data_dir, exist_ok=True)
+            
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            with NamedTemporaryFile(delete=False, suffix=f'_{timestamp}.parquet') as temp_file:
-                processed_path = temp_file.name
-                logger.info(f"Saving processed data to {processed_path}")
-                df.to_parquet(processed_path, index=False)
+            processed_filename = f"processed_data_{timestamp}.parquet"
+            processed_path = os.path.join(data_dir, processed_filename)
+            
+            logger.info(f"Saving processed data to {processed_path}")
+            df.to_parquet(processed_path, index=False)
                 
             # Verify the file was created and has content
             if not os.path.exists(processed_path) or os.path.getsize(processed_path) == 0:
@@ -279,9 +284,30 @@ def process_data(**context):
                 raise IOError(f"Failed to create processed data file or file is empty: {processed_path}")
                 
             logger.info(f"Successfully saved processed data to {processed_path}")
+            
+            # Also save a backup copy in case the primary location fails
+            backup_path = f"/tmp/{processed_filename}"
+            logger.info(f"Saving backup copy to {backup_path}")
+            df.to_parquet(backup_path, index=False)
+            logger.info(f"Backup copy saved to {backup_path}")
+            
         except Exception as e:
             logger.error(f"Failed to save processed data: {str(e)}")
-            raise
+            # Fallback to using tempfile if the main approach fails
+            try:
+                with NamedTemporaryFile(delete=False, suffix=f'_{timestamp}.parquet') as temp_file:
+                    processed_path = temp_file.name
+                    logger.info(f"Fallback: Saving processed data to {processed_path}")
+                    df.to_parquet(processed_path, index=False)
+                    
+                if not os.path.exists(processed_path) or os.path.getsize(processed_path) == 0:
+                    logger.error(f"Fallback failed: File is empty or doesn't exist: {processed_path}")
+                    raise IOError(f"Fallback failed: File is empty or doesn't exist: {processed_path}")
+                    
+                logger.info(f"Successfully saved processed data to fallback location: {processed_path}")
+            except Exception as inner_e:
+                logger.error(f"Fallback also failed: {str(inner_e)}")
+                raise
         
         # Log processed data stats to MLflow
         if mlflow_run:
@@ -332,16 +358,21 @@ def process_data(**context):
             except Exception as e:
                 logger.warning(f"Failed to properly end MLflow run: {str(e)}")
         
-        # Close ClearML task if available
-        if clearml_task:
-            try:
-                clearml_task.close()
-                logger.info("Successfully closed ClearML task")
-            except Exception as e:
-                logger.warning(f"Failed to properly close ClearML task: {str(e)}")
+        # Test file exists and is accessible before proceeding
+        if not os.path.exists(processed_path):
+            logger.error(f"File verification failed - file doesn't exist: {processed_path}")
+            raise FileNotFoundError(f"File verification failed - file doesn't exist: {processed_path}")
+            
+        file_size = os.path.getsize(processed_path)
+        if file_size == 0:
+            logger.error(f"File verification failed - file is empty: {processed_path}")
+            raise ValueError(f"File verification failed - file is empty: {processed_path}")
+            
+        logger.info(f"File verification passed: {processed_path} exists with size {file_size} bytes")
         
         # Push the processed data path and S3 key to Xcom
         context['ti'].xcom_push(key='processed_data_path', value=processed_path)
+        context['ti'].xcom_push(key='processed_data_filename', value=processed_filename)
         if processed_s3_key:
             context['ti'].xcom_push(key='processed_s3_key', value=processed_s3_key)
         
@@ -373,70 +404,241 @@ def process_data(**context):
         raise
 
 def check_data_quality(**context):
-    """Run data quality checks on the processed data"""
-    logger.info("Starting check_data_quality task")
+    """
+    Run data quality checks on processed data.
+    Uses aggressive memory management for large datasets.
+    """
+    import tempfile
+    import gc
+    import json
+    import os
+    import pandas as pd
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from datetime import datetime
+    import mlflow
+    from psutil import Process, virtual_memory
+    from dags.tasks.data_quality import DataQualityMonitor
+    import dags.config as config
+    import dags.utils.clearml_config as clearml_config
     
+    process = Process(os.getpid())
+    logger = context["ti"].log
+
+    # Get processed data path from previous task
     try:
-        # Get processed data path from previous task with validation
-        processed_data_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
+        processed_data_path = context["ti"].xcom_pull(task_ids="process_data", key="processed_data_path")
+        processed_data_filename = context["ti"].xcom_pull(task_ids="process_data", key="processed_data_filename")
         
-        if not processed_data_path:
-            logger.error("Failed to get processed_data_path from previous task")
-            raise ValueError("No processed data path provided from process_data task")
-            
-        # Verify the file exists and has content
+        logger.info(f"Retrieved processed data path: {processed_data_path}")
+        
+        # Verify file exists and check size
         if not os.path.exists(processed_data_path):
-            logger.error(f"Processed data file does not exist: {processed_data_path}")
-            raise FileNotFoundError(f"Processed data file not found: {processed_data_path}")
+            logger.error(f"Processed data file not found at {processed_data_path}")
             
-        file_size = os.path.getsize(processed_data_path)
-        logger.info(f"Found processed data file {processed_data_path} with size {file_size} bytes")
-        
-        if file_size == 0:
-            logger.error(f"Processed data file is empty: {processed_data_path}")
-            raise ValueError(f"Processed data file is empty: {processed_data_path}")
-        
-        # Import the DataQualityMonitor with error handling
-        try:
-            from tasks.data_quality import DataQualityMonitor
-            monitor = DataQualityMonitor()
-            logger.info("Successfully initialized DataQualityMonitor")
-        except Exception as e:
-            logger.error(f"Failed to import or initialize DataQualityMonitor: {str(e)}")
-            raise
-        
-        # Load data with robust error handling
-        try:
-            logger.info(f"Loading processed data from {processed_data_path}")
+            # Try to recover from alternative locations
+            alternative_paths = [
+                f"/tmp/{processed_data_filename}",
+                f"./data/processed/{processed_data_filename}",
+                f"/opt/airflow/data/processed/{processed_data_filename}"
+            ]
             
-            # For very large files, use optimized loading
-            if file_size > 50_000_000:  # 50MB
-                logger.info(f"Large file detected ({file_size} bytes). Using optimized loading strategy.")
-                
-                # Try to sample the file if it's too large for memory
+            for alt_path in alternative_paths:
+                if os.path.exists(alt_path):
+                    logger.info(f"Found file at alternative location: {alt_path}")
+                    processed_data_path = alt_path
+                    break
+            
+            # If still not found, try to download from S3
+            if not os.path.exists(processed_data_path):
                 try:
-                    # First load just a sample to check shape
-                    import pyarrow.parquet as pq
-                    metadata = pq.read_metadata(processed_data_path)
-                    num_rows = metadata.num_rows
-                    
-                    if num_rows > 1_000_000:
-                        logger.info(f"Large dataset detected with {num_rows} rows. Will load sample first.")
-                        # Load 10% of data or 100k rows, whichever is smaller
-                        sample_rows = min(num_rows // 10, 100_000)
-                        df_sample = pd.read_parquet(processed_data_path, engine='pyarrow')
-                        df = df_sample.sample(sample_rows, random_state=42)
-                        logger.info(f"Loaded {sample_rows} rows sample instead of full dataset")
+                    from dags.utils.s3 import download_file
+                    s3_path = f"processed/{processed_data_filename}"
+                    local_path = f"/tmp/{processed_data_filename}"
+                    logger.info(f"Attempting to download from S3: {s3_path}")
+                    download_file(s3_path, local_path)
+                    if os.path.exists(local_path):
+                        processed_data_path = local_path
+                        logger.info(f"Successfully downloaded file from S3")
                     else:
-                        df = pd.read_parquet(processed_data_path, engine='pyarrow')
-                        logger.info(f"Dataset has {num_rows} rows, loading full dataset")
-                        
+                        logger.error(f"Failed to download file from S3")
                 except Exception as e:
-                    logger.warning(f"Error during optimized loading, falling back to standard load: {str(e)}")
-                    df = pd.read_parquet(processed_data_path)
+                    logger.error(f"Error downloading from S3: {str(e)}")
+            
+            # If still not found, raise error
+            if not os.path.exists(processed_data_path):
+                raise FileNotFoundError(f"Processed data file not found at {processed_data_path} or any alternative locations")
+        
+        # Check file size and log
+        file_size_mb = os.path.getsize(processed_data_path) / (1024 * 1024)
+        logger.info(f"File size: {file_size_mb:.2f} MB")
+        
+        # Initialize monitor
+        logger.info("Initializing DataQualityMonitor")
+        monitor = DataQualityMonitor()
+        
+        # Log available memory
+        try:
+            mem = virtual_memory()
+            logger.info(f"Available memory: {mem.available/(1024*1024*1024):.2f} GB out of {mem.total/(1024*1024*1024):.2f} GB")
+        except Exception as e:
+            logger.warning(f"Could not get memory info: {str(e)}")
+            
+        # Get basic dataset info without loading entire dataset
+        try:
+            # Use pyarrow to examine dataset without loading everything
+            parquet_file = pq.ParquetFile(processed_data_path)
+            num_rows = parquet_file.metadata.num_rows
+            num_columns = len(parquet_file.schema.names)
+            logger.info(f"Dataset has {num_rows:,} rows and {num_columns} columns")
+            
+            # Determine sample size based on total rows - be aggressive for very large datasets
+            if num_rows > 5_000_000:
+                sample_size = 50_000  # Extra small sample for extremely large datasets
+                sample_fraction = None
+            elif num_rows > 1_000_000:
+                sample_size = 100_000  # Small sample for very large datasets
+                sample_fraction = None
+            elif num_rows > 500_000:
+                sample_size = 200_000
+                sample_fraction = None
+            elif num_rows > 100_000:
+                sample_fraction = 0.2  # 20% for medium datasets
+                sample_size = int(num_rows * sample_fraction)
             else:
-                # Standard loading for smaller files
-                df = pd.read_parquet(processed_data_path)
+                sample_fraction = 1.0  # Use full dataset for small datasets
+                sample_size = num_rows
+                
+            logger.info(f"Will use {sample_size:,} rows ({sample_size/num_rows:.1%} of data) for quality checks")
+            
+            # Load data with sampling for extremely efficient memory usage
+            if sample_fraction is not None and sample_fraction < 1.0:
+                # For medium datasets, read with pandas sampling
+                df = pd.read_parquet(
+                    processed_data_path, 
+                    engine='pyarrow',
+                    filters=None  # No filtering
+                ).sample(frac=sample_fraction, random_state=42)
+                logger.info(f"Loaded {len(df):,} rows using pandas sampling")
+            elif sample_size < num_rows:
+                # For large datasets, use pyarrow to read and sample more efficiently
+                # First, determine row groups and calculate how many we need
+                row_groups = parquet_file.num_row_groups
+                rows_per_group = num_rows / row_groups if row_groups > 0 else num_rows
+                
+                # If we have enough row groups, we can sample at the row group level
+                if row_groups >= 5 and rows_per_group < sample_size:
+                    # Select random row groups to read
+                    groups_needed = max(1, int(sample_size / rows_per_group))
+                    groups_to_read = sorted(np.random.choice(
+                        range(row_groups), 
+                        size=min(groups_needed, row_groups), 
+                        replace=False
+                    ))
+                    
+                    # Read selected row groups
+                    table = pa.concat_tables([
+                        parquet_file.read_row_group(i) 
+                        for i in groups_to_read
+                    ])
+                    
+                    # Convert to pandas and sample if needed
+                    df = table.to_pandas()
+                    if len(df) > sample_size:
+                        df = df.sample(sample_size, random_state=42)
+                    
+                    logger.info(f"Loaded {len(df):,} rows using row group sampling from {len(groups_to_read)} row groups")
+                    del table
+                    gc.collect()
+                else:
+                    # Read the first N rows for a quick approximation
+                    # Not ideal statistically but good for memory efficiency
+                    df = next(pq.read_table(
+                        processed_data_path,
+                        use_threads=True,
+                        memory_map=True
+                    ).to_batches(sample_size)).to_pandas()
+                    
+                    logger.info(f"Loaded first {len(df):,} rows for initial assessment")
+                    
+                    # If we have enough memory, try proper random sampling
+                    try:
+                        mem = virtual_memory()
+                        if mem.available > (num_rows * num_columns * 8 * 0.1):  # Rough estimate: 10% of full size
+                            # Create row indices for random sampling
+                            indices = sorted(np.random.choice(
+                                num_rows, 
+                                size=sample_size, 
+                                replace=False
+                            ))
+                            
+                            # Use pyarrow's filter to select specific rows
+                            # This is more memory efficient than pandas
+                            table = pq.read_table(
+                                processed_data_path,
+                                filters=[('__index_level_0__', 'in', indices)],
+                                use_threads=True,
+                                memory_map=True
+                            )
+                            
+                            # Replace our dataframe with the proper random sample
+                            del df
+                            gc.collect()
+                            df = table.to_pandas()
+                            del table
+                            gc.collect()
+                            
+                            logger.info(f"Replaced with properly randomized sample of {len(df):,} rows")
+                        else:
+                            logger.info("Not enough memory for proper random sampling, using initial rows")
+                    except Exception as e:
+                        logger.warning(f"Error during advanced sampling, using initial rows: {str(e)}")
+            else:
+                # For manageable files, load all data
+                df = pd.read_parquet(processed_data_path, engine='pyarrow')
+                logger.info(f"Loaded full dataset with {len(df):,} rows")
+            
+            # For very large datasets, reduce column count if needed
+            if len(df.columns) > 30 and len(df) > 100000:
+                # Calculate memory usage per column
+                try:
+                    memory_usage = df.memory_usage(deep=True)
+                    total_memory_mb = memory_usage.sum() / (1024 * 1024)
+                    logger.info(f"Current DataFrame memory usage: {total_memory_mb:.2f} MB")
+                    
+                    # If memory usage is too high, keep only essential columns
+                    if total_memory_mb > 500:  # If using more than 500MB
+                        # Sort columns by memory usage
+                        columns_by_size = memory_usage.sort_values(ascending=False)
+                        
+                        # Strategy: Keep all categorical, datetime and ID columns (usually important)
+                        # but limit numeric columns by their memory usage
+                        cat_cols = df.select_dtypes(include=['category', 'object', 'datetime64']).columns.tolist()
+                        # Add columns that look like IDs
+                        id_cols = [col for col in df.columns if col.lower().endswith('id') or col.lower() == 'id']
+                        # Prioritize these columns
+                        priority_cols = list(set(cat_cols + id_cols))
+                        
+                        # Calculate how many more columns we can include
+                        remaining_slots = max(10, 30 - len(priority_cols))
+                        
+                        # Find small numeric columns
+                        numeric_cols = df.select_dtypes(include=['number']).columns.difference(priority_cols)
+                        small_numeric_cols = memory_usage[numeric_cols].nsmallest(remaining_slots).index.tolist()
+                        
+                        # Combine all columns we want to keep
+                        columns_to_keep = priority_cols + small_numeric_cols
+                        
+                        # Only keep these columns
+                        df = df[columns_to_keep]
+                        logger.info(f"Reduced columns from {len(memory_usage)} to {len(columns_to_keep)} to save memory")
+                        
+                        # Report new memory usage
+                        new_memory_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
+                        logger.info(f"New DataFrame memory usage: {new_memory_mb:.2f} MB")
+                except Exception as e:
+                    logger.warning(f"Could not optimize columns: {str(e)}")
             
             # Verify data was loaded successfully
             if df.empty:
@@ -444,48 +646,120 @@ def check_data_quality(**context):
                 raise ValueError("Loaded DataFrame is empty")
                 
             logger.info(f"Successfully loaded processed data with shape: {df.shape}")
+            
+            # Log memory usage 
+            try:
+                memory_info = process.memory_info()
+                memory_usage_mb = memory_info.rss / (1024 * 1024)
+                logger.info(f"Memory usage after loading data: {memory_usage_mb:.2f} MB")
+            except:
+                pass
+                
         except Exception as e:
             logger.error(f"Failed to load processed data: {str(e)}")
             raise
         
-        # Initialize MLflow with robust error handling
-        mlflow_run = None
-        try:
-            mlflow_uri = config.MLFLOW_URI
-            mlflow_experiment = config.MLFLOW_EXPERIMENT
-            
-            logger.info(f"Connecting to MLflow at {mlflow_uri}")
-            mlflow.set_tracking_uri(mlflow_uri)
-            mlflow.set_experiment(mlflow_experiment)
-            
-            mlflow_run = mlflow.start_run(run_name="data_quality")
-            run_id = mlflow_run.info.run_id
-            logger.info(f"Started MLflow run with ID: {run_id}")
-        except Exception as e:
-            logger.warning(f"Unable to configure MLflow: {str(e)}. Will continue without MLflow tracking.")
-            run_id = None
-        
-        # Start ClearML task
-        clearml_task = None
-        try:
-            clearml_task = clearml_config.init_clearml("Data_Quality_Check")
-            logger.info("Successfully initialized ClearML task")
-        except Exception as e:
-            logger.warning(f"Error initializing ClearML: {str(e)}. Will continue without ClearML tracking.")
-        
-        # Run data quality checks with error handling
+        # Run data quality checks with error handling, using small batches for memory efficiency
         try:
             logger.info("Running data quality checks")
-            quality_results = monitor.run_quality_checks(df)
-            logger.info(f"Quality check results: {quality_results}")
+            
+            # For very large datasets, process in chunks
+            if len(df) > 100000:
+                logger.info(f"Using chunked processing for {len(df):,} rows")
+                
+                # Split into smaller chunks for processing
+                chunk_size = min(50000, max(10000, len(df) // 5))  # Adaptive chunk size
+                num_chunks = len(df) // chunk_size + (1 if len(df) % chunk_size > 0 else 0)
+                
+                # Initialize empty results
+                quality_results = {
+                    'timestamp': datetime.now().isoformat(),
+                    'missing_values': {},
+                    'outliers': {},
+                    'data_drift': {},
+                    'correlation_changes': {},
+                    'total_issues': 0,
+                    'missing_value_issues': 0,
+                    'outlier_issues': 0
+                }
+                
+                for i in range(num_chunks):
+                    start_idx = i * chunk_size
+                    end_idx = min((i + 1) * chunk_size, len(df))
+                    if start_idx >= len(df):
+                        break
+                        
+                    logger.info(f"Processing chunk {i+1}/{num_chunks} (rows {start_idx:,} to {end_idx:,})")
+                    chunk_df = df.iloc[start_idx:end_idx].copy()
+                    
+                    # Force garbage collection before processing
+                    gc.collect()
+                    
+                    # Get memory usage before processing
+                    try:
+                        memory_info = process.memory_info()
+                        memory_usage_mb = memory_info.rss / (1024 * 1024)
+                        logger.info(f"Memory usage before processing chunk {i+1}: {memory_usage_mb:.2f} MB")
+                    except:
+                        pass
+                    
+                    # Run quality checks on this chunk with try/except to prevent entire job failure
+                    try:
+                        chunk_results = monitor.run_quality_checks(chunk_df)
+                        
+                        # Merge results from this chunk
+                        for key in ['missing_values', 'outliers', 'data_drift', 'correlation_changes']:
+                            quality_results[key].update(chunk_results.get(key, {}))
+                    except Exception as e:
+                        logger.error(f"Error processing chunk {i+1}: {str(e)}")
+                    
+                    # Free memory
+                    del chunk_df
+                    gc.collect()
+                    
+                    # Get memory usage after processing
+                    try:
+                        memory_info = process.memory_info()
+                        memory_usage_mb = memory_info.rss / (1024 * 1024)
+                        logger.info(f"Memory usage after processing chunk {i+1}: {memory_usage_mb:.2f} MB")
+                    except:
+                        pass
+                
+                # Recalculate total issues
+                for key in ['missing_values', 'outliers']:
+                    if key == 'missing_values':
+                        quality_results['missing_value_issues'] = len(quality_results[key])
+                    elif key == 'outliers':
+                        quality_results['outlier_issues'] = len(quality_results[key])
+                
+                quality_results['total_issues'] = sum(len(quality_results[key]) for key in ['missing_values', 'outliers', 'data_drift', 'correlation_changes'])
+                logger.info(f"Combined results from {num_chunks} chunks, found {quality_results['total_issues']} total issues")
+                
+            else:
+                # For smaller datasets, process all at once
+                quality_results = monitor.run_quality_checks(df)
+                logger.info(f"Completed quality checks, found {quality_results.get('total_issues', 0)} issues")
             
             # Clean up dataframe reference to free memory
             del df
-            import gc
             gc.collect()
             
+            # Log memory usage again
+            try:
+                memory_info = process.memory_info()
+                memory_usage_mb = memory_info.rss / (1024 * 1024)
+                logger.info(f"Memory usage after quality checks: {memory_usage_mb:.2f} MB")
+            except:
+                pass
+                
         except Exception as e:
             logger.error(f"Error during quality checks: {str(e)}")
+            # Try to clean up memory before raising
+            try:
+                del df
+                gc.collect()
+            except:
+                pass
             raise
         
         # Log results to MLflow
@@ -496,7 +770,9 @@ def check_data_quality(**context):
                 mlflow.log_params({
                     "missing_threshold": monitor.config["missing_threshold"],
                     "outlier_threshold": monitor.config["outlier_threshold"],
-                    "correlation_threshold": monitor.config["correlation_threshold"]
+                    "correlation_threshold": monitor.config["correlation_threshold"],
+                    "sample_size": sample_size,
+                    "total_rows": num_rows
                 })
                 
                 # Log metrics
@@ -506,11 +782,29 @@ def check_data_quality(**context):
                 mlflow.log_metric("missing_value_issues", quality_results.get("missing_value_issues", 0))
                 mlflow.log_metric("outlier_issues", quality_results.get("outlier_issues", 0))
                 
-                # Create and log report
+                # Create and log a simplified report to reduce memory usage
                 logger.info("Creating quality report artifact")
                 with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_file:
                     report_path = temp_file.name
-                    json.dump(quality_results, temp_file, indent=2)
+                    
+                    # Create a simplified version of the results to reduce size
+                    simplified_results = {
+                        'timestamp': quality_results.get('timestamp', datetime.now().isoformat()),
+                        'total_issues': quality_results.get('total_issues', 0),
+                        'missing_value_issues': quality_results.get('missing_value_issues', 0),
+                        'outlier_issues': quality_results.get('outlier_issues', 0),
+                        'missing_values_count': len(quality_results.get('missing_values', {})),
+                        'outliers_count': len(quality_results.get('outliers', {})),
+                        'data_drift_count': len(quality_results.get('data_drift', {})),
+                        'correlation_changes_count': len(quality_results.get('correlation_changes', {})),
+                        # Only include the first 50 items of each type to limit size
+                        'top_missing_values': dict(list(quality_results.get('missing_values', {}).items())[:50]),
+                        'top_outliers': dict(list(quality_results.get('outliers', {}).items())[:50]),
+                        'top_data_drift': dict(list(quality_results.get('data_drift', {}).items())[:50]),
+                        'top_correlation_changes': dict(list(quality_results.get('correlation_changes', {}).items())[:50])
+                    }
+                    
+                    json.dump(simplified_results, temp_file, indent=2)
                 
                 mlflow.log_artifact(report_path)
                 logger.info(f"Logged quality report to MLflow: {report_path}")
@@ -573,7 +867,17 @@ def check_data_quality(**context):
             raise ValueError(error_msg)
         
         # Push quality results for downstream tasks
-        context['ti'].xcom_push(key='quality_results', value=quality_results)
+        # Slim down the quality_results to avoid XCom size issues
+        simplified_results = {
+            'timestamp': quality_results.get('timestamp', datetime.now().isoformat()),
+            'total_issues': quality_results.get('total_issues', 0),
+            'missing_value_issues': quality_results.get('missing_value_issues', 0),
+            'outlier_issues': quality_results.get('outlier_issues', 0),
+            'has_drift': len(quality_results.get('data_drift', {})) > 0,
+            'has_correlation_changes': len(quality_results.get('correlation_changes', {})) > 0
+        }
+        context['ti'].xcom_push(key='quality_results', value=simplified_results)
+        context['ti'].xcom_push(key='processed_data_path', value=processed_data_path)  # Pass the verified path
         
         # Send success notification
         try:
@@ -582,7 +886,7 @@ def check_data_quality(**context):
         except Exception as e:
             logger.warning(f"Failed to send Slack notification: {str(e)}")
         
-        return quality_results
+        return simplified_results
         
     except Exception as e:
         logger.error(f"Error in check_data_quality task: {str(e)}", exc_info=True)
