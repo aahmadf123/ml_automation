@@ -73,18 +73,47 @@ logger = logging.getLogger(__name__)
 quality_monitor = DataQualityMonitor()
 
 @cache_result
-def load_data_to_dataframe(parquet_path: str) -> pd.DataFrame:
+def load_data_to_dataframe(file_path: str) -> pd.DataFrame:
     """
-    Read Parquet from local path into DataFrame with advanced pyarrow optimizations.
+    Read data from file into DataFrame with automatic file format detection.
+    Supports Parquet and CSV formats.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq
+    import os
     
-    # Use multi-threaded reading for better performance
-    table = pq.read_table(parquet_path, use_threads=True)
+    # Detect file format from extension
+    file_extension = os.path.splitext(file_path)[1].lower()
     
-    # Convert to pandas
-    df = table.to_pandas()
+    if file_extension == '.parquet':
+        # Use multi-threaded reading for better performance with Parquet
+        logging.info(f"Loading Parquet file: {file_path}")
+        table = pq.read_table(file_path, use_threads=True)
+        df = table.to_pandas()
+        # Clean up the Arrow table to free memory
+        del table
+    elif file_extension == '.csv':
+        # Use pandas for CSV files
+        logging.info(f"Loading CSV file: {file_path}")
+        df = pd.read_csv(file_path)
+    else:
+        # Try to infer format from content
+        logging.warning(f"Unknown file extension: {file_extension}. Attempting to detect format.")
+        try:
+            # First try parquet
+            try:
+                table = pq.read_table(file_path, use_threads=True)
+                df = table.to_pandas()
+                del table
+                logging.info(f"Successfully read file as Parquet: {file_path}")
+            except Exception as e:
+                # If parquet fails, try CSV
+                logging.info(f"Parquet read failed, trying CSV: {str(e)}")
+                df = pd.read_csv(file_path)
+                logging.info(f"Successfully read file as CSV: {file_path}")
+        except Exception as e:
+            logging.error(f"Failed to read file with auto-detection: {str(e)}")
+            raise ValueError(f"Could not determine format for {file_path}. Error: {str(e)}")
     
     # Downcast numeric columns to reduce memory usage
     for col in df.select_dtypes(include=['float64']).columns:
@@ -92,12 +121,10 @@ def load_data_to_dataframe(parquet_path: str) -> pd.DataFrame:
     for col in df.select_dtypes(include=['int64']).columns:
         df[col] = pd.to_numeric(df[col], downcast='integer')
     
-    # Clean up the Arrow table to free memory
-    del table
     import gc
     gc.collect()
     
-    logging.info(f"Loaded data from {parquet_path}, shape={df.shape}")
+    logging.info(f"Loaded data from {file_path}, shape={df.shape}")
     return df
 
 
@@ -361,6 +388,20 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
     start_time = time.time()
     logger.info(f"Starting simplified preprocessing pipeline on {data_path}")
     
+    # Ensure output path has the correct extension
+    input_ext = os.path.splitext(data_path)[1].lower()
+    output_ext = os.path.splitext(output_path)[1].lower()
+    
+    # If input is a CSV, but output was specified as a Parquet, keep Parquet for efficiency
+    # If output doesn't have an extension, add .parquet
+    if not output_ext:
+        output_path = output_path + ".parquet"
+        logger.info(f"Set output path to {output_path}")
+    elif input_ext == '.csv' and output_ext != '.parquet':
+        # Replace output extension with .parquet for better performance and storage
+        output_path = os.path.splitext(output_path)[0] + ".parquet"
+        logger.info(f"Changed output format to Parquet: {output_path}")
+    
     # Check if output already exists
     if os.path.exists(output_path) and not force_reprocess:
         logger.info(f"Processed file already exists at {output_path}, skipping preprocessing")
@@ -438,7 +479,16 @@ def preprocess_data(data_path, output_path, force_reprocess=False):
         os.makedirs(output_dir, exist_ok=True)
         
     # Use efficient Parquet writing
-    df.to_parquet(output_path, index=False, compression="snappy")
+    if output_path.endswith('.parquet'):
+        df.to_parquet(output_path, index=False, compression="snappy")
+        logger.info(f"Saved data as Parquet with snappy compression")
+    elif output_path.endswith('.csv'):
+        df.to_csv(output_path, index=False)
+        logger.info(f"Saved data as CSV")
+    else:
+        # Default to Parquet for unknown extensions
+        df.to_parquet(output_path, index=False, compression="snappy") 
+        logger.info(f"Saved data as Parquet (default format)")
     
     # 13. Validate final schema
     try:
