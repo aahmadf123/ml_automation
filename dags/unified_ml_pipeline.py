@@ -2707,61 +2707,62 @@ dag = DAG(
     tags=['ml', 'pipeline', 'training'],
 )
 
-# Create tasks
-# Import task for importing raw data
-import_data_task = PythonOperator(
-    task_id='import_data_task',
-    python_callable=download_data,
-    provide_context=True,
-)
-
-# Preprocess task for data preprocessing
-preprocess_data_task = PythonOperator(
-    task_id='preprocess_data_task',
-    python_callable=process_data,
-    provide_context=True,
-    trigger_rule='all_success',  # Only run if import was successful
-)
-
-# Data validation task
-validate_data_task = PythonOperator(
-    task_id='validate_data_task',
-    python_callable=run_data_quality_checks,
-    provide_context=True,
-    trigger_rule='all_success',  # Only run if preprocessing was successful
-)
-
-# Wait for data validation task
-wait_for_data_validation_task = PythonOperator(
-    task_id='wait_for_data_validation_task',
-    python_callable=wait_for_data_validation,
-    provide_context=True,
-    trigger_rule='all_success',  # Only run if validation was successful
-)
-
-# Train models task
-train_models_task = PythonOperator(
-    task_id='train_models_task',
-    python_callable=train_models,
-    provide_context=True,
-    trigger_rule='all_success',  # Only run if validation approval was given
-)
-
-# Wait for model approval task
-wait_for_model_approval_task = PythonOperator(
-    task_id='wait_for_model_approval_task',
-    python_callable=wait_for_model_approval,
-    provide_context=True,
-    trigger_rule='all_success',  # Only run if training was successful
-)
-
-# Deploy model task
-deploy_model_task = PythonOperator(
-    task_id='deploy_model_task',
-    python_callable=deploy_model,
-    provide_context=True,
-    trigger_rule='all_success',  # Only run if model approval was given
-)
-
-# Define task dependencies
-import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> wait_for_model_approval_task >> deploy_model_task
+# Create tasks within the DAG context
+with dag:
+    # Import task for importing raw data
+    import_data_task = PythonOperator(
+        task_id='import_data_task',
+        python_callable=download_data,
+        provide_context=True,
+    )
+    
+    # Preprocess task for data preprocessing
+    preprocess_data_task = PythonOperator(
+        task_id='preprocess_data_task',
+        python_callable=process_data,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if import was successful
+    )
+    
+    # Data validation task
+    validate_data_task = PythonOperator(
+        task_id='validate_data_task',
+        python_callable=run_data_quality_checks,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if preprocessing was successful
+    )
+    
+    # Wait for data validation task
+    wait_for_data_validation_task = PythonOperator(
+        task_id='wait_for_data_validation_task',
+        python_callable=wait_for_data_validation,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if validation was successful
+    )
+    
+    # Train models task
+    train_models_task = PythonOperator(
+        task_id='train_models_task',
+        python_callable=train_models,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if validation approval was given
+    )
+    
+    # Wait for model approval task
+    wait_for_model_approval_task = PythonOperator(
+        task_id='wait_for_model_approval_task',
+        python_callable=wait_for_model_approval,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if training was successful
+    )
+    
+    # Deploy model task
+    deploy_model_task = PythonOperator(
+        task_id='deploy_model_task',
+        python_callable=deploy_model,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if model approval was given
+    )
+    
+    # Define task dependencies
+    import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> wait_for_model_approval_task >> deploy_model_task
