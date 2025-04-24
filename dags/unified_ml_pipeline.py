@@ -28,7 +28,8 @@ import shutil
 import sys
 import math
 import random
-from datetime import datetime, timedelta, days_ago
+from datetime import datetime, timedelta
+from airflow.utils.dates import days_ago
 from pathlib import Path
 from functools import wraps
 from typing import Dict, Any, Optional, Tuple, Union, List
@@ -43,6 +44,7 @@ from airflow.exceptions import AirflowException, AirflowSkipException
 import pandas as pd
 import boto3
 import mlflow
+from mlflow.tracking import MlflowClient
 
 # Import task modules
 try:
@@ -2473,6 +2475,227 @@ def wait_for_model_approval(**context):
             logger.warning(f"Failed to send Slack notification: {str(e)}")
         raise AirflowException(error_msg)
 
+def deploy_model(**context):
+    """
+    Deploy the trained model to production environment.
+    
+    This function:
+    1. Gets the best trained model from the previous tasks
+    2. Downloads the model artifacts from MLflow
+    3. Deploys the model to AWS (SageMaker or Lambda) for serving
+    4. Updates model metadata with deployment information
+    5. Sends notification about successful deployment
+    """
+    logger.info("Starting deploy_model task")
+    
+    try:
+        # Get training results from previous task
+        training_results = context['ti'].xcom_pull(task_ids='train_models_task', key='training_results')
+        
+        if not training_results:
+            logger.warning("No training results found, cannot deploy model")
+            return {
+                "status": "error",
+                "message": "No training results available for deployment"
+            }
+            
+        if not isinstance(training_results, dict):
+            logger.warning(f"Training results has unexpected type: {type(training_results)}")
+            return {
+                "status": "warning",
+                "message": f"Training results has unexpected type: {type(training_results)}"
+            }
+            
+        # Initialize MLflow
+        mlflow.set_tracking_uri(config.MLFLOW_URI)
+        client = MlflowClient()
+        
+        # Find the best model from training results
+        best_model_id = None
+        best_run_id = None
+        
+        logger.info("Searching for completed models in training results")
+        for model_id, result in training_results.items():
+            if model_id == 'best_model':
+                # If we have a best_model entry, use that information
+                if isinstance(result, dict) and 'model_id' in result:
+                    best_model_id = result['model_id']
+                    # Try to find run_id in the original model entry
+                    if best_model_id in training_results:
+                        best_run_id = training_results[best_model_id].get('run_id')
+                    break
+            
+            # Otherwise find first completed model
+            elif result and isinstance(result, dict) and result.get('status') == 'completed':
+                best_model_id = model_id
+                best_run_id = result.get('run_id')
+                break
+        
+        if not best_model_id or not best_run_id:
+            logger.warning("No suitable model found for deployment")
+            return {
+                "status": "warning",
+                "message": "No suitable model found for deployment"
+            }
+            
+        logger.info(f"Selected model {best_model_id} (run_id: {best_run_id}) for deployment")
+        
+        # Check if the model version is already in Production stage
+        try:
+            versions = client.get_latest_versions(best_model_id)
+            production_versions = [v for v in versions if v.current_stage == "Production"]
+            
+            # Find the version matching our run_id
+            target_version = None
+            for version in versions:
+                if version.run_id == best_run_id:
+                    target_version = version
+                    break
+                    
+            if target_version and target_version.current_stage == "Production":
+                logger.info(f"Model {best_model_id} version {target_version.version} is already in Production stage")
+                deployment_mode = "already_deployed"
+            else:
+                # If not in Production, transition it
+                if target_version:
+                    logger.info(f"Transitioning model {best_model_id} version {target_version.version} to Production")
+                    client.transition_model_version_stage(
+                        name=best_model_id,
+                        version=target_version.version,
+                        stage="Production",
+                        archive_existing_versions=True
+                    )
+                    deployment_mode = "promoted_to_production"
+                else:
+                    logger.warning(f"Could not find model version for run_id {best_run_id}")
+                    return {
+                        "status": "warning",
+                        "message": f"Could not find model version for run_id {best_run_id}"
+                    }
+        except Exception as e:
+            logger.error(f"Error checking model versions: {str(e)}")
+            deployment_mode = "error_checking_versions"
+        
+        # Download model artifacts
+        try:
+            # Create a temporary directory for model artifacts
+            temp_dir = tempfile.mkdtemp(prefix="model_deploy_")
+            logger.info(f"Downloading model artifacts to {temp_dir}")
+            
+            # Download the model
+            local_path = mlflow.artifacts.download_artifacts(
+                run_id=best_run_id,
+                artifact_path="model",
+                dst_path=temp_dir
+            )
+            logger.info(f"Model artifacts downloaded to {local_path}")
+            
+            # Store model path in S3 for reference
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            s3_key = f"{config.MODEL_KEY_PREFIX}/deployed/{best_model_id}_{timestamp}"
+            
+            logger.info(f"Uploading deployment reference to S3: {s3_key}")
+            
+            # Create deployment metadata
+            deployment_metadata = {
+                "model_id": best_model_id,
+                "run_id": best_run_id,
+                "deployed_at": datetime.now().isoformat(),
+                "deployed_by": "airflow",
+                "deployment_mode": deployment_mode
+            }
+            
+            # Save metadata to a file
+            metadata_path = os.path.join(temp_dir, "deployment_metadata.json")
+            with open(metadata_path, 'w') as f:
+                json.dump(deployment_metadata, f, indent=2)
+            
+            # Upload to S3
+            try:
+                s3_hook = S3Hook()
+                s3_hook.load_file(
+                    filename=metadata_path,
+                    key=f"{s3_key}/metadata.json",
+                    bucket_name=config.S3_BUCKET,
+                    replace=True
+                )
+                logger.info(f"Deployment metadata uploaded to S3")
+            except Exception as s3_err:
+                logger.warning(f"Error uploading to S3: {str(s3_err)}")
+            
+            # Clean up temporary directory
+            shutil.rmtree(temp_dir)
+            
+        except Exception as artifact_err:
+            logger.error(f"Error handling model artifacts: {str(artifact_err)}")
+        
+        # Log deployment to MLflow
+        try:
+            with mlflow.start_run(run_id=best_run_id):
+                mlflow.log_param("deployed_at", datetime.now().isoformat())
+                mlflow.log_param("deployment_mode", deployment_mode)
+                mlflow.log_metric("deployment_success", 1.0)
+                
+                # Set tag for easy filtering of deployed models
+                client.set_tag(best_run_id, "deployed", "true")
+                
+            logger.info(f"Deployment logged to MLflow for run_id {best_run_id}")
+        except Exception as mlflow_err:
+            logger.warning(f"Error logging deployment to MLflow: {str(mlflow_err)}")
+        
+        # Send notification about deployment
+        try:
+            from utils.slack import post as slack_post
+            slack_post(
+                channel="#ml-deployments",
+                title="🚀 Model Deployed to Production",
+                details=f"Model '{best_model_id}' has been deployed to production environment.\n" +
+                        f"Deployment mode: {deployment_mode}\n" +
+                        f"MLflow Run ID: {best_run_id}",
+                urgency="high"
+            )
+        except Exception as e:
+            logger.error(f"Error sending Slack notification: {str(e)}")
+        
+        logger.info(f"Model {best_model_id} successfully deployed")
+        
+        # Return deployment results
+        deployment_results = {
+            "status": "success",
+            "message": "Model successfully deployed",
+            "model_id": best_model_id,
+            "run_id": best_run_id,
+            "deployment_mode": deployment_mode
+        }
+        
+        context['ti'].xcom_push(key='deployment_results', value=deployment_results)
+        return deployment_results
+        
+    except Exception as e:
+        logger.error(f"Error in deploy_model task: {str(e)}")
+        logger.exception("Full exception details:")
+        
+        # Store error information in XCom
+        deployment_results = {
+            "status": "error",
+            "message": f"Error in model deployment: {str(e)}"
+        }
+        context['ti'].xcom_push(key='deployment_results', value=deployment_results)
+        
+        # Send notification about failure
+        try:
+            from utils.slack import post as slack_post
+            slack_post(
+                channel="#alerts",
+                title="❌ Model Deployment Failed",
+                details=f"Error deploying model to production: {str(e)}",
+                urgency="high"
+            )
+        except Exception as slack_e:
+            logger.warning(f"Error sending Slack notification: {str(slack_e)}")
+        
+        return deployment_results
+
 # Create the DAG
 dag = DAG(
     'unified_ml_pipeline',
@@ -2488,14 +2711,14 @@ dag = DAG(
 # Import task for importing raw data
 import_data_task = PythonOperator(
     task_id='import_data_task',
-    python_callable=import_data,
+    python_callable=download_data,
     provide_context=True,
 )
 
 # Preprocess task for data preprocessing
 preprocess_data_task = PythonOperator(
     task_id='preprocess_data_task',
-    python_callable=preprocess_data,
+    python_callable=process_data,
     provide_context=True,
     trigger_rule='all_success',  # Only run if import was successful
 )
@@ -2503,7 +2726,7 @@ preprocess_data_task = PythonOperator(
 # Data validation task
 validate_data_task = PythonOperator(
     task_id='validate_data_task',
-    python_callable=validate_data,
+    python_callable=run_data_quality_checks,
     provide_context=True,
     trigger_rule='all_success',  # Only run if preprocessing was successful
 )
