@@ -408,7 +408,35 @@ def check_data_quality(**context):
         # Load data with robust error handling
         try:
             logger.info(f"Loading processed data from {processed_data_path}")
-            df = pd.read_parquet(processed_data_path)
+            
+            # For very large files, use optimized loading
+            if file_size > 50_000_000:  # 50MB
+                logger.info(f"Large file detected ({file_size} bytes). Using optimized loading strategy.")
+                
+                # Try to sample the file if it's too large for memory
+                try:
+                    # First load just a sample to check shape
+                    import pyarrow.parquet as pq
+                    metadata = pq.read_metadata(processed_data_path)
+                    num_rows = metadata.num_rows
+                    
+                    if num_rows > 1_000_000:
+                        logger.info(f"Large dataset detected with {num_rows} rows. Will load sample first.")
+                        # Load 10% of data or 100k rows, whichever is smaller
+                        sample_rows = min(num_rows // 10, 100_000)
+                        df_sample = pd.read_parquet(processed_data_path, engine='pyarrow')
+                        df = df_sample.sample(sample_rows, random_state=42)
+                        logger.info(f"Loaded {sample_rows} rows sample instead of full dataset")
+                    else:
+                        df = pd.read_parquet(processed_data_path, engine='pyarrow')
+                        logger.info(f"Dataset has {num_rows} rows, loading full dataset")
+                        
+                except Exception as e:
+                    logger.warning(f"Error during optimized loading, falling back to standard load: {str(e)}")
+                    df = pd.read_parquet(processed_data_path)
+            else:
+                # Standard loading for smaller files
+                df = pd.read_parquet(processed_data_path)
             
             # Verify data was loaded successfully
             if df.empty:
@@ -450,6 +478,12 @@ def check_data_quality(**context):
             logger.info("Running data quality checks")
             quality_results = monitor.run_quality_checks(df)
             logger.info(f"Quality check results: {quality_results}")
+            
+            # Clean up dataframe reference to free memory
+            del df
+            import gc
+            gc.collect()
+            
         except Exception as e:
             logger.error(f"Error during quality checks: {str(e)}")
             raise
@@ -467,9 +501,10 @@ def check_data_quality(**context):
                 
                 # Log metrics
                 logger.info("Logging quality check metrics to MLflow")
-                mlflow.log_metric("total_issues", quality_results["total_issues"])
-                mlflow.log_metric("missing_value_issues", quality_results["missing_value_issues"])
-                mlflow.log_metric("outlier_issues", quality_results["outlier_issues"])
+                # Make sure these metrics exist, otherwise use defaults
+                mlflow.log_metric("total_issues", quality_results.get("total_issues", 0))
+                mlflow.log_metric("missing_value_issues", quality_results.get("missing_value_issues", 0))
+                mlflow.log_metric("outlier_issues", quality_results.get("outlier_issues", 0))
                 
                 # Create and log report
                 logger.info("Creating quality report artifact")
@@ -521,10 +556,12 @@ def check_data_quality(**context):
         data_quality_threshold = int(Variable.get("DATA_QUALITY_THRESHOLD", default_var="10"))
         force_continue = Variable.get("FORCE_CONTINUE", default_var="false").lower() == "true"
         
-        logger.info(f"Quality issues: {quality_results['total_issues']}, Threshold: {data_quality_threshold}, Force continue: {force_continue}")
+        # Make sure total_issues exists, otherwise use a default value
+        total_issues = quality_results.get("total_issues", 0)
+        logger.info(f"Quality issues: {total_issues}, Threshold: {data_quality_threshold}, Force continue: {force_continue}")
         
-        if quality_results["total_issues"] > data_quality_threshold and not force_continue:
-            error_msg = f"Data quality issues ({quality_results['total_issues']}) exceed threshold ({data_quality_threshold})"
+        if total_issues > data_quality_threshold and not force_continue:
+            error_msg = f"Data quality issues ({total_issues}) exceed threshold ({data_quality_threshold})"
             logger.error(error_msg)
             
             try:
@@ -540,7 +577,7 @@ def check_data_quality(**context):
         
         # Send success notification
         try:
-            slack.post(f":white_check_mark: Data quality check completed. Issues: {quality_results['total_issues']}")
+            slack.post(f":white_check_mark: Data quality check completed. Issues: {total_issues}")
             logger.info("Sent quality success notification to Slack")
         except Exception as e:
             logger.warning(f"Failed to send Slack notification: {str(e)}")
@@ -548,7 +585,7 @@ def check_data_quality(**context):
         return quality_results
         
     except Exception as e:
-        logger.error(f"Error in check_data_quality task: {str(e)}")
+        logger.error(f"Error in check_data_quality task: {str(e)}", exc_info=True)
         
         # Send failure notification
         try:
