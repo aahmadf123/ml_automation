@@ -1011,7 +1011,7 @@ def profile_dataframe_with_swifter(df, sample_size=10000):
         'timestamp': datetime.now().isoformat(),
         'shape': df.shape,
         'memory_usage_mb': df.memory_usage(deep=True).sum() / 1024 / 1024,
-        'column_types': df.dtypes.value_counts().to_dict()
+        'column_types': {str(k): v for k, v in df.dtypes.value_counts().to_dict().items()}
     }
     
     # Missing values - use swifter for parallel processing
