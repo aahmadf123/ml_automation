@@ -137,6 +137,38 @@ def download_data(**context):
     logger.info(f"Using bucket from Airflow Variables: {bucket}")
     logger.info(f"Attempting to access data at s3://{bucket}/{key}")
     
+    # Add debugging to list objects in the bucket
+    try:
+        s3_client = boto3.client('s3', region_name=config.AWS_REGION)
+        logger.info("Listing objects in the bucket for debugging:")
+        
+        # List objects in the raw_data directory
+        raw_data_prefix = "raw-data/"
+        logger.info(f"Objects with prefix '{raw_data_prefix}':")
+        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=raw_data_prefix)
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                logger.info(f"  - {obj['Key']} ({obj['Size']} bytes)")
+        else:
+            logger.warning(f"No objects found with prefix '{raw_data_prefix}'")
+            
+        # Try also with raw-data (hyphenated) just in case
+        alt_prefix = "raw_data/"
+        logger.info(f"Objects with alternate prefix '{alt_prefix}':")
+        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=alt_prefix)
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                logger.info(f"  - {obj['Key']} ({obj['Size']} bytes)")
+                # If the file is found here, update the key to use this path
+                if obj['Key'].endswith('ut_loss_history_1.csv'):
+                    key = obj['Key']
+                    logger.info(f"Found target file at alternate path, updating key to: {key}")
+        else:
+            logger.warning(f"No objects found with alternate prefix '{alt_prefix}'")
+            
+    except Exception as e:
+        logger.warning(f"Error listing objects in bucket: {str(e)}")
+    
     try:
         # Create a list of potential data directories, in order of preference
         potential_dirs = [
@@ -205,7 +237,7 @@ def download_data(**context):
             
             # Download directly to the persistent location
             s3_client = boto3.client('s3', region_name=config.AWS_REGION)
-            logger.info(f"Downloading to {local_path}")
+            logger.info(f"Downloading from s3://{bucket}/{key} to {local_path}")
             s3_client.download_file(bucket, key, local_path)
             data_path = local_path
             logger.info(f"Successfully downloaded to {local_path}")

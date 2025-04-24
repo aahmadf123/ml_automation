@@ -115,7 +115,7 @@ REFERENCE_KEY       = "reference/reference_means.csv"
 REFERENCE_KEY_PREFIX= "reference"
 MODELS_FOLDER       = "models"
 MODEL_KEY_PREFIX    = "models"  # Prefix for model files in S3
-LOGS_FOLDER         = "logs"
+LOGS_FOLDER         = "airflow/logs"
 ARCHIVE_FOLDER      = get_ssm_parameter('S3_ARCHIVE_FOLDER', 'archive')
 
 # ─── DRIFT CONFIG ────────────────────────────────────────────────────────────

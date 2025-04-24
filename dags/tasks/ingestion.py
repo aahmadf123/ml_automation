@@ -47,9 +47,46 @@ def check_s3_file_exists(bucket: str, key: str) -> bool:
         log.error(f"Error checking S3 file: {str(e)}")
         raise
 
-def ingest_data_from_s3() -> str:
+def list_s3_objects(bucket: str, prefix: str) -> list:
+    """
+    List objects in S3 bucket with the given prefix for debugging.
+    
+    Args:
+        bucket: S3 bucket name
+        prefix: S3 object prefix
+        
+    Returns:
+        list: List of object keys
+    """
+    import boto3
+    
+    s3_client = boto3.client("s3")
+    log.info(f"Listing objects in bucket '{bucket}' with prefix '{prefix}'")
+    
+    try:
+        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        
+        if 'Contents' in response:
+            objects = []
+            for obj in response['Contents']:
+                log.info(f"Found: {obj['Key']} ({obj['Size']} bytes)")
+                objects.append(obj['Key'])
+            return objects
+        else:
+            log.warning(f"No objects found with prefix '{prefix}'")
+            return []
+    except Exception as e:
+        log.error(f"Error listing S3 objects: {str(e)}")
+        return []
+
+def ingest_data_from_s3(bucket_name: Optional[str] = None, key: Optional[str] = None, local_path: Optional[str] = None) -> str:
     """
     Efficiently process large CSV file from S3 using advanced pyarrow 14.0.2 features.
+    
+    Args:
+        bucket_name: S3 bucket name (optional, uses DATA_BUCKET from config if not provided)
+        key: S3 object key (optional, uses default path if not provided)
+        local_path: Local path to save the file (optional, uses default if not provided)
     
     This function:
     1. Checks if the file exists in S3
@@ -90,12 +127,42 @@ def ingest_data_from_s3() -> str:
             import pyarrow.compute as pc
             import smart_open
         
-        # S3 paths
-        s3_key = f"{S3_DATA_FOLDER}/ut_loss_history_1.csv"
-        s3_bucket = DATA_BUCKET
-        s3_uri = f"s3://{s3_bucket}/{s3_key}"
+        # Use provided parameters or defaults
+        s3_bucket = bucket_name or DATA_BUCKET
+        s3_key = key or f"{S3_DATA_FOLDER}/ut_loss_history_1.csv"
+        output_path = local_path or LOCAL_PARQUET_PATH
         
-        # Check if file exists in S3
+        s3_uri = f"s3://{s3_bucket}/{s3_key}"
+        log.info(f"Ingesting data from: {s3_uri}")
+        log.info(f"Output path: {output_path}")
+        
+        # Debug: List objects in both raw_data and raw-data folders to find the file
+        raw_data_objects = list_s3_objects(s3_bucket, "raw_data/")
+        raw_hyphen_objects = list_s3_objects(s3_bucket, "raw-data/")
+        
+        # If file not found in specified path but found in another folder, update the key
+        target_filename = os.path.basename(s3_key)
+        
+        if not check_s3_file_exists(s3_bucket, s3_key):
+            log.warning(f"File not found at {s3_uri}, searching in alternate locations")
+            
+            # Try to find the file in raw_data/
+            if not s3_key.startswith("raw_data/"):
+                for obj_key in raw_data_objects:
+                    if obj_key.endswith(target_filename):
+                        s3_key = obj_key
+                        log.info(f"Found file in raw_data/ folder: {s3_key}")
+                        break
+                        
+            # Try to find the file in raw-data/
+            if not check_s3_file_exists(s3_bucket, s3_key) and not s3_key.startswith("raw-data/"):
+                for obj_key in raw_hyphen_objects:
+                    if obj_key.endswith(target_filename):
+                        s3_key = obj_key
+                        log.info(f"Found file in raw-data/ folder: {s3_key}")
+                        break
+        
+        # Final check if file exists
         if not check_s3_file_exists(s3_bucket, s3_key):
             error_msg = f"Data file not found in S3: {s3_uri}"
             log.error(error_msg)
@@ -109,7 +176,7 @@ def ingest_data_from_s3() -> str:
             )
             raise FileNotFoundError(error_msg)
         
-        log.info(f"Processing file from {s3_uri} with advanced pyarrow 14.0.2 optimizations")
+        log.info(f"Processing file from s3://{s3_bucket}/{s3_key} with advanced pyarrow 14.0.2 optimizations")
         
         # Initialize S3 client
         s3_client = boto3.client('s3', region_name=AWS_REGION)
@@ -151,10 +218,14 @@ def ingest_data_from_s3() -> str:
             
             # We don't need a scanner since we already have the full arrow_table
             # Just write directly to parquet using advanced features of pyarrow 14.0.2
-            log.info(f"Writing to Parquet with ZSTD compression: {LOCAL_PARQUET_PATH}")
+            log.info(f"Writing to Parquet with ZSTD compression: {output_path}")
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
             pq.write_table(
                 arrow_table,
-                LOCAL_PARQUET_PATH,
+                output_path,
                 compression='zstd',
                 compression_level=3,
                 use_dictionary=True,
@@ -169,16 +240,16 @@ def ingest_data_from_s3() -> str:
             gc.collect()
             
             # Verify the file was created
-            if not os.path.exists(LOCAL_PARQUET_PATH):
-                raise FileNotFoundError(f"Parquet file not created: {LOCAL_PARQUET_PATH}")
+            if not os.path.exists(output_path):
+                raise FileNotFoundError(f"Parquet file not created: {output_path}")
             
-            file_size_mb = os.path.getsize(LOCAL_PARQUET_PATH) / (1024 * 1024)
-            log.info(f"Successfully converted to Parquet: {LOCAL_PARQUET_PATH} ({file_size_mb:.2f} MB)")
+            file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            log.info(f"Successfully converted to Parquet: {output_path} ({file_size_mb:.2f} MB)")
             
             # Remove temporary CSV file
             os.unlink(temp_csv_path)
             
-            return LOCAL_PARQUET_PATH
+            return output_path
             
         except Exception as e:
             log.error(f"Error in PyArrow processing: {str(e)}")
