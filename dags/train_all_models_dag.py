@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-train_all_models_dag.py - Efficient parallel training DAG for all 5 models
-----------------------------------------------------------
-This DAG trains all 5 models in parallel with optimized data preparation:
- • Shares data loading and preprocessing step across all models
- • Uses parallel processing when possible
- • Reuses common SHAP explanations and baseline metrics
- • Implements intelligent training skip based on historical performance
- • Reports unified results across all models
- • Sends summary notifications via Slack
+train_all_models_dag.py - Main DAG for training multiple models
+--------------------------------------------------------------
+This DAG efficiently trains five models in parallel, shares data preparation steps,
+and implements intelligent training skip based on historical performance.
 """
 
+import os
+import json
+import logging
+import tempfile
 from datetime import datetime, timedelta
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.amazon.aws.operators.s3 import S3CopyObjectOperator
+from airflow.models import Variable, XCom
+from airflow.exceptions import AirflowException
 from airflow.hooks.S3_hook import S3Hook
-from airflow.models import Variable
+from airflow.providers.amazon.aws.operators.s3 import S3CopyObjectOperator
 
-import logging
-import os
-import tempfile
+from dags.tasks.data_prep import prepare_dataset
+from dags.tasks.training import train_multiple_models
+from dags.tasks.archiving import archive_to_s3
+from dags.tasks.model_comparison import compare_model_results
 
-from tasks.training import train_multiple_models
-from tasks.data_prep import fetch_and_prep_data
-from utils.config import S3_BUCKET, MODEL_CONFIG
+from dags.utils.config import S3_BUCKET, MODEL_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def prepare_data_fn(**context):
         temp_dir = tempfile.mkdtemp(prefix="airflow_data_")
         
         # Generate processed dataframe
-        processed_path = fetch_and_prep_data(
+        processed_path = prepare_dataset(
             source_path=data_path, 
             output_dir=temp_dir,
             apply_feature_engineering=True

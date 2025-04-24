@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 """
-model_comparison.py - Model comparison Airflow tasks
----------------------------------------------------
-This module provides Airflow tasks for comparing multiple trained models
-and generating visual and numerical reports.
+model_comparison.py - Module for comparing multiple trained models
+-----------------------------------------------------------------
+This module provides functionality to compare the performance of multiple
+trained models and generate reports for visualization.
 """
 
 import os
 import json
 import logging
-from typing import Dict, List, Any, Optional
-import mlflow
+from typing import Dict, List, Any, Optional, Tuple, Union
+import pandas as pd
+import numpy as np
 from datetime import datetime
 
-from airflow.decorators import task
+# Import Airflow specific modules
 from airflow.models import Variable
 from airflow.exceptions import AirflowSkipException
+from airflow.decorators import task
+import mlflow
 
+# Fix import paths to use absolute imports
 from dags.utils.metrics import (
+    calculate_metrics,
     compare_models,
     create_comparison_plots,
     should_retrain
