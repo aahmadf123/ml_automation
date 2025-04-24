@@ -34,6 +34,15 @@ interface ModelOverride {
   timestamp: string;
 }
 
+interface ApprovalDecision {
+  taskId: string;
+  runId: string;
+  approved: boolean;
+  approver: string;
+  comment: string;
+  timestamp: string;
+}
+
 export class IntegrationsService {
   private airflowApiUrl: string;
   private airflowUsername: string;
@@ -330,6 +339,129 @@ export class IntegrationsService {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+    }
+  }
+
+  // Set an Airflow variable
+  async setAirflowVariable(name: string, value: string): Promise<boolean> {
+    await this.ensureInitialized();
+    
+    if (!this.airflowApiUrl) {
+      console.warn('Airflow API URL not configured');
+      return false;
+    }
+    
+    try {
+      // Create a new variable in Airflow
+      const response = await fetch(`${this.airflowApiUrl}/variables`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.airflowApiToken}`
+        },
+        body: JSON.stringify({
+          key: name,
+          value
+        })
+      });
+      
+      if (!response.ok) {
+        // If variable already exists, try to update it
+        if (response.status === 409) {
+          const updateResponse = await fetch(`${this.airflowApiUrl}/variables/${name}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.airflowApiToken}`
+            },
+            body: JSON.stringify({
+              value
+            })
+          });
+          
+          return updateResponse.ok;
+        }
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error setting Airflow variable:', error);
+      return false;
+    }
+  }
+  
+  // ClearML Integration - Log approval decision
+  async logApprovalToClearML(approval: ApprovalDecision): Promise<string> {
+    await this.ensureInitialized();
+    
+    if (!this.clearmlAccessKey || !this.clearmlSecretKey) {
+      console.warn('ClearML credentials not configured');
+      return 'mock-task-id';
+    }
+    
+    try {
+      // Create a new task in ClearML to log the approval
+      const createTaskResponse = await fetch(`${this.clearmlApiUrl}/tasks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Buffer.from(`${this.clearmlAccessKey}:${this.clearmlSecretKey}`).toString('base64')}`
+        },
+        body: JSON.stringify({
+          name: `${approval.approved ? 'Approval' : 'Rejection'}: ${approval.taskId}`,
+          type: 'data_processing',
+          tags: ['approval', 'human-in-the-loop', approval.approved ? 'approved' : 'rejected'],
+          comment: approval.comment || `${approval.approved ? 'Approved' : 'Rejected'} by ${approval.approver}`,
+          project: 'Model Management'
+        })
+      });
+      
+      const taskData = await createTaskResponse.json();
+      const taskId = taskData.data.id;
+      
+      // Add custom fields to the task
+      await fetch(`${this.clearmlApiUrl}/tasks/${taskId}/add_or_update_custom_field`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Buffer.from(`${this.clearmlAccessKey}:${this.clearmlSecretKey}`).toString('base64')}`
+        },
+        body: JSON.stringify({
+          customFields: [
+            {
+              name: 'approval_decision',
+              value: approval.approved ? 'approved' : 'rejected'
+            },
+            {
+              name: 'approver',
+              value: approval.approver
+            },
+            {
+              name: 'task_id',
+              value: approval.taskId
+            },
+            {
+              name: 'run_id',
+              value: approval.runId
+            },
+            {
+              name: 'approval_timestamp',
+              value: approval.timestamp
+            },
+            {
+              name: 'comment',
+              value: approval.comment || 'No comment provided'
+            }
+          ]
+        })
+      });
+      
+      return taskId;
+    } catch (error) {
+      console.error('Error logging to ClearML:', error);
+      // Return a mock ID so the process can continue even if ClearML logging fails
+      return `error-mock-${Date.now()}`;
     }
   }
 } 

@@ -11,6 +11,8 @@ import logging
 import time
 from typing import Any, Dict, Optional, List, Union
 import sys
+import re
+from datetime import datetime
 
 # Setup logging
 log = logging.getLogger(__name__)
@@ -606,3 +608,276 @@ def log_manual_action(
         details: Details of the action
     """
     log.info(f"Manual action: {action} - {details}")
+
+###############################################
+# Fix Implementation Functions
+###############################################
+def implement_fix(
+    fix_id: str,
+    problem: str,
+    solution: str,
+    approved_by: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Implement an approved fix from the fix proposal system.
+    
+    Args:
+        fix_id: ID of the fix to implement
+        problem: Description of the problem
+        solution: Proposed solution to implement
+        approved_by: Who approved the fix
+        metadata: Additional metadata
+        
+    Returns:
+        Dict with implementation status
+    """
+    log.info(f"Implementing fix {fix_id} approved by {approved_by}")
+    log.info(f"Problem: {problem}")
+    log.info(f"Solution: {solution}")
+    
+    result = {
+        "fix_id": fix_id,
+        "implemented_by": "ai-agent",
+        "timestamp": datetime.now().isoformat(),
+        "success": False
+    }
+    
+    try:
+        # Extract the type of fix from metadata or problem description
+        fix_type = metadata.get("fix_type") if metadata else "unknown"
+        model_id = metadata.get("model_id") if metadata else None
+        
+        if "data quality" in problem.lower() or "missing values" in problem.lower():
+            fix_type = "data_quality"
+        elif "model performance" in problem.lower() or "rmse" in problem.lower():
+            fix_type = "model_performance"
+        elif "parameter" in problem.lower() or "hyperparameter" in problem.lower():
+            fix_type = "hyperparameter_tuning"
+        
+        # Implement the appropriate fix based on type
+        if fix_type == "data_quality":
+            result.update(implement_data_quality_fix(problem, solution, model_id))
+        elif fix_type == "model_performance":
+            result.update(implement_model_performance_fix(problem, solution, model_id))
+        elif fix_type == "hyperparameter_tuning":
+            result.update(implement_hyperparameter_tuning(problem, solution, model_id))
+        else:
+            result.update({
+                "status": "error",
+                "message": f"Unknown fix type: {fix_type}"
+            })
+            
+        # Log the implementation
+        log.info(f"Fix implementation result: {result}")
+        
+        return result
+    except Exception as e:
+        error_msg = f"Error implementing fix: {str(e)}"
+        log.error(error_msg)
+        result.update({
+            "status": "error",
+            "message": error_msg,
+            "error": str(e)
+        })
+        return result
+
+def implement_data_quality_fix(
+    problem: str,
+    solution: str,
+    model_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Implement a data quality fix.
+    
+    Args:
+        problem: Description of the problem
+        solution: Proposed solution
+        model_id: Optional model ID
+        
+    Returns:
+        Dict with implementation details
+    """
+    # Extract column name if present
+    column_match = re.search(r"Column '([^']+)'", problem)
+    column = column_match.group(1) if column_match else None
+    
+    # Determine the type of data quality issue
+    issue_type = "unknown"
+    if "missing values" in problem.lower():
+        issue_type = "missing_values"
+    elif "zero values" in problem.lower():
+        issue_type = "zero_values"
+    elif "skew" in problem.lower():
+        issue_type = "skewness"
+    elif "outlier" in problem.lower():
+        issue_type = "outliers"
+    
+    # Create preprocessing directive to implement in next run
+    directive = {
+        "issue_type": issue_type,
+        "column": column,
+        "action": "auto_fix",
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # Store directive in Airflow variable for next pipeline run
+    if column and issue_type != "unknown":
+        try:
+            from airflow.models import Variable
+            var_name = f"DQ_FIX_{issue_type}_{column}"
+            Variable.set(var_name, json.dumps(directive))
+            
+            return {
+                "success": True,
+                "message": f"Data quality fix directive created for {issue_type} in column {column}",
+                "directive": directive
+            }
+        except Exception as e:
+            log.error(f"Failed to create directive: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Failed to create data quality fix directive: {str(e)}"
+            }
+    else:
+        return {
+            "success": False,
+            "message": "Could not determine column or issue type from problem description"
+        }
+
+def implement_model_performance_fix(
+    problem: str,
+    solution: str,
+    model_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Implement a model performance fix.
+    
+    Args:
+        problem: Description of the problem
+        solution: Proposed solution
+        model_id: Optional model ID
+        
+    Returns:
+        Dict with implementation details
+    """
+    if not model_id:
+        # Try to extract model ID from problem description
+        model_match = re.search(r"Model '([^']+)'", problem)
+        model_id = model_match.group(1) if model_match else None
+    
+    if not model_id:
+        return {
+            "success": False,
+            "message": "Could not determine model ID from problem description"
+        }
+    
+    # Determine which action to take based on the solution
+    action = "unknown"
+    if "feature engineering" in solution.lower():
+        action = "feature_engineering"
+    elif "hyperparameter" in solution.lower():
+        action = "hyperparameter_tuning"
+    elif "model architecture" in solution.lower():
+        action = "model_architecture"
+    elif "ensemble" in solution.lower():
+        action = "ensemble_methods"
+    
+    # Create a request for model retuning
+    try:
+        # Import here to avoid circular imports
+        from tasks.model_retuning import ModelRetuning
+        
+        retuning = ModelRetuning()
+        request = retuning.request_retuning(
+            model_id=model_id,
+            requestor="ai-agent",
+            reason=f"Auto-implemented fix for model performance issue: {problem[:100]}...",
+            param_overrides={
+                "improvement_action": action,
+                "auto_triggered": True
+            },
+            priority="high"
+        )
+        
+        return {
+            "success": True,
+            "message": f"Created retuning request for {model_id} with action {action}",
+            "request": request
+        }
+    except Exception as e:
+        log.error(f"Failed to create retuning request: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Failed to create retuning request: {str(e)}"
+        }
+
+def implement_hyperparameter_tuning(
+    problem: str,
+    solution: str,
+    model_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Implement hyperparameter tuning.
+    
+    Args:
+        problem: Description of the problem
+        solution: Proposed solution
+        model_id: Optional model ID
+        
+    Returns:
+        Dict with implementation details
+    """
+    if not model_id:
+        # Try to extract model ID from problem description
+        model_match = re.search(r"Model '([^']+)'", problem)
+        model_id = model_match.group(1) if model_match else None
+    
+    if not model_id:
+        return {
+            "success": False,
+            "message": "Could not determine model ID from problem description"
+        }
+    
+    # Extract parameter suggestions from solution text
+    param_overrides = {}
+    
+    # Look for common hyperparameters in the solution
+    learning_rate_match = re.search(r"learning rate.*?(\d+\.\d+)", solution)
+    if learning_rate_match:
+        param_overrides["learning_rate"] = float(learning_rate_match.group(1))
+    
+    max_depth_match = re.search(r"max depth.*?(\d+)", solution)
+    if max_depth_match:
+        param_overrides["max_depth"] = int(max_depth_match.group(1))
+    
+    n_estimators_match = re.search(r"estimators.*?(\d+)", solution)
+    if n_estimators_match:
+        param_overrides["n_estimators"] = int(n_estimators_match.group(1))
+    
+    # Create a request for model retuning with parameter overrides
+    try:
+        # Import here to avoid circular imports
+        from tasks.model_retuning import ModelRetuning
+        
+        retuning = ModelRetuning()
+        request = retuning.request_retuning(
+            model_id=model_id,
+            requestor="ai-agent",
+            reason=f"Auto-implemented hyperparameter tuning: {problem[:100]}...",
+            param_overrides=param_overrides,
+            priority="high"
+        )
+        
+        return {
+            "success": True,
+            "message": f"Created hyperparameter tuning request for {model_id} with {len(param_overrides)} overrides",
+            "request": request,
+            "param_overrides": param_overrides
+        }
+    except Exception as e:
+        log.error(f"Failed to create hyperparameter tuning request: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Failed to create hyperparameter tuning request: {str(e)}"
+        }

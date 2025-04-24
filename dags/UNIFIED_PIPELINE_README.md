@@ -16,10 +16,12 @@ The unified pipeline follows a streamlined ML workflow with these primary stages
 1. **Data Ingestion** - Downloads data from the S3 bucket (`grange-seniordesign-bucket`)
 2. **Data Processing** - Applies preprocessing and optional feature engineering 
 3. **Data Validation** - Performs schema validation and data quality checks in parallel
-4. **Model Training** - Trains multiple models (can be run in parallel)
-5. **Model Explainability** - Generates explanations for the trained models
-6. **Artifact Storage** - Archives model artifacts to S3
-7. **Cleanup** - Removes temporary files
+4. **Human Validation** - Requests human review of data quality and drift detection results
+5. **Model Training** - Trains multiple models (can be run in parallel)
+6. **Model Explainability** - Generates explanations for the trained models
+7. **Human Approval** - Requests human approval of trained models before deployment
+8. **Artifact Storage** - Archives model artifacts to S3
+9. **Cleanup** - Removes temporary files
 
 ## Key Benefits
 
@@ -29,17 +31,50 @@ The unified pipeline follows a streamlined ML workflow with these primary stages
 - **Robust data management**: Multiple fallbacks for data access and storage
 - **Resource optimization**: Parallel task execution where appropriate
 - **Reduced redundancy**: Eliminated overlapping functionality between modules
+- **Human Oversight**: Critical ML decisions now require human validation and approval
 
 ## Task Modules Used
 
 The pipeline uses these key task modules:
 - `tasks.ingestion` - Handles data retrieval from S3
-- `tasks.preprocessing` - Performs data cleaning and feature engineering 
+- `tasks.preprocessing_simplified` - Performs data cleaning and feature engineering 
 - `tasks.data_quality` - Runs quality checks on processed data
 - `tasks.schema_validation` - Validates data schema
 - `tasks.drift` - Detects data drift
 - `tasks.training` - Trains and evaluates models
 - `tasks.model_explainability` - Generates model explanations
+- `tasks.hitl` - Provides Human-in-the-Loop functionality
+
+## Human-in-the-Loop (HITL) Capabilities
+
+The pipeline now includes critical human oversight at two key checkpoints:
+
+1. **Data Validation Checkpoint**
+   - Triggered after data quality checks, schema validation, and drift detection
+   - Presents data quality metrics and issues to human reviewers
+   - Enables manual override of data quality decisions
+   - Can be configured to auto-approve if no issues are detected
+
+2. **Model Approval Checkpoint**
+   - Triggered after model training and explainability analysis
+   - Presents model performance metrics to human reviewers
+   - Enables manual approval or rejection of models before deployment
+   - Can be configured to auto-approve with clean metrics
+
+### HITL Configuration
+
+The HITL functionality can be configured with these Airflow variables:
+- `REQUIRE_DATA_VALIDATION` - Whether to require human validation of data (default: "True")
+- `REQUIRE_MODEL_APPROVAL` - Whether to require human approval of models (default: "True")
+- `AUTO_APPROVE_TIMEOUTS` - Whether to auto-approve after timeout (default: "False")
+- `DEFAULT_APPROVAL_TIMEOUT_HOURS` - Hours to wait for approval before timing out (default: 24)
+
+### Slack Integration
+
+The HITL module sends notifications to Slack to alert humans when their input is required:
+- Data validation requests go to the `#ml-approvals` channel
+- Model approval requests go to the `#ml-approvals` channel
+- Override confirmations go to relevant channels
 
 ## Data Target and Features
 
@@ -57,6 +92,7 @@ The pipeline uses these Airflow variables:
 - `PARALLEL_TRAINING` - Whether to train models in parallel (default: "True")
 - `MAX_PARALLEL_WORKERS` - Maximum number of parallel training workers (default: 3)
 - `APPLY_FEATURE_ENGINEERING` - Whether to apply feature engineering in preprocessing (default: "False")
+- `DASHBOARD_URL` - URL to the dashboard UI for approvals (used in HITL notifications)
 
 ### For Clean Datasets
 
@@ -93,6 +129,16 @@ To disable catchup runs:
 
 ```bash
 airflow dags backfill -s YYYY-MM-DD -e YYYY-MM-DD --reset_dagruns unified_ml_pipeline
+```
+
+### Disabling HITL for Automated Runs
+
+For fully automated runs without human intervention:
+
+```bash
+airflow variables set REQUIRE_DATA_VALIDATION False
+airflow variables set REQUIRE_MODEL_APPROVAL False
+airflow dags trigger unified_ml_pipeline
 ```
 
 ## Temporary File Management
@@ -142,3 +188,4 @@ The following files have been removed as they are no longer needed:
 - Streamlined error handling and data flow
 - Removed unused imports and modules
 - Fixed schema validation to handle target variable calculation 
+- Added Human-in-the-Loop capability for critical oversight 

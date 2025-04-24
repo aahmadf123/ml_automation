@@ -11,9 +11,11 @@ It provides a unified workflow that handles:
 1. Data ingestion from S3
 2. Data preprocessing and quality checking
 3. Schema validation and drift detection
-4. Training of multiple models (including parallel training)
-5. Model evaluation and explainability tracking
-6. Artifact archiving
+4. Human validation of data quality (HITL)
+5. Training of multiple models (including parallel training)
+6. Model evaluation and explainability tracking
+7. Human approval of models (HITL)
+8. Artifact archiving
 
 All functionality is contained in a single DAG for easier management and troubleshooting.
 """
@@ -53,6 +55,7 @@ import tasks.schema_validation as schema_validation
 import tasks.drift as drift
 import tasks.training as training
 import tasks.model_explainability as model_explainability
+import tasks.hitl as hitl  # Import the new Human-in-the-Loop module
 
 # Additional modules that may be used in specific scenarios
 # import tasks.data_prep as data_prep  # Alternative data processing - redundant with preprocessing
@@ -69,6 +72,9 @@ REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
 MAX_WORKERS = int(Variable.get('MAX_PARALLEL_WORKERS', default_var='3'))
 # Add new constant for feature engineering
 APPLY_FEATURE_ENGINEERING = Variable.get('APPLY_FEATURE_ENGINEERING', default_var='False').lower() == 'true'
+# Add new constants for HITL
+REQUIRE_DATA_VALIDATION = Variable.get('REQUIRE_DATA_VALIDATION', default_var='True').lower() == 'true'
+REQUIRE_MODEL_APPROVAL = Variable.get('REQUIRE_MODEL_APPROVAL', default_var='True').lower() == 'true'
 
 # Default arguments for the DAG
 default_args = {
@@ -1017,15 +1023,85 @@ def cleanup_temp_files(**context):
     logger.info(f"Cleanup completed, removed {cleaned_count} files/directories")
     return {"status": "success", "message": f"Cleanup completed, removed {cleaned_count} files/directories"}
 
+def wait_for_data_validation(**context):
+    """Wait for human validation of data quality"""
+    logger.info("Starting data_validation task")
+    
+    try:
+        # Call the HITL module's wait_for_data_validation function
+        result = hitl.wait_for_data_validation(**context)
+        
+        # Log the result
+        if result.get('status') == 'approved' or result.get('status') == 'auto_approved':
+            logger.info("Data validation approved")
+            try:
+                slack.post(":white_check_mark: Data validation approved")
+            except Exception as e:
+                logger.warning(f"Error sending Slack notification: {str(e)}")
+        else:
+            logger.warning(f"Unexpected data validation result: {result}")
+        
+        return result
+    except AirflowSkipException as e:
+        # This is raised when validation is rejected
+        logger.warning(f"Data validation rejected: {str(e)}")
+        try:
+            slack.post(f":x: Data validation rejected: {str(e)}")
+        except Exception as slack_error:
+            logger.warning(f"Error sending Slack notification: {str(slack_error)}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in data_validation task: {str(e)}")
+        try:
+            slack.post(f":x: Data validation error: {str(e)}")
+        except:
+            pass
+        raise
+
+def wait_for_model_approval(**context):
+    """Wait for human approval of trained models"""
+    logger.info("Starting model_approval task")
+    
+    try:
+        # Call the HITL module's wait_for_model_approval function
+        result = hitl.wait_for_model_approval(**context)
+        
+        # Log the result
+        if result.get('status') == 'approved' or result.get('status') == 'auto_approved':
+            logger.info("Model approval granted")
+            try:
+                slack.post(":white_check_mark: Model approval granted")
+            except Exception as e:
+                logger.warning(f"Error sending Slack notification: {str(e)}")
+        else:
+            logger.warning(f"Unexpected model approval result: {result}")
+        
+        return result
+    except AirflowSkipException as e:
+        # This is raised when approval is rejected
+        logger.warning(f"Model approval rejected: {str(e)}")
+        try:
+            slack.post(f":x: Model approval rejected: {str(e)}")
+        except Exception as slack_error:
+            logger.warning(f"Error sending Slack notification: {str(slack_error)}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in model_approval task: {str(e)}")
+        try:
+            slack.post(f":x: Model approval error: {str(e)}")
+        except:
+            pass
+        raise
+
 # Create the DAG
 dag = DAG(
     'unified_ml_pipeline',
     default_args=default_args,
-    description='Unified ML pipeline that combines functionality from multiple previous DAGs',
+    description='Unified ML pipeline that combines functionality from multiple previous DAGs, with HITL capabilities',
     schedule_interval=timedelta(days=1),
     max_active_runs=1,
     catchup=False,
-    tags=['ml', 'integration', 'unified-pipeline'],
+    tags=['ml', 'integration', 'unified-pipeline', 'hitl'],
 )
 
 # Create tasks
@@ -1079,6 +1155,16 @@ drift_detection_task = PythonOperator(
     dag=dag
 )
 
+# Add new HITL task for data validation
+data_validation_task = PythonOperator(
+    task_id='data_validation',
+    python_callable=wait_for_data_validation,
+    provide_context=True,
+    retries=0,  # No retries, since this waits for human input
+    execution_timeout=timedelta(hours=DEFAULT_APPROVAL_TIMEOUT_HOURS) if 'DEFAULT_APPROVAL_TIMEOUT_HOURS' in globals() else timedelta(hours=24),
+    dag=dag
+)
+
 train_models_task = PythonOperator(
     task_id='train_models',
     python_callable=train_models,
@@ -1108,6 +1194,16 @@ model_explainability_task = PythonOperator(
     dag=dag
 )
 
+# Add new HITL task for model approval
+model_approval_task = PythonOperator(
+    task_id='model_approval',
+    python_callable=wait_for_model_approval,
+    provide_context=True,
+    retries=0,  # No retries, since this waits for human input
+    execution_timeout=timedelta(hours=DEFAULT_APPROVAL_TIMEOUT_HOURS) if 'DEFAULT_APPROVAL_TIMEOUT_HOURS' in globals() else timedelta(hours=24),
+    dag=dag
+)
+
 archive_artifacts_task = PythonOperator(
     task_id='archive_artifacts',
     python_callable=archive_artifacts,
@@ -1129,4 +1225,4 @@ cleanup_task = PythonOperator(
 )
 
 # Set task dependencies
-download_data_task >> process_data_task >> [data_quality_task, schema_validation_task, drift_detection_task] >> train_models_task >> model_explainability_task >> archive_artifacts_task >> cleanup_task 
+download_data_task >> process_data_task >> [data_quality_task, schema_validation_task, drift_detection_task] >> data_validation_task >> train_models_task >> model_explainability_task >> model_approval_task >> archive_artifacts_task >> cleanup_task 
