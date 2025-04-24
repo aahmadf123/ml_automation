@@ -21,7 +21,6 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple, Union
 from functools import wraps
 import sys
-import time
 
 # Airflow imports
 from airflow import DAG
@@ -33,6 +32,7 @@ from airflow.models import Variable, XCom
 from airflow.utils.dates import days_ago
 from airflow.exceptions import AirflowException, AirflowSkipException
 from airflow.hooks.S3_hook import S3Hook
+from airflow.sensors.external_task import ExternalTaskSensor
 import pandas as pd
 
 # Setup logging
@@ -167,37 +167,6 @@ def notify_failure(context):
         slack.post(f":x: DAG {dag_id} task {task_id} failed on {execution_date}")
     except Exception as e:
         log.warning(f"Could not send failure notification: {str(e)}")
-
-def check_integrated_ml_workflow(**context):
-    """
-    Check if the integrated_ml_workflow DAG has completed successfully.
-    
-    Args:
-        context: Airflow context
-        
-    Returns:
-        str: 'start_pipeline' if the DAG completed or timed out, 'wait_longer' if still waiting
-    """
-    from cross_dag_dependencies import check_dag_status
-    
-    try:
-        upstream_dag_id = "integrated_ml_workflow"
-        status = check_dag_status(upstream_dag_id)
-        
-        if status == "success":
-            log.info(f"Upstream DAG {upstream_dag_id} completed successfully")
-            return 'start_pipeline'
-        elif status == "timeout":
-            log.warning(f"Upstream DAG {upstream_dag_id} timed out, proceeding anyway")
-            return 'start_pipeline'
-        else:
-            log.info(f"Upstream DAG {upstream_dag_id} status: {status}, waiting")
-            return 'wait_longer'
-            
-    except Exception as e:
-        log.error(f"Error checking upstream DAG status: {str(e)}")
-        # Proceed with our DAG even if we can't check the upstream status
-        return 'start_pipeline'
 
 def validate_processed_file(**context) -> str:
     """
@@ -418,7 +387,7 @@ def cleanup_temp_files(**context):
         
     return {"status": "success", "message": "Cleanup completed"}
 
-def create_tasks(dag: DAG) -> Dict[str, Union[PythonOperator, BranchPythonOperator, EmptyOperator]]:
+def create_tasks(dag: DAG) -> Dict[str, Union[PythonOperator, BranchPythonOperator, EmptyOperator, ExternalTaskSensor]]:
     """
     Create all tasks for the DAG.
     
@@ -426,35 +395,26 @@ def create_tasks(dag: DAG) -> Dict[str, Union[PythonOperator, BranchPythonOperat
         dag: The DAG instance to add tasks to
         
     Returns:
-        Dict[str, Union[PythonOperator, BranchPythonOperator, EmptyOperator]]: Dictionary of task operators
+        Dict[str, Union[PythonOperator, BranchPythonOperator, EmptyOperator, ExternalTaskSensor]]: Dictionary of task operators
     """
     # Import task modules - moving them here to avoid circular imports
     from tasks import ingestion, preprocessing, drift, training, data_quality, monitoring
     
-    # Branching task to decide whether to wait for integrated_ml_workflow DAG
-    check_integrated_task = BranchPythonOperator(
-        task_id='check_integrated_workflow',
-        python_callable=check_integrated_ml_workflow,
-        provide_context=True,
+    # Create a sensor to wait for the integrated_ml_workflow DAG
+    wait_for_integrated = ExternalTaskSensor(
+        task_id='wait_for_integrated_workflow',
+        external_dag_id='integrated_ml_workflow',
+        external_task_id=None,  # Wait for the entire DAG
+        timeout=7200,  # 2 hours
+        mode='reschedule',
+        poke_interval=60,  # Check every minute
+        retries=3,
+        retry_delay=timedelta(minutes=5),
         dag=dag
     )
     
-    # Task to wait longer before checking again
-    wait_longer_task = EmptyOperator(
-        task_id='wait_longer',
-        dag=dag
-    )
-    
-    # Sensor to wait a specific amount of time before trying again
-    wait_sensor = PythonOperator(
-        task_id='wait_sensor',
-        python_callable=lambda **kwargs: time.sleep(300),  # Wait 5 minutes
-        provide_context=True,
-        dag=dag
-    )
-    
-    # Task to start the pipeline
-    start_pipeline = EmptyOperator(
+    # Task to mark the start of our pipeline after dependency is met
+    start_task = EmptyOperator(
         task_id='start_pipeline',
         dag=dag
     )
@@ -693,10 +653,8 @@ def create_tasks(dag: DAG) -> Dict[str, Union[PythonOperator, BranchPythonOperat
     )
     
     return {
-        'check_integrated': check_integrated_task,
-        'wait_longer': wait_longer_task,
-        'wait_sensor': wait_sensor,
-        'start_pipeline': start_pipeline,
+        'wait_for_integrated': wait_for_integrated,
+        'start_pipeline': start_task,
         'ingest': ingest_task,
         'preprocess': preprocess_task,
         'validate_file': validate_file_task,
@@ -717,17 +675,15 @@ def create_tasks(dag: DAG) -> Dict[str, Union[PythonOperator, BranchPythonOperat
         'override': override_task
     }
 
-def setup_dependencies(tasks: Dict[str, Union[PythonOperator, BranchPythonOperator, EmptyOperator]]) -> None:
+def setup_dependencies(tasks: Dict[str, Union[PythonOperator, BranchPythonOperator, EmptyOperator, ExternalTaskSensor]]) -> None:
     """
     Set up task dependencies in the DAG.
     
     Args:
         tasks: Dictionary of task operators
     """
-    # Cross-DAG dependency flow - Fixed to remove cycle
-    tasks['check_integrated'] >> [tasks['wait_longer'], tasks['start_pipeline']]
-    tasks['wait_longer'] >> tasks['wait_sensor'] >> tasks['check_integrated']
-    tasks['start_pipeline'] >> tasks['ingest']
+    # Simple linear dependency for cross-DAG waiting
+    tasks['wait_for_integrated'] >> tasks['start_pipeline'] >> tasks['ingest']
     
     # Data pipeline flow
     tasks['ingest'] >> tasks['preprocess'] >> tasks['validate_file']
