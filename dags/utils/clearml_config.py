@@ -9,11 +9,11 @@ logger = logging.getLogger(__name__)
 
 # ClearML credentials from SSM or environment variables
 CLEARML_CONFIG = {
-    "api_server": get_ssm_parameter('CLEARML_API_SERVER', os.getenv('CLEARML_API_SERVER', 'https://app.clear.ml')),
-    "web_server": get_ssm_parameter('CLEARML_WEB_SERVER', os.getenv('CLEARML_WEB_SERVER', 'https://app.clear.ml')),
-    "files_server": get_ssm_parameter('CLEARML_FILES_SERVER', os.getenv('CLEARML_FILES_SERVER', 'https://files.clear.ml')),
-    "key": get_ssm_parameter('CLEARML_KEY', os.getenv('CLEARML_KEY')),
-    "secret": get_ssm_parameter('CLEARML_SECRET', os.getenv('CLEARML_SECRET')),
+    "api_server": get_ssm_parameter('CLEARML_API_SERVER', os.getenv('CLEARML_API_HOST', 'https://app.clear.ml')),
+    "web_server": get_ssm_parameter('CLEARML_WEB_SERVER', os.getenv('CLEARML_WEB_HOST', 'https://app.clear.ml')),
+    "files_server": get_ssm_parameter('CLEARML_FILES_SERVER', os.getenv('CLEARML_FILES_HOST', 'https://files.clear.ml')),
+    "key": get_ssm_parameter('CLEARML_KEY', os.getenv('CLEARML_API_ACCESS_KEY')),
+    "secret": get_ssm_parameter('CLEARML_SECRET', os.getenv('CLEARML_API_SECRET_KEY')),
     "project_name": get_ssm_parameter('CLEARML_PROJECT', os.getenv('CLEARML_PROJECT', 'HomeownerLossHistoryProject'))
 }
 
@@ -84,34 +84,34 @@ def log_dataset_to_clearml(dataset_name: str, dataset_path: str, dataset_tags: O
         logger.error(f"Failed to log dataset to ClearML: {str(e)}")
         return None
 
-def log_model_to_clearml(model_name: str, model_path: str, framework: str = "xgboost", 
-                        task: Optional[Task] = None) -> Optional[str]:
+def log_model_to_clearml(task: Optional[Task], model, model_name: str, framework: str = "xgboost") -> Optional[str]:
     """
     Log a model to ClearML
     
     Args:
-        model_name: Name of the model
-        model_path: Path to the model
-        framework: Model framework
         task: Associated ClearML task
+        model: Model object to log
+        model_name: Name of the model
+        framework: Model framework
         
     Returns:
         Model ID if successful, None otherwise
     """
     try:
-        # Create model
-        model = Model.create(
-            model_name=model_name,
-            project=CLEARML_CONFIG["project_name"],
-            task=task,
+        if task is None:
+            logger.warning("No ClearML task provided, creating a new task for model logging")
+            task = init_clearml(f"{model_name}_model_logging", Task.TaskTypes.inference)
+            
+        # In ClearML 1.14.2, we need to use the OutputModel API for XGBoost models
+        output_model = task.register_output_model(
+            model=model,
+            name=model_name,
             framework=framework
         )
         
-        # Upload model
-        model.update_weights(model_path)
-        
-        logger.info(f"Logged model to ClearML: {model.id} - {model_name}")
-        return model.id
+        model_id = output_model.id if hasattr(output_model, 'id') else None
+        logger.info(f"Logged model to ClearML: {model_id} - {model_name}")
+        return model_id
     except Exception as e:
         logger.error(f"Failed to log model to ClearML: {str(e)}")
         return None 
