@@ -1,139 +1,177 @@
 "use client"
 
-import { Badge } from "@/components/ui/badge"
+import React from 'react'
+import { useState, useEffect } from 'react'
+import { 
+  Card, 
+  CardContent, 
+  CardDescription, 
+  CardHeader, 
+  CardTitle 
+} from '@/components/ui/card'
+import { 
+  Table, 
+  TableBody, 
+  TableCell, 
+  TableHead, 
+  TableHeader, 
+  TableRow 
+} from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { AlertCircle, Download, BarChart4, RefreshCw } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import PageHeader from '@/components/ui/page-header'
+import LoadingSpinner from '@/components/ui/loading-spinner'
+import ComparisonTable, { ComparisonReportData } from '../../components/model-comparison/ComparisonTable'
 
-import { useState } from "react"
-import { DashboardHeader } from "@/components/dashboard-header"
-import { PageHeader } from "@/components/page-header"
-import { Card, CardContent } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Button } from "@/components/ui/button"
-import { Download, RefreshCw } from "lucide-react"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
-import { FeatureImportanceComparison } from "@/components/model-comparison/feature-importance-comparison"
-import { ShapComparison } from "@/components/model-comparison/shap-comparison"
-import { PerformanceMetricsComparison } from "@/components/model-comparison/performance-metrics-comparison"
-import { PredictionComparison } from "@/components/model-comparison/prediction-comparison"
-import { FeatureRankingComparison } from "@/components/model-comparison/feature-ranking-comparison"
+// Type definitions
+type Metric = {
+  name: string
+  value: number
+  unit?: string
+  isHigherBetter: boolean
+}
 
-const availableModels = [
-  { id: "model1", name: "Loss Prediction Model" },
-  { id: "model2", name: "Claim Amount Prediction" },
-  { id: "model3", name: "Fraud Detection Model" },
-  { id: "model4", name: "Risk Scoring Model" },
-  { id: "model5", name: "Customer Churn Model" },
+type ModelComparisonData = {
+  modelId: string
+  name: string
+  metrics: Metric[]
+  status: 'completed' | 'failed' | 'running'
+  timestamp: string
+  isBaseline?: boolean
+  improvement?: Record<string, number>
+}
+
+type ComparisonReport = {
+  id: string
+  timestamp: string
+  models: ModelComparisonData[]
+  bestModel: string
+  metricNames: string[]
+  plots: { name: string, url: string }[]
+}
+
+const defaultMetrics = [
+  'accuracy', 'precision', 'recall', 'f1_score', 
+  'auc', 'mae', 'mse', 'rmse', 'r2'
 ]
 
-export default function ModelComparisonPage() {
-  const [selectedModels, setSelectedModels] = useState<string[]>(["model1", "model2", "model3"])
-
-  const modelNames = Object.fromEntries(availableModels.map((model) => [model.id, model.name]))
-
-  const toggleModel = (modelId: string) => {
-    if (selectedModels.includes(modelId)) {
-      // Don't allow deselecting if only one model is selected
-      if (selectedModels.length > 1) {
-        setSelectedModels(selectedModels.filter((id) => id !== modelId))
-      }
-    } else {
-      setSelectedModels([...selectedModels, modelId])
-    }
-  }
-
+export default async function ModelComparisonPage() {
+  // Fetch model comparison reports
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/models/comparison`, {
+    cache: 'no-store'
+  });
+  
+  const reports: ComparisonReportData[] = await response.json();
+  
   return (
-    <div className="flex flex-col min-h-screen">
-      <DashboardHeader />
-      <div className="flex-1 p-6 space-y-6 md:ml-64">
-        <PageHeader
-          title="Model Comparison"
-          description="Compare explainability and performance across different models"
-        />
-
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex gap-2">
-            <Button variant="outline">
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Refresh Data
-            </Button>
-            <Button>
-              <Download className="mr-2 h-4 w-4" />
-              Export Report
-            </Button>
-          </div>
+    <div className="container mx-auto py-6">
+      <h1 className="text-3xl font-bold mb-6">Model Comparison</h1>
+      
+      <Tabs defaultValue={reports[0]?.id || "no-data"} className="w-full">
+        <div className="flex items-center justify-between mb-4">
+          <TabsList>
+            {reports.map(report => (
+              <TabsTrigger key={report.id} value={report.id}>
+                Report {new Date(report.timestamp).toLocaleDateString()}
+              </TabsTrigger>
+            ))}
+            {reports.length === 0 && (
+              <TabsTrigger value="no-data">No Reports</TabsTrigger>
+            )}
+          </TabsList>
+          
+          {reports.length > 0 && (
+            <MetricSelector 
+              metrics={reports[0].metricNames} 
+              defaultMetric="f1_score"
+            />
+          )}
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-          <Card className="md:col-span-1">
-            <CardContent className="p-4">
-              <h3 className="text-lg font-semibold mb-4">Select Models</h3>
-
-              <div className="space-y-3">
-                {availableModels.map((model) => (
-                  <div key={model.id} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`model-${model.id}`}
-                      checked={selectedModels.includes(model.id)}
-                      onCheckedChange={() => toggleModel(model.id)}
-                    />
-                    <Label
-                      htmlFor={`model-${model.id}`}
-                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                    >
-                      {model.name}
-                    </Label>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-6">
-                <p className="text-sm text-muted-foreground mb-2">
-                  Selected: {selectedModels.length} of {availableModels.length}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {selectedModels.map((modelId) => (
-                    <Badge key={modelId} variant="outline" className="bg-primary/10">
-                      {modelNames[modelId]}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
+        
+        {reports.length === 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>No Comparison Reports</CardTitle>
+              <CardDescription>
+                There are no model comparison reports available yet.
+              </CardDescription>
+            </CardHeader>
           </Card>
-
-          <div className="md:col-span-4 space-y-6">
-            <Tabs defaultValue="feature-importance" className="space-y-4">
-              <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full">
-                <TabsTrigger value="feature-importance">Feature Importance</TabsTrigger>
-                <TabsTrigger value="shap">SHAP Values</TabsTrigger>
-                <TabsTrigger value="performance">Performance</TabsTrigger>
-                <TabsTrigger value="predictions">Predictions</TabsTrigger>
-                <TabsTrigger value="rankings">Feature Rankings</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="feature-importance" className="space-y-4">
-                <FeatureImportanceComparison modelIds={selectedModels} modelNames={modelNames} />
-              </TabsContent>
-
-              <TabsContent value="shap" className="space-y-4">
-                <ShapComparison modelIds={selectedModels} modelNames={modelNames} />
-              </TabsContent>
-
-              <TabsContent value="performance" className="space-y-4">
-                <PerformanceMetricsComparison modelIds={selectedModels} modelNames={modelNames} />
-              </TabsContent>
-
-              <TabsContent value="predictions" className="space-y-4">
-                <PredictionComparison modelIds={selectedModels} modelNames={modelNames} />
-              </TabsContent>
-
-              <TabsContent value="rankings" className="space-y-4">
-                <FeatureRankingComparison modelIds={selectedModels} modelNames={modelNames} />
-              </TabsContent>
-            </Tabs>
-          </div>
-        </div>
-      </div>
+        ) : (
+          reports.map(report => (
+            <TabsContent key={report.id} value={report.id}>
+              <ReportDetails report={report} />
+            </TabsContent>
+          ))
+        )}
+      </Tabs>
     </div>
-  )
+  );
+}
+
+function MetricSelector({ metrics, defaultMetric }: { metrics: string[], defaultMetric: string }) {
+  // In a real implementation, this would update state and affect the table
+  return (
+    <div className="flex items-center space-x-2">
+      <label className="text-sm font-medium">Primary Metric:</label>
+      <Select defaultValue={metrics.includes(defaultMetric) ? defaultMetric : metrics[0]}>
+        <SelectTrigger className="w-[180px]">
+          <SelectValue placeholder="Select metric" />
+        </SelectTrigger>
+        <SelectContent>
+          {metrics.map(metric => (
+            <SelectItem key={metric} value={metric}>
+              {metric.replace(/_/g, ' ')}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function ReportDetails({ report }: { report: ComparisonReportData }) {
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Models Comparison</CardTitle>
+          <CardDescription>
+            Comparing {report.models.length} models from {new Date(report.timestamp).toLocaleString()}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ComparisonTable report={report} primaryMetric="f1_score" />
+        </CardContent>
+      </Card>
+      
+      {report.plots.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Performance Comparison Plots</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {report.plots.map(plot => (
+                <div key={plot.name} className="border rounded-lg p-4">
+                  <h3 className="text-lg font-medium mb-2">{plot.name}</h3>
+                  <div className="aspect-video bg-gray-100 flex items-center justify-center">
+                    <img 
+                      src={plot.url} 
+                      alt={plot.name} 
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
 }

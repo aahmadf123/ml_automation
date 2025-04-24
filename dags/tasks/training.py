@@ -13,6 +13,7 @@ tasks/training.py  – Unified trainer + explainability
  • Sends Slack notifications on skip/retrain and completion
  • Supports manual_override from Airflow Variables
  • Emits WebSocket events for real-time dashboard updates
+ • NEW: Efficient parallel training of all 5 models with shared data preparation
 """
 
 import os
@@ -23,7 +24,8 @@ import time
 import joblib
 import websockets
 import asyncio
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any, List
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -721,3 +723,400 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
 
 # backward‑compatibility alias
 train_xgboost_hyperopt = train_and_compare_fn
+
+def train_multiple_models(processed_path: str, parallel: bool = True, max_workers: int = 3) -> Dict[str, Dict]:
+    """
+    Train multiple models in parallel using shared data preparation.
+    
+    Args:
+        processed_path: Path to processed data file
+        parallel: Whether to train models in parallel
+        max_workers: Maximum number of worker processes for parallel training
+        
+    Returns:
+        Dict mapping model_id to training results
+    """
+    start_time = time.time()
+    logger.info(f"Starting training for multiple models using data: {processed_path}")
+    
+    # Initialize MLflow
+    mlflow.set_tracking_uri(MLFLOW_URI)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT)
+    
+    # Send notification
+    from utils.slack import post as send_message
+    send_message(
+        channel="#ml-training",
+        title="🚀 Multi-Model Training Started",
+        details=f"Training all 5 models using data from {os.path.basename(processed_path)}",
+        urgency="normal"
+    )
+    
+    try:
+        # Load data once for all models - shared preparation
+        logger.info(f"Loading data from {processed_path}")
+        
+        # Check cache first
+        df_hash = os.path.basename(processed_path).replace('.parquet', '')
+        df_name = f"training_df_{df_hash}"
+        
+        cached_df = GLOBAL_CACHE.get_transformed(df_name)
+        if cached_df is not None:
+            logger.info("Using cached DataFrame")
+            df = cached_df
+        else:
+            df = pd.read_parquet(processed_path)
+            GLOBAL_CACHE.store_transformed(df, df_name)
+        
+        # Get target column
+        target_col = "claim_amount"
+        
+        if target_col not in df.columns:
+            error_msg = f"Target column '{target_col}' not found in the data"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        # Split features and target - do this once for all models
+        X = df.drop(columns=[target_col])
+        y = df[target_col]
+        
+        # Calculate feature statistics and cache them for future use
+        GLOBAL_CACHE.compute_statistics(X, df_name)
+        
+        # Create train-test split once for all models
+        try:
+            # First try time-series split if date column exists
+            if 'date' in df.columns or 'timestamp' in df.columns:
+                date_col = 'date' if 'date' in df.columns else 'timestamp'
+                logger.info(f"Using time-series split with date column: {date_col}")
+                
+                # Sort by date
+                df = df.sort_values(by=date_col)
+                
+                # Use the last 20% as test set
+                split_idx = int(len(df) * 0.8)
+                X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+                y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+            else:
+                # Fallback to random split
+                logger.info("No date column found, using random train-test split")
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+        except Exception as e:
+            logger.warning(f"Error in time-series split, falling back to random split: {e}")
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, random_state=42
+            )
+            
+        # Cache the train-test split
+        train_test_data = {
+            "X_train": X_train,
+            "X_test": X_test,
+            "y_train": y_train,
+            "y_test": y_test
+        }
+        
+        GLOBAL_CACHE.store_column_result(
+            df_name=df_name,
+            column="data_split",
+            operation="train_test_split",
+            result=train_test_data
+        )
+        
+        # Train a shared baseline model for comparison
+        logger.info("Training common baseline model")
+        baseline_model = xgb.XGBRegressor(
+            objective='reg:squarederror',
+            n_estimators=100,
+            max_depth=3,
+            learning_rate=0.1,
+            random_state=42
+        )
+        
+        baseline_model.fit(X_train, y_train)
+        
+        # Get baseline predictions
+        baseline_preds = baseline_model.predict(X_test)
+        baseline_rmse = np.sqrt(mean_squared_error(y_test, baseline_preds))
+        logger.info(f"Baseline RMSE: {baseline_rmse:.4f}")
+        
+        # Create temporary directory for SHAP values - shared across models
+        shap_tmp_dir = tempfile.mkdtemp(prefix="shap_")
+        
+        # Pre-calculate SHAP values for baseline model using sampled test data
+        logger.info("Precalculating SHAP values for baseline features")
+        X_test_sample = X_test.sample(min(200, len(X_test)))
+        explainer = shap.TreeExplainer(baseline_model)
+        baseline_shap_values = explainer.shap_values(X_test_sample)
+        
+        # Store baseline SHAP values in cache
+        GLOBAL_CACHE.store_column_result(
+            df_name=df_name,
+            column="all",
+            operation="baseline_shap_values",
+            result=baseline_shap_values
+        )
+        
+        # Get model configs
+        model_configs = list(MODEL_CONFIG.items())
+        results = {}
+        
+        # Function to train an individual model 
+        def train_single_model(model_key, model_cfg):
+            model_id = f"{model_key}_{datetime.now().strftime('%Y%m%d')}"
+            try:
+                # Use the specific feature set from model config
+                features = model_cfg.get('features', None)
+                if features:
+                    # Use only specified features
+                    model_X_train = X_train[features]
+                    model_X_test = X_test[features]
+                else:
+                    # Use all features
+                    model_X_train = X_train
+                    model_X_test = X_test
+                
+                logger.info(f"Training model {model_id} with {len(model_X_train.columns)} features")
+                
+                # Check if we should skip based on previous model performance
+                if should_skip_training(model_id, baseline_rmse):
+                    logger.info(f"Skipping training for {model_id} based on previous performance")
+                    return model_id, {"status": "skipped", "baseline_rmse": baseline_rmse}
+                
+                # Start MLflow run for this model
+                with mlflow.start_run() as run:
+                    run_id = run.info.run_id
+                    
+                    # Start ClearML task
+                    clearml_task = None
+                    try:
+                        clearml_task = init_clearml(model_id)
+                    except Exception as e:
+                        logger.warning(f"Error initializing ClearML: {str(e)}")
+                    
+                    # Log model config 
+                    mlflow.log_params({
+                        "model_type": model_key,
+                        "model_description": model_cfg.get('description', ''),
+                        "feature_count": len(model_X_train.columns)
+                    })
+                    
+                    if features:
+                        mlflow.log_param("features", ",".join(features))
+                        
+                    # Find optimal hyperparameters (using the model's specific features)
+                    max_evals = MODEL_CONFIG.get('max_evals', 20)
+                    best_params = find_best_hyperparams(model_X_train, y_train, max_evals=max_evals)
+                    mlflow.log_params(best_params)
+                    
+                    # Train model with best parameters
+                    model = xgb.XGBRegressor(
+                        objective='reg:squarederror',
+                        random_state=42,
+                        **best_params
+                    )
+                    
+                    model.fit(model_X_train, y_train)
+                    
+                    # Evaluate
+                    y_pred = model.predict(model_X_test)
+                    model_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+                    
+                    # Calculate metrics
+                    metrics = {
+                        "rmse": float(model_rmse),
+                        "mse": float(mean_squared_error(y_test, y_pred)),
+                        "mae": float(mean_absolute_error(y_test, y_pred)),
+                        "r2": float(r2_score(y_test, y_pred)),
+                        "baseline_rmse": float(baseline_rmse),
+                        "improvement": float((baseline_rmse - model_rmse) / baseline_rmse * 100)
+                    }
+                    
+                    # Log metrics
+                    for name, value in metrics.items():
+                        mlflow.log_metric(name, value)
+                        
+                    # Log to ClearML if available
+                    if clearml_task:
+                        for metric_name, metric_value in metrics.items():
+                            clearml_task.get_logger().report_scalar(
+                                title="Metrics",
+                                series=metric_name,
+                                value=metric_value,
+                                iteration=0
+                            )
+                    
+                    # Generate plots and log artifacts
+                    try:
+                        # Feature importance
+                        plt.figure(figsize=(12, 6))
+                        xgb.plot_importance(model, max_num_features=20)
+                        plt.title(f'Feature Importance - {model_key}')
+                        feat_imp_path = f"{shap_tmp_dir}/feature_importance_{model_key}.png"
+                        plt.savefig(feat_imp_path)
+                        plt.close()
+                        mlflow.log_artifact(feat_imp_path)
+                        
+                        # Actual vs predicted
+                        av_pred_path = f"{shap_tmp_dir}/actual_vs_predicted_{model_key}.png"
+                        plot_actual_vs_predicted(y_test, y_pred, av_pred_path)
+                        mlflow.log_artifact(av_pred_path)
+                        
+                        # SHAP plots - reuse explainer if possible
+                        if features:
+                            # Need to calculate new SHAP values for this specific feature set
+                            model_explainer = shap.TreeExplainer(model)
+                            model_shap_values = model_explainer.shap_values(model_X_test.loc[X_test_sample.index])
+                        else:
+                            # Can potentially reuse baseline SHAP values
+                            model_explainer = shap.TreeExplainer(model)
+                            model_shap_values = model_explainer.shap_values(X_test_sample)
+                        
+                        # Summary plot
+                        plt.figure(figsize=(10, 8))
+                        shap.summary_plot(
+                            model_shap_values, 
+                            model_X_test.loc[X_test_sample.index] if features else X_test_sample, 
+                            show=False
+                        )
+                        shap_path = f"{shap_tmp_dir}/shap_summary_{model_key}.png"
+                        plt.tight_layout()
+                        plt.savefig(shap_path)
+                        plt.close()
+                        mlflow.log_artifact(shap_path)
+                    except Exception as e:
+                        logger.error(f"Error generating plots for {model_id}: {e}")
+                    
+                    # Log model
+                    mlflow.xgboost.log_model(model, "model")
+                    
+                    # Register model
+                    try:
+                        client = MlflowClient()
+                        
+                        # Try to register model version
+                        try:
+                            registered_model = client.get_registered_model(model_id)
+                        except RestException:
+                            client.create_registered_model(model_id)
+                            
+                        model_version = client.create_model_version(
+                            name=model_id,
+                            source=f"runs:/{run_id}/model",
+                            run_id=run_id
+                        )
+                        
+                        # Promote if significant improvement
+                        if metrics["improvement"] > 5.0:
+                            client.transition_model_version_stage(
+                                name=model_id,
+                                version=model_version.version,
+                                stage="Production",
+                                archive_existing_versions=True
+                            )
+                        else:
+                            client.transition_model_version_stage(
+                                name=model_id,
+                                version=model_version.version,
+                                stage="Staging"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error registering model {model_id}: {e}")
+                        
+                    # Log to ClearML if available
+                    if clearml_task:
+                        try:
+                            log_model_to_clearml(clearml_task, model, model_id)
+                            clearml_task.close()
+                        except Exception as e:
+                            logger.error(f"Error logging to ClearML: {e}")
+                    
+                    # Return results
+                    return model_id, {
+                        "status": "completed",
+                        "metrics": metrics,
+                        "run_id": run_id
+                    }
+            except Exception as e:
+                logger.error(f"Error training model {model_id}: {e}")
+                return model_id, {"status": "failed", "error": str(e)}
+        
+        # Train models in parallel or sequentially
+        if parallel and len(model_configs) > 1:
+            logger.info(f"Training {len(model_configs)} models in parallel with {max_workers} workers")
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(train_single_model, model_key, model_cfg): model_key 
+                    for model_key, model_cfg in model_configs
+                }
+                
+                for future in as_completed(futures):
+                    model_key = futures[future]
+                    try:
+                        model_id, model_result = future.result()
+                        results[model_id] = model_result
+                    except Exception as e:
+                        logger.error(f"Error in parallel training of {model_key}: {e}")
+                        results[f"{model_key}_{datetime.now().strftime('%Y%m%d')}"] = {
+                            "status": "failed", 
+                            "error": str(e)
+                        }
+        else:
+            logger.info(f"Training {len(model_configs)} models sequentially")
+            for model_key, model_cfg in model_configs:
+                model_id, model_result = train_single_model(model_key, model_cfg)
+                results[model_id] = model_result
+                
+        # Clean up
+        try:
+            import shutil
+            shutil.rmtree(shap_tmp_dir)
+        except:
+            pass
+            
+        # Send completion notification with summary of all models
+        completed_models = sum(1 for r in results.values() if r.get("status") == "completed")
+        skipped_models = sum(1 for r in results.values() if r.get("status") == "skipped")
+        failed_models = sum(1 for r in results.values() if r.get("status") == "failed")
+        
+        summary_text = (
+            f"Multi-model training complete in {time.time() - start_time:.2f} seconds.\n"
+            f"Completed: {completed_models}, Skipped: {skipped_models}, Failed: {failed_models}\n\n"
+        )
+        
+        # Add result details for each model
+        for model_id, model_result in results.items():
+            if model_result.get("status") == "completed":
+                metrics = model_result.get("metrics", {})
+                summary_text += (
+                    f"✅ {model_id}: RMSE={metrics.get('rmse', 0):.4f}, "
+                    f"Improvement={metrics.get('improvement', 0):.2f}%\n"
+                )
+            elif model_result.get("status") == "skipped":
+                summary_text += f"⏭️ {model_id}: Training skipped (sufficient performance)\n"
+            else:
+                summary_text += f"❌ {model_id}: Failed - {model_result.get('error', 'Unknown error')}\n"
+        
+        send_message(
+            channel="#ml-training",
+            title="🏁 Multi-Model Training Complete",
+            details=summary_text,
+            urgency="high"
+        )
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in multi-model training: {str(e)}")
+        
+        # Send notification
+        from utils.slack import post as send_message
+        send_message(
+            channel="#alerts",
+            title="❌ Multi-Model Training Failed",
+            details=f"Error in multi-model training process:\n{str(e)}",
+            urgency="high"
+        )
+        
+        raise
