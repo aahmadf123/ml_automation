@@ -9,9 +9,9 @@ logger = logging.getLogger(__name__)
 
 # ClearML credentials from SSM or environment variables
 CLEARML_CONFIG = {
-    "api_server": get_ssm_parameter('CLEARML_API_SERVER', os.getenv('CLEARML_API_HOST', 'https://app.clear.ml')),
-    "web_server": get_ssm_parameter('CLEARML_WEB_SERVER', os.getenv('CLEARML_WEB_HOST', 'https://app.clear.ml')),
-    "files_server": get_ssm_parameter('CLEARML_FILES_SERVER', os.getenv('CLEARML_FILES_HOST', 'https://files.clear.ml')),
+    "api_server": get_ssm_parameter('CLEARML_API_HOST', os.getenv('CLEARML_API_HOST', 'https://app.clear.ml')),
+    "web_server": get_ssm_parameter('CLEARML_WEB_HOST', os.getenv('CLEARML_WEB_HOST', 'https://app.clear.ml')),
+    "files_server": get_ssm_parameter('CLEARML_FILES_HOST', os.getenv('CLEARML_FILES_HOST', 'https://files.clear.ml')),
     "key": get_ssm_parameter('CLEARML_API_ACCESS_KEY', os.getenv('CLEARML_API_ACCESS_KEY')),
     "secret": get_ssm_parameter('CLEARML_API_SECRET_KEY', os.getenv('CLEARML_API_SECRET_KEY')),
     "project_name": get_ssm_parameter('CLEARML_PROJECT', os.getenv('CLEARML_PROJECT', 'HomeownerLossHistoryProject'))

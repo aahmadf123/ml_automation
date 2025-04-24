@@ -26,7 +26,7 @@ from utils.config import (
 from utils.clearml_config import init_clearml, log_dataset_to_clearml
 from tasks.training import train_and_compare_fn
 from tasks.data_quality import DataQualityMonitor
-from tasks.drift_detection import DriftDetector
+from tasks.drift import detect_data_drift
 from utils.slack import post as slack_post
 
 # Set up logging
@@ -271,12 +271,6 @@ def check_for_drift(**context):
     # Get processed data path
     processed_data_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
     
-    # Import your existing DriftDetector
-    from tasks.drift_detection import DriftDetector
-    
-    # Initialize detector
-    detector = DriftDetector()
-    
     # Load current data
     current_data = pd.read_parquet(processed_data_path)
     
@@ -295,13 +289,13 @@ def check_for_drift(**context):
     with mlflow.start_run(run_name="drift_detection") as run:
         run_id = run.info.run_id
         
-        # Detect drift
-        drift_results = detector.detect_drift(current_data)
+        # Detect drift using the function from drift.py
+        drift_results = detect_data_drift(processed_data_path)
         
         # Log results to MLflow
         mlflow.log_params({
-            "drift_threshold": detector.threshold,
-            "reference_data_date": detector.reference_date.strftime("%Y-%m-%d") if detector.reference_date else "None"
+            "drift_threshold": float(Variable.get("DRIFT_THRESHOLD", default_var="0.1")),
+            "reference_data_date": datetime.now().strftime("%Y-%m-%d")
         })
         
         # Log metrics
