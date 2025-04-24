@@ -20,6 +20,7 @@ import requests
 import tempfile
 import mlflow
 import sys
+from botocore.exceptions import ClientError
 
 # Use direct imports for modules
 import utils.config as config
@@ -28,6 +29,7 @@ import tasks.training as training
 import tasks.data_quality as data_quality
 import tasks.drift as drift
 import utils.slack as slack
+import tasks.ingestion as ingestion
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -55,40 +57,73 @@ dag = DAG(
 
 # Functions for tasks
 def download_data(**context):
-    """Download data from S3 and return local path"""
-    import boto3
+    """Download data from S3 or reuse existing ingested data"""
     from tempfile import NamedTemporaryFile
     
-    s3_client = boto3.client('s3')
+    logger.info("Starting download_data task")
     
-    # Get data from S3
-    with NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
-        local_path = temp_file.name
-        s3_client.download_file(
-            config.S3_BUCKET,
-            config.RAW_DATA_KEY,
-            local_path
-        )
+    # Get bucket name from Airflow Variable to ensure it's up to date
+    bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
+    key = config.RAW_DATA_KEY
     
-    # Log with ClearML if enabled
+    logger.info(f"Using bucket from Airflow Variables: {bucket}")
+    logger.info(f"Attempting to access data at s3://{bucket}/{key}")
+    
     try:
-        clearml_task = clearml_config.init_clearml("Data_Download")
-        if clearml_task:
-            clearml_task.set_parameter("s3_bucket", config.S3_BUCKET)
-            clearml_task.set_parameter("s3_key", config.RAW_DATA_KEY)
-            clearml_config.log_dataset_to_clearml(
-                dataset_name="Raw_Data",
-                dataset_path=local_path,
-                dataset_tags=["raw", "csv"]
+        # Use the ingestion function from the full pipeline if available
+        try:
+            logger.info("Attempting to use pipeline ingestion function")
+            data_path = ingestion.ingest_data_from_s3(
+                bucket_name=bucket,
+                key=key
             )
-            clearml_task.close()
+            logger.info(f"Successfully ingested data using pipeline function: {data_path}")
+        except Exception as e:
+            # Fall back to direct S3 download if ingestion function fails
+            logger.warning(f"Pipeline ingestion failed, falling back to direct download: {str(e)}")
+            
+            s3_client = boto3.client('s3', region_name=config.AWS_REGION)
+            with NamedTemporaryFile(delete=False, suffix='.csv') as temp_file:
+                local_path = temp_file.name
+                logger.info(f"Downloading to {local_path}")
+                s3_client.download_file(bucket, key, local_path)
+                data_path = local_path
+                logger.info(f"Successfully downloaded to {local_path}")
+                
+        # Log with ClearML if enabled
+        try:
+            clearml_task = clearml_config.init_clearml("Data_Download")
+            if clearml_task:
+                clearml_task.set_parameter("s3_bucket", bucket)
+                clearml_task.set_parameter("s3_key", key)
+                clearml_config.log_dataset_to_clearml(
+                    dataset_name="Raw_Data",
+                    dataset_path=data_path,
+                    dataset_tags=["raw", "csv"]
+                )
+                clearml_task.close()
+        except Exception as e:
+            logger.warning(f"Error logging to ClearML: {str(e)}")
+        
+        # Return local path for downstream tasks
+        context['ti'].xcom_push(key='data_path', value=data_path)
+        
+        try:
+            slack.post(f":white_check_mark: Data accessed from s3://{bucket}/{key}")
+        except Exception as e:
+            logger.warning(f"Error sending Slack notification: {str(e)}")
+            
+        return data_path
+        
     except Exception as e:
-        logger.warning(f"Error logging to ClearML: {str(e)}")
-    
-    # Return local path for downstream tasks
-    context['ti'].xcom_push(key='data_path', value=local_path)
-    slack.post(f":white_check_mark: Data downloaded from s3://{config.S3_BUCKET}/{config.RAW_DATA_KEY}")
-    return local_path
+        logger.error(f"Error in download_data task: {str(e)}")
+        
+        try:
+            slack.post(f":x: Failed to access data: {str(e)}")
+        except:
+            pass
+            
+        raise
 
 def process_data(**context):
     """Process the data and prepare for model training"""
