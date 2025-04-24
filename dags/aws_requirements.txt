@@ -1,3 +1,5 @@
+--constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.1/constraints-3.10.txt"
+
 # Numerical & ML libraries
 numpy==1.26.4
 pandas==2.1.4
