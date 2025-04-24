@@ -5,7 +5,6 @@ import { CheckCircle, Clock, AlertTriangle, XCircle, Play, Pause, RefreshCw, Eye
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { NeonCard } from "@/components/ui/neon-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -447,12 +446,14 @@ export function PipelineHealth() {
             <div className="space-y-3">
               {filteredData.length > 0 ? (
                 filteredData.map((pipeline) => (
-                  <NeonCard
+                  <Card
                     key={pipeline.dagId}
-                    className="p-3 overflow-hidden"
-                    glowColor={getStatusColor(pipeline.status)}
-                    pulseOnActivity={pipeline.status === "running"}
-                    isActive={pipeline.status === "running"}
+                    className={`p-3 overflow-hidden border-l-4 ${
+                      pipeline.status === "running" ? "border-blue-500" :
+                      pipeline.status === "success" ? "border-green-500" :
+                      pipeline.status === "warning" ? "border-yellow-500" :
+                      pipeline.status === "failed" ? "border-red-500" : "border-gray-500"
+                    } ${pipeline.status === "running" ? "animate-pulse" : ""}`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <div className="flex items-center space-x-3">
@@ -492,7 +493,7 @@ export function PipelineHealth() {
                         </div>
                       </div>
                     </div>
-                  </NeonCard>
+                  </Card>
                 ))
               ) : (
                 <div className="text-center py-8 text-muted-foreground">

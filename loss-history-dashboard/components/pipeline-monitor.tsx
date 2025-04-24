@@ -249,50 +249,73 @@ export function PipelineMonitor() {
 
         <TabsContent value="overview" className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <HolographicCard
-              title="Pipeline Status"
-              value={Object.values(pipelineStatus).filter(status => status === "running").length}
-              unit=" active"
-              gradient="from-sky-500/20 via-indigo-500/20 to-violet-500/20"
-              glowColor="rgba(99, 102, 241, 0.5)"
-              badge={{
-                text: pipelineStatus.training === "running" ? "Training" : "Idle",
-                color: pipelineStatus.training === "running" ? "#3b82f6" : "#9ca3af"
-              }}
-            />
-            <HolographicCard
-              title="Active Alerts"
-              value={dataDriftAlerts.filter(alert => alert.status === "active").length}
-              unit=" alerts"
-              gradient="from-amber-500/20 via-orange-500/20 to-rose-500/20"
-              glowColor="rgba(245, 158, 11, 0.5)"
-              badge={{
-                text: dataDriftAlerts.some(alert => alert.severity === "critical") ? "Critical" : "Warning",
-                color: dataDriftAlerts.some(alert => alert.severity === "critical") ? "#ef4444" : "#f59e0b"
-              }}
-            />
-            <HolographicCard
-              title="Model Performance"
-              value={modelMetrics.filter(m => m.status === "healthy").length}
-              unit=" / " + modelMetrics.length
-              gradient="from-emerald-500/20 via-teal-500/20 to-cyan-500/20"
-              glowColor="rgba(16, 185, 129, 0.5)"
-              badge={{
-                text: modelMetrics.some(m => m.status === "critical") ? "Critical" : "Healthy",
-                color: modelMetrics.some(m => m.status === "critical") ? "#ef4444" : "#10b981"
-              }}
-            />
-            <HolographicCard
-              title="System Health"
-              value={systemTelemetry.cpuUsage}
-              unit="% CPU"
-              gradient="from-violet-500/20 via-purple-500/20 to-fuchsia-500/20"
-              glowColor="rgba(139, 92, 246, 0.5)"
-              badge={{
-                text: systemTelemetry.cpuUsage > 80 ? "High Load" : "Normal",
-                color: systemTelemetry.cpuUsage > 80 ? "#ef4444" : "#10b981"
-              }}
-            />
+            <Card className="bg-gradient-to-br from-sky-500/5 via-indigo-500/5 to-violet-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Pipeline Status</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {Object.values(pipelineStatus).filter(status => status === "running").length}
+                  <span className="text-sm font-normal text-muted-foreground"> active</span>
+                </div>
+                <div className="mt-2">
+                  <Badge className={pipelineStatus.training === "running" ? "bg-blue-500/15 text-blue-600" : "bg-gray-500/15 text-gray-600"}>
+                    {pipelineStatus.training === "running" ? "Training" : "Idle"}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-amber-500/5 via-orange-500/5 to-rose-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Active Alerts</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {dataDriftAlerts.filter(alert => alert.status === "active").length}
+                  <span className="text-sm font-normal text-muted-foreground"> alerts</span>
+                </div>
+                <div className="mt-2">
+                  <Badge className={dataDriftAlerts.some(alert => alert.severity === "critical") ? "bg-red-500/15 text-red-600" : "bg-amber-500/15 text-amber-600"}>
+                    {dataDriftAlerts.some(alert => alert.severity === "critical") ? "Critical" : "Warning"}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-emerald-500/5 via-teal-500/5 to-cyan-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Model Performance</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {modelMetrics.filter(m => m.status === "healthy").length}
+                  <span className="text-sm font-normal text-muted-foreground"> / {modelMetrics.length}</span>
+                </div>
+                <div className="mt-2">
+                  <Badge className={modelMetrics.some(m => m.status === "critical") ? "bg-red-500/15 text-red-600" : "bg-emerald-500/15 text-emerald-600"}>
+                    {modelMetrics.some(m => m.status === "critical") ? "Critical" : "Healthy"}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-violet-500/5 via-purple-500/5 to-fuchsia-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">System Health</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {systemTelemetry.cpuUsage}
+                  <span className="text-sm font-normal text-muted-foreground">% CPU</span>
+                </div>
+                <div className="mt-2">
+                  <Badge className={systemTelemetry.cpuUsage > 80 ? "bg-red-500/15 text-red-600" : "bg-emerald-500/15 text-emerald-600"}>
+                    {systemTelemetry.cpuUsage > 80 ? "High Load" : "Normal"}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           <Card className="bg-white shadow-sm border border-gray-200">
@@ -446,41 +469,65 @@ export function PipelineMonitor() {
 
         <TabsContent value="system" className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <HolographicCard
-              title="CPU Usage"
-              value={systemTelemetry.cpuUsage}
-              unit="%"
-              gradient="from-sky-500/20 via-indigo-500/20 to-violet-500/20"
-              glowColor="rgba(99, 102, 241, 0.5)"
-            />
-            <HolographicCard
-              title="Memory Usage"
-              value={systemTelemetry.memoryUsage}
-              unit="%"
-              gradient="from-amber-500/20 via-orange-500/20 to-rose-500/20"
-              glowColor="rgba(245, 158, 11, 0.5)"
-            />
-            <HolographicCard
-              title="GPU Usage"
-              value={systemTelemetry.gpuUsage || 0}
-              unit="%"
-              gradient="from-emerald-500/20 via-teal-500/20 to-cyan-500/20"
-              glowColor="rgba(16, 185, 129, 0.5)"
-            />
-            <HolographicCard
-              title="Disk Usage"
-              value={systemTelemetry.diskUsage}
-              unit="%"
-              gradient="from-violet-500/20 via-purple-500/20 to-fuchsia-500/20"
-              glowColor="rgba(139, 92, 246, 0.5)"
-            />
-            <HolographicCard
-              title="Network Latency"
-              value={systemTelemetry.networkLatency}
-              unit=" ms"
-              gradient="from-pink-500/20 via-rose-500/20 to-red-500/20"
-              glowColor="rgba(236, 72, 153, 0.5)"
-            />
+            <Card className="bg-gradient-to-br from-sky-500/5 via-indigo-500/5 to-violet-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">CPU Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {systemTelemetry.cpuUsage}
+                  <span className="text-sm font-normal text-muted-foreground">%</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-amber-500/5 via-orange-500/5 to-rose-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {systemTelemetry.memoryUsage}
+                  <span className="text-sm font-normal text-muted-foreground">%</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-emerald-500/5 via-teal-500/5 to-cyan-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">GPU Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {systemTelemetry.gpuUsage || 0}
+                  <span className="text-sm font-normal text-muted-foreground">%</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-violet-500/5 via-purple-500/5 to-fuchsia-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Disk Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {systemTelemetry.diskUsage}
+                  <span className="text-sm font-normal text-muted-foreground">%</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-pink-500/5 via-rose-500/5 to-red-500/5">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Network Latency</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {systemTelemetry.networkLatency}
+                  <span className="text-sm font-normal text-muted-foreground"> ms</span>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           <Card className="bg-white shadow-sm border border-gray-200">

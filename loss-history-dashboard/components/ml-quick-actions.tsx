@@ -29,7 +29,6 @@ export function MLQuickActions() {
           </Button>
           
           <Button variant="outline" className="flex items-center justify-start space-x-2">
-            <Download className  className="flex items-center justify-start space-x-2">
             <Download className="h-4 w-4" />
             <span>Export Model</span>
           </Button>

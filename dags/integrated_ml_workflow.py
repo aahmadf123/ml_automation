@@ -3,7 +3,6 @@ integrated_ml_workflow.py - A comprehensive ML workflow DAG integrating multiple
 - Uses AWS MWAA for orchestration
 - Logs to MLflow (running on EC2) for experiment tracking
 - Integrates with ClearML for experiment management
-- Produces visualizations for Streamlit dashboard
 """
 
 from datetime import datetime, timedelta
@@ -47,11 +46,11 @@ default_args = {
 dag = DAG(
     'integrated_ml_workflow',
     default_args=default_args,
-    description='Integrated ML workflow with MWAA, ClearML, MLflow, and Streamlit',
+    description='Integrated ML workflow with MWAA, ClearML, and MLflow',
     schedule_interval=timedelta(days=1),
     start_date=datetime(2023, 1, 1),
     catchup=False,
-    tags=['ml', 'integration', 'clearml', 'mlflow', 'streamlit'],
+    tags=['ml', 'integration', 'clearml', 'mlflow'],
 )
 
 # Functions for tasks
@@ -348,57 +347,6 @@ def check_for_drift(**context):
     slack_post(f":white_check_mark: Drift detection completed. Score: {drift_results['overall_drift_score']:.4f}")
     return drift_results
 
-def update_dashboard(**context):
-    """Update the Streamlit dashboard with latest results"""
-    # Get results from upstream tasks
-    model_id = context['ti'].xcom_pull(task_ids='train_model', key='model_id')
-    drift_results = context['ti'].xcom_pull(task_ids='check_for_drift', key='drift_results')
-    quality_results = context['ti'].xcom_pull(task_ids='check_data_quality', key='quality_results')
-    
-    # Create a summary report
-    report = {
-        "timestamp": datetime.now().isoformat(),
-        "model_id": model_id,
-        "data_quality": {
-            "total_issues": quality_results["total_issues"],
-            "missing_value_issues": quality_results["missing_value_issues"],
-            "outlier_issues": quality_results["outlier_issues"]
-        },
-        "drift_detection": {
-            "overall_drift_score": drift_results["overall_drift_score"],
-            "drifted_features_count": len(drift_results["drifted_features"]),
-            "drifted_features": drift_results["drifted_features"]
-        }
-    }
-    
-    # Save the report to S3 for the dashboard to access
-    s3_client = boto3.client('s3')
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_file:
-        json.dump(report, temp_file, indent=2)
-        temp_file.flush()
-        
-        dashboard_report_key = f"dashboard/reports/{datetime.now().strftime('%Y%m%d')}_report.json"
-        s3_client.upload_file(temp_file.name, S3_BUCKET, dashboard_report_key)
-        
-        # Also update the latest report
-        s3_client.upload_file(temp_file.name, S3_BUCKET, "dashboard/latest_report.json")
-    
-    # Try to notify the Streamlit dashboard through a webhook if configured
-    try:
-        dashboard_webhook = Variable.get("DASHBOARD_WEBHOOK_URL", default_var="")
-        if dashboard_webhook:
-            response = requests.post(
-                dashboard_webhook,
-                json={"type": "refresh", "data": report}
-            )
-            if response.status_code != 200:
-                logger.warning(f"Failed to notify dashboard: {response.status_code}")
-    except Exception as e:
-        logger.warning(f"Error notifying dashboard: {str(e)}")
-    
-    slack_post(f":white_check_mark: Dashboard updated with latest results")
-    return "Dashboard updated"
-
 # Define tasks
 download_task = PythonOperator(
     task_id='download_data',
@@ -435,12 +383,5 @@ train_task = PythonOperator(
     dag=dag,
 )
 
-dashboard_task = PythonOperator(
-    task_id='update_dashboard',
-    python_callable=update_dashboard,
-    provide_context=True,
-    dag=dag,
-)
-
 # Define workflow
-download_task >> process_task >> [quality_task, drift_task] >> train_task >> dashboard_task 
+download_task >> process_task >> [quality_task, drift_task] >> train_task 

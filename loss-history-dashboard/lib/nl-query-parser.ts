@@ -1,3 +1,5 @@
+"use client";
+
 type FilterType = "date" | "status" | "model" | "severity" | "search" | "metric"
 
 interface ParsedFilter {

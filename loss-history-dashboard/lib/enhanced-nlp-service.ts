@@ -1,3 +1,5 @@
+"use client";
+
 import type { ParsedFilter } from "./nl-query-parser"
 
 // Entity type definitions for named entity recognition
