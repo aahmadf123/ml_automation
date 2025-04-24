@@ -66,8 +66,18 @@ The pipeline now includes critical human oversight at two key checkpoints:
 The HITL functionality can be configured with these Airflow variables:
 - `REQUIRE_DATA_VALIDATION` - Whether to require human validation of data (default: "True")
 - `REQUIRE_MODEL_APPROVAL` - Whether to require human approval of models (default: "True")
-- `AUTO_APPROVE_TIMEOUTS` - Whether to auto-approve after timeout (default: "False")
-- `DEFAULT_APPROVAL_TIMEOUT_HOURS` - Hours to wait for approval before timing out (default: 24)
+- `AUTO_APPROVE_DATA` - Whether to automatically approve data without human input (default: "False")
+- `AUTO_APPROVE_MODEL` - Whether to automatically approve models without human input (default: "False")
+- `AUTO_APPROVE_QUALITY_THRESHOLD` - Maximum number of quality issues for auto-approval (default: 3)
+- `AUTO_APPROVE_TIMEOUT_MINUTES` - Minutes to wait for data validation before timing out (default: 30)
+- `MODEL_APPROVE_TIMEOUT_MINUTES` - Minutes to wait for model approval before timing out (default: 60)
+
+The pipeline now supports three auto-approval mechanisms:
+1. **Explicit Auto-Approval**: Set `AUTO_APPROVE_DATA` or `AUTO_APPROVE_MODEL` to "True" to bypass human validation
+2. **Quality-Based Auto-Approval**: Data is auto-approved if quality issues are below threshold
+3. **Timeout Auto-Approval**: After the specified timeout, the pipeline continues with auto-approval
+
+This ensures the pipeline can run successfully in both interactive and automated environments, and prevents tasks from getting stuck waiting for human input indefinitely.
 
 ### Slack Integration
 
@@ -117,6 +127,31 @@ The pipeline uses a simplified preprocessing module (`preprocessing_simplified.p
 
 This optimization improves performance and reduces processing time while ensuring all necessary data preparation is still performed.
 
+## Robust Task Execution
+
+The pipeline includes several features to ensure robustness in task execution:
+
+1. **Never-Skip Task Execution** - Tasks are configured with `trigger_rule='all_done'` to ensure they execute even if upstream tasks fail or are skipped. This prevents pipeline failures due to non-critical issues in previous steps.
+
+2. **Graceful HITL Error Handling** - The Human-in-the-Loop validation and approval steps have been enhanced to:
+   - Catch and log all exceptions without stopping the pipeline
+   - Provide detailed diagnostics when issues occur
+   - Continue execution with reasonable defaults when human input is unavailable
+
+3. **Fallback Data Source Selection** - Each task that needs data will:
+   - First try to use data paths from XCom
+   - Fall back to standardized locations if XCom values are missing
+   - Search common directories for recent parquet files as a last resort
+   - Provide clear logging about which data source was selected
+
+4. **Comprehensive Logging** - Enhanced logging includes:
+   - Detailed diagnostic information about data shapes and contents
+   - XCom values received from upstream tasks
+   - Configuration settings used for execution
+   - Model statistics and performance metrics
+
+These features ensure that the pipeline continues running even when individual components encounter errors, making it suitable for both attended and unattended execution.
+
 ## Running the Pipeline
 
 To run the unified pipeline:
@@ -140,6 +175,8 @@ airflow variables set REQUIRE_DATA_VALIDATION False
 airflow variables set REQUIRE_MODEL_APPROVAL False
 airflow dags trigger unified_ml_pipeline
 ```
+
+With this approach, the pipeline will automatically proceed through all steps without waiting for human input, while still performing all validation checks and logging any issues that arise.
 
 ## Temporary File Management
 
@@ -185,7 +222,3 @@ The following files have been removed as they are no longer needed:
 ### Simplified Components
 
 - Eliminated redundancy between `preprocessing.py` and `data_prep.py`
-- Streamlined error handling and data flow
-- Removed unused imports and modules
-- Fixed schema validation to handle target variable calculation 
-- Added Human-in-the-Loop capability for critical oversight 
