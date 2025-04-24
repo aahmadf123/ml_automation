@@ -21,11 +21,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { AlertCircle, Download, BarChart4, RefreshCw } from 'lucide-react'
+import { AlertCircle, Download, BarChart4, RefreshCw, BrainCircuit } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import PageHeader from '@/components/ui/page-header'
 import LoadingSpinner from '@/components/ui/loading-spinner'
 import ComparisonTable, { ComparisonReportData } from '../../components/model-comparison/ComparisonTable'
+import Link from 'next/link'
 
 // Type definitions
 type Metric = {
@@ -69,7 +70,16 @@ export default async function ModelComparisonPage() {
   
   return (
     <div className="container mx-auto py-6">
-      <h1 className="text-3xl font-bold mb-6">Model Comparison</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">Model Comparison</h1>
+        
+        <Link href="/model-comparison/ai-assistant">
+          <Button className="gap-2">
+            <BrainCircuit className="h-4 w-4" />
+            AI Assistant
+          </Button>
+        </Link>
+      </div>
       
       <Tabs defaultValue={reports[0]?.id || "no-data"} className="w-full">
         <div className="flex items-center justify-between mb-4">
@@ -149,7 +159,7 @@ function ReportDetails({ report }: { report: ComparisonReportData }) {
         </CardContent>
       </Card>
       
-      {report.plots.length > 0 && (
+      {report.plots && report.plots.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Performance Comparison Plots</CardTitle>
@@ -158,7 +168,7 @@ function ReportDetails({ report }: { report: ComparisonReportData }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {report.plots.map(plot => (
                 <div key={plot.name} className="border rounded-lg p-4">
-                  <h3 className="text-lg font-medium mb-2">{plot.name}</h3>
+                  <h3 className="text-lg font-medium mb-2">{plot.name.replace(/_/g, ' ')}</h3>
                   <div className="aspect-video bg-gray-100 flex items-center justify-center">
                     <img 
                       src={plot.url} 
@@ -172,6 +182,15 @@ function ReportDetails({ report }: { report: ComparisonReportData }) {
           </CardContent>
         </Card>
       )}
+
+      <div className="flex justify-end mt-4">
+        <Link href="/model-comparison/ai-assistant">
+          <Button variant="outline" className="gap-2">
+            <BrainCircuit className="h-4 w-4" />
+            Ask AI Assistant about these results
+          </Button>
+        </Link>
+      </div>
     </div>
   );
 }
