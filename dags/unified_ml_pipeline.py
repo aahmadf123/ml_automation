@@ -62,6 +62,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 LOCAL_PROCESSED_PATH = "/tmp/unified_processed.parquet"
 REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
 MAX_WORKERS = int(Variable.get('MAX_PARALLEL_WORKERS', default_var='3'))
+# Add new constant for feature engineering
+APPLY_FEATURE_ENGINEERING = Variable.get('APPLY_FEATURE_ENGINEERING', default_var='False').lower() == 'true'
 
 # Default arguments for the DAG
 default_args = {
@@ -351,29 +353,53 @@ def process_data(**context):
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             processed_path = os.path.join(output_dir, f"processed_{timestamp}.parquet")
             
-            # Call preprocess_data function with appropriate parameters
-            logger.info(f"Processing data from {raw_data_path} to {processed_path}")
+            # Check if feature engineering should be applied
+            apply_feature_engineering = APPLY_FEATURE_ENGINEERING
+            logger.info(f"Feature engineering is {'enabled' if apply_feature_engineering else 'disabled'}")
             
-            # Use preprocessing directly or via data_prep depending on implementation
-            try:
-                # Try direct preprocessing call
-                processed_data = preprocessing.preprocess_data(
-                    data_path=raw_data_path,
-                    output_path=processed_path,
-                    force_reprocess=True
-                )
-                logger.info(f"Data processed with preprocessing.preprocess_data to {processed_path}")
-            except Exception as e:
-                logger.warning(f"Error with direct preprocessing: {str(e)}, trying via data_prep")
-                # Fall back to data_prep if available
-                import tasks.data_prep as data_prep
-                processed_data = data_prep.prepare_dataset(
-                    source_path=raw_data_path,
-                    output_dir=output_dir,
-                    apply_feature_engineering=True
-                )
-                processed_path = processed_data if isinstance(processed_data, str) else processed_path
-                logger.info(f"Data processed with data_prep.prepare_dataset to {processed_path}")
+            # If feature engineering is disabled and input is already parquet, 
+            # we can potentially just copy the file
+            input_is_parquet = raw_data_path.lower().endswith('.parquet')
+            
+            if not apply_feature_engineering and input_is_parquet:
+                # Simple copy for already clean parquet data
+                logger.info(f"Dataset is already clean, copying file with minimal processing")
+                
+                try:
+                    # Load and save to ensure format compatibility
+                    df = pd.read_parquet(raw_data_path)
+                    df.to_parquet(processed_path, index=False)
+                    logger.info(f"File copied with minimal processing to {processed_path}")
+                except Exception as e:
+                    logger.warning(f"Error in simple copy: {str(e)}, falling back to processing")
+                    # If copy fails, continue to regular processing
+                    apply_feature_engineering = True
+            
+            # Standard processing path
+            if apply_feature_engineering or not input_is_parquet:
+                logger.info(f"Processing data from {raw_data_path} to {processed_path}")
+                
+                # Use preprocessing directly or via data_prep depending on implementation
+                try:
+                    # Try direct preprocessing call
+                    processed_data = preprocessing.preprocess_data(
+                        data_path=raw_data_path,
+                        output_path=processed_path,
+                        force_reprocess=True,
+                        apply_feature_engineering=apply_feature_engineering
+                    )
+                    logger.info(f"Data processed with preprocessing.preprocess_data to {processed_path}")
+                except Exception as e:
+                    logger.warning(f"Error with direct preprocessing: {str(e)}, trying via data_prep")
+                    # Fall back to data_prep if available
+                    import tasks.data_prep as data_prep
+                    processed_data = data_prep.prepare_dataset(
+                        source_path=raw_data_path,
+                        output_dir=output_dir,
+                        apply_feature_engineering=apply_feature_engineering
+                    )
+                    processed_path = processed_data if isinstance(processed_data, str) else processed_path
+                    logger.info(f"Data processed with data_prep.prepare_dataset to {processed_path}")
             
             # Ensure we have a valid processed path
             if not processed_path or not os.path.exists(processed_path):

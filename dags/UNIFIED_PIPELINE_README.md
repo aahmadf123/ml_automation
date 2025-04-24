@@ -14,7 +14,7 @@ This consolidation eliminates cross-pipeline dependencies that were causing casc
 The unified pipeline follows a logical ML workflow with these primary stages:
 
 1. **Data Ingestion** - Downloads data from the S3 bucket (`grange-seniordesign-bucket`)
-2. **Data Processing** - Applies preprocessing and feature engineering 
+2. **Data Processing** - Applies preprocessing and optional feature engineering 
 3. **Data Validation** - Performs schema validation and data quality checks in parallel
 4. **Model Training** - Trains multiple models (can be run in parallel)
 5. **Model Explainability** - Generates explanations for the trained models
@@ -35,6 +35,16 @@ The pipeline uses these Airflow variables:
 - `DATA_BUCKET` - S3 bucket containing the data (default: "grange-seniordesign-bucket")
 - `PARALLEL_TRAINING` - Whether to train models in parallel (default: "True")
 - `MAX_PARALLEL_WORKERS` - Maximum number of parallel training workers (default: 3)
+- `APPLY_FEATURE_ENGINEERING` - Whether to apply feature engineering in preprocessing (default: "False")
+
+### For Clean Datasets
+
+If your dataset is already clean, set `APPLY_FEATURE_ENGINEERING` to "False" (default). This will:
+- Skip intensive feature engineering steps
+- Perform only minimal processing if input format is already parquet
+- Preserve the original data structure as much as possible
+
+For datasets requiring preprocessing, set `APPLY_FEATURE_ENGINEERING` to "True".
 
 ## Running the Pipeline
 
