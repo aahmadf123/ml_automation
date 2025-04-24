@@ -14,6 +14,7 @@ ydata-profiling==4.5.1
 pandera==0.17.1
 pyarrow==14.0.2  # For efficient Parquet handling
 smart_open[s3]==6.4.0  # For streaming from S3
+swifter[notebook,groupby]==1.4.0  # For parallel pandas operations
 
 # MLflow and Experiment Tracking
 mlflow==2.8.0
