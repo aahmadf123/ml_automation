@@ -313,8 +313,22 @@ def setup_dependencies(tasks: Dict[str, PythonOperator]) -> None:
 # Create the DAG
 dag = setup_dag()
 
+# Import cross-DAG dependencies utility
+from cross_dag_dependencies import wait_for_dag
+
+# Add wait for integrated_ml_workflow DAG
+wait_for_integrated = wait_for_dag(
+    dag=dag,
+    upstream_dag_id="integrated_ml_workflow",
+    timeout=7200,  # 2 hours timeout
+    mode="reschedule"
+)
+
 # Create and configure tasks
 tasks = create_tasks(dag)
 
 # Set up task dependencies
 setup_dependencies(tasks)
+
+# Set the wait task as the first task
+wait_for_integrated >> tasks['ingest']

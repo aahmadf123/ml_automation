@@ -202,5 +202,16 @@ archive_artifacts_task = PythonOperator(
     dag=dag
 )
 
+# Import cross-DAG dependencies utility
+from cross_dag_dependencies import wait_for_dag
+
+# Add wait for homeowner DAG
+wait_for_homeowner = wait_for_dag(
+    dag=dag,
+    upstream_dag_id="homeowner_loss_history_full_pipeline",
+    timeout=7200,  # 2 hours timeout
+    mode="reschedule"
+)
+
 # Set task dependencies
-prepare_data_task >> train_all_models_task >> archive_artifacts_task 
+wait_for_homeowner >> prepare_data_task >> train_all_models_task >> archive_artifacts_task 
