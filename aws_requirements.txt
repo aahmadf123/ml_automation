@@ -1,0 +1,43 @@
+# Numerical & ML libraries
+numpy==1.26.4
+pandas==2.1.4
+scikit-learn==1.3.2
+matplotlib==3.9.0
+seaborn==0.12.2
+shap==0.47.2
+xgboost==2.0.0
+scipy==1.11.4
+ydata-profiling==4.6.0
+pandera==0.17.1
+pyarrow==14.0.2
+smart_open[s3]==6.4.0
+swifter[notebook,groupby]==1.4.0
+
+# Experiment tracking & HPO
+mlflow==2.8.1
+hyperopt==0.2.7
+
+# WebSocket / async
+websockets==11.0.3
+aiohttp==3.10.5
+fastapi==0.100.0
+uvicorn==0.23.0
+
+# DB / storage clients
+sqlalchemy==1.4.53
+
+# Monitoring & utilities
+tenacity==8.2.3
+prometheus-client==0.17.0
+python-json-logger==2.0.7
+structlog==23.1.0
+grafana-api==1.0.3
+python-dotenv==1.0.0
+slack_sdk==3.26.0
+clearml==1.14.2
+
+# Streamlit Dashboard
+streamlit==1.31.0
+st-annotated-text==4.0.0
+streamlit-aggrid==0.3.4
+streamlit-elements==0.1.0 
