@@ -7,8 +7,6 @@ seaborn==0.12.2
 shap==0.47.2
 xgboost==1.7.6
 lightgbm==4.0.0
-catboost==1.2.2; platform_system!="Windows"
-catboost==1.2.2; platform_system=="Windows" --only-binary :all:
 scipy==1.11.3
 ydata-profiling==4.5.1
 pandera==0.17.1
