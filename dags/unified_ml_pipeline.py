@@ -528,8 +528,21 @@ def run_schema_validation(**context):
         try:
             df = pd.read_parquet(data_path)
             logger.info(f"Loaded dataframe with shape {df.shape}")
+            
+            # Create the target column if needed
+            if 'trgt' not in df.columns and 'pure_premium' not in df.columns:
+                if 'il_total' in df.columns and 'eey' in df.columns:
+                    logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
+                    df['trgt'] = df['il_total'] / df['eey']
+                    
+                    # Save the updated dataframe back to the standardized path
+                    if os.path.exists(standardized_path):
+                        df.to_parquet(standardized_path, index=False)
+                        logger.info(f"Updated standardized dataframe with 'trgt' column")
+                else:
+                    logger.warning("Cannot create target column: missing 'il_total' or 'eey' columns")
         except Exception as e:
-            logger.error(f"Failed to load parquet file: {str(e)}")
+            logger.error(f"Failed to load or preprocess parquet file: {str(e)}")
             raise
             
         # Run schema validation
@@ -551,9 +564,13 @@ def run_schema_validation(**context):
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
             else:
-                logger.warning("Schema validation failed or had warnings")
+                logger.warning(f"Schema validation failed: {validation_results.get('message', 'Unknown issue')}")
                 try:
-                    slack.post(f":warning: Schema validation had issues: {validation_results.get('message', 'Unknown issue')}")
+                    details = validation_results.get('details', {})
+                    message = f":warning: Schema validation had issues: {validation_results.get('message')}"
+                    if details.get('target_info'):
+                        message += f"\n{details.get('target_info')}"
+                    slack.post(message)
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
                     
@@ -650,6 +667,40 @@ def train_models(**context):
             
         logger.info(f"Training models using data from {data_path}")
         
+        # Load the data and ensure target variable exists
+        try:
+            df = pd.read_parquet(data_path)
+            
+            # Check for target column and create if needed
+            if 'trgt' not in df.columns:
+                if 'pure_premium' in df.columns:
+                    # If pure_premium exists, rename it to trgt for consistency
+                    logger.info("Renaming 'pure_premium' to 'trgt' for consistency")
+                    df['trgt'] = df['pure_premium']
+                elif 'il_total' in df.columns and 'eey' in df.columns:
+                    # Calculate trgt as il_total / eey
+                    logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
+                    df['trgt'] = df['il_total'] / df['eey']
+                else:
+                    logger.error("Cannot create target variable: missing required columns")
+                    raise ValueError("Missing columns needed to create target variable")
+                
+                # Create weight column if not present
+                if 'wt' not in df.columns and 'eey' in df.columns:
+                    logger.info("Creating 'wt' column from 'eey'")
+                    df['wt'] = df['eey']
+                
+                # Save the updated dataframe
+                temp_path = os.path.join(os.path.dirname(data_path), f"model_ready_{os.path.basename(data_path)}")
+                df.to_parquet(temp_path, index=False)
+                logger.info(f"Saved model-ready dataframe to {temp_path}")
+                data_path = temp_path
+            
+            logger.info(f"Dataframe ready for training with shape {df.shape}")
+        except Exception as e:
+            logger.error(f"Error preparing data for training: {str(e)}")
+            raise
+        
         # Check if we want to force parallel training (default: True)
         parallel = Variable.get('PARALLEL_TRAINING', default_var='True').lower() == 'true'
         max_workers = int(Variable.get('MAX_PARALLEL_WORKERS', default_var=str(MAX_WORKERS)))
@@ -661,7 +712,9 @@ def train_models(**context):
             results = training.train_multiple_models(
                 processed_path=data_path,
                 parallel=parallel,
-                max_workers=max_workers
+                max_workers=max_workers,
+                target_column='trgt',  # Explicitly specify target column
+                weight_column='wt'     # Explicitly specify weight column
             )
             
             if not results:
@@ -757,13 +810,23 @@ def run_model_explainability(**context):
             
             # Extract target column if it exists
             y = None
-            target_column = 'claim_amount'  # Default target column
+            target_column = 'trgt'  # Use 'trgt' as the primary target column
             
             if target_column in X.columns:
                 y = X.pop(target_column)
                 logger.info(f"Extracted target column '{target_column}'")
+            elif 'pure_premium' in X.columns:
+                # Fall back to pure_premium if trgt is not available
+                y = X.pop('pure_premium')
+                logger.info(f"Extracted target column 'pure_premium' (fallback)")
+            elif 'il_total' in X.columns and 'eey' in X.columns:
+                # Calculate target if needed
+                logger.info(f"Calculating target from 'il_total' / 'eey'")
+                y = X['il_total'] / X['eey']
+                # Remove the component columns from features to avoid leakage
+                X = X.drop(['il_total', 'eey'], axis=1) 
             else:
-                logger.warning(f"Target column '{target_column}' not found in dataset")
+                logger.warning(f"Target column '{target_column}' not found in dataset and cannot be calculated")
                 
             # Run the explainability tracking
             tracker = model_explainability.ModelExplainabilityTracker(best_model_id)

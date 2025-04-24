@@ -41,6 +41,15 @@ The pipeline uses these key task modules:
 - `tasks.training` - Trains and evaluates models
 - `tasks.model_explainability` - Generates model explanations
 
+## Data Target and Features
+
+The pipeline uses the following approach for target variable calculation:
+- Uses `trgt` as the primary target column (calculated as `il_total / eey`)
+- Creates the target column automatically if not present in the dataset
+- Also creates a weight column `wt` from the `eey` column for training
+
+This approach ensures compatibility with the model training process while allowing flexibility in input data formats.
+
 ## Configuration
 
 The pipeline uses these Airflow variables:
@@ -117,4 +126,5 @@ The following files have been removed as they are no longer needed:
 
 - Eliminated redundancy between `preprocessing.py` and `data_prep.py`
 - Streamlined error handling and data flow
-- Removed unused imports and modules 
+- Removed unused imports and modules
+- Fixed schema validation to handle target variable calculation 
