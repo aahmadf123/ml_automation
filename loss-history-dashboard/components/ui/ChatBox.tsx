@@ -1,113 +1,138 @@
-import React, { useState } from 'react';
-import { Button } from './button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './card';
-import { Textarea } from './textarea';
-import { ChevronRight, Bot, Send, Loader2 } from 'lucide-react';
+"use client"
+
+import { useState, useRef, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
+import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { cn } from "@/lib/utils"
+import { Send, Loader2 } from "lucide-react"
 
 export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp?: Date;
+  id: string
+  content: string
+  role: "user" | "assistant" | "system"
+  timestamp: Date
 }
 
 export interface ChatBoxProps {
-  title?: string;
-  description?: string;
-  placeholder?: string;
-  onSubmit: (message: string) => void;
-  isLoading?: boolean;
-  messages?: ChatMessage[];
-  className?: string;
+  title?: string
+  description?: string
+  placeholder?: string
+  onSendMessage?: (message: string) => Promise<void>
+  messages: ChatMessage[]
+  isLoading?: boolean
+  className?: string
 }
 
 export function ChatBox({
   title = "AI Assistant",
-  description = "Ask questions about model performance or request analyses",
-  placeholder = "Enter your question about the models...",
-  onSubmit,
+  description = "Chat with your AI assistant to get help with tasks.",
+  placeholder = "Type your message here...",
+  onSendMessage,
+  messages,
   isLoading = false,
-  messages = [],
-  className = "",
+  className,
 }: ChatBoxProps) {
-  const [inputValue, setInputValue] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (inputValue.trim() && !isLoading) {
-      onSubmit(inputValue.trim());
-      setInputValue('');
+  const [input, setInput] = useState("")
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  
+  // Automatically scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (scrollAreaRef.current) {
+      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
+      if (scrollContainer) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight
+      }
     }
-  };
+  }, [messages])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!input.trim() || isLoading || !onSendMessage) return
+
+    const message = input
+    setInput("")
+    await onSendMessage(message)
+  }
+
+  // Format timestamp
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
 
   return (
-    <Card className={`border shadow-sm w-full ${className}`}>
+    <Card className={cn("flex flex-col h-[600px]", className)}>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-xl flex items-center">
-              <Bot className="mr-2 h-5 w-5" /> {title}
-            </CardTitle>
-            <CardDescription>{description}</CardDescription>
-          </div>
-        </div>
+        <CardTitle>{title}</CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
-      <CardContent>
-        {messages.length > 0 && (
-          <div className="mb-4 max-h-[300px] overflow-y-auto border rounded-md p-3 bg-gray-50">
-            {messages.map((message, index) => (
-              <div 
-                key={index} 
-                className={`mb-3 ${
-                  message.role === 'user' ? 'ml-auto' : ''
-                }`}
+      <ScrollArea ref={scrollAreaRef} className="flex-1 p-4">
+        <div className="space-y-4">
+          {messages.length === 0 ? (
+            <div className="text-center text-muted-foreground py-6">
+              No messages yet. Start the conversation by typing a message below.
+            </div>
+          ) : (
+            messages.map((message) => (
+              <div
+                key={message.id}
+                className={cn(
+                  "p-3 rounded-lg",
+                  message.role === "user" 
+                    ? "bg-primary/10 ml-8" 
+                    : message.role === "assistant" 
+                      ? "bg-secondary/20 mr-8" 
+                      : "bg-accent/10"
+                )}
               >
-                <div 
-                  className={`rounded-md p-3 max-w-[80%] inline-block ${
-                    message.role === 'user' 
-                      ? 'bg-blue-100 text-blue-800' 
-                      : 'bg-white border text-gray-800'
-                  }`}
-                >
-                  {message.content}
+                <div className="flex justify-between items-start mb-1">
+                  <span className="font-medium text-sm">
+                    {message.role === "user" ? "You" : message.role === "assistant" ? "Assistant" : "System"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {formatTime(message.timestamp)}
+                  </span>
                 </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {message.role === 'user' ? 'You' : 'AI Assistant'} 
-                  {message.timestamp && ` • ${message.timestamp.toLocaleTimeString()}`}
-                </div>
+                <div className="whitespace-pre-wrap">{message.content}</div>
               </div>
-            ))}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-2">
-          <Textarea 
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            ))
+          )}
+          {isLoading && (
+            <div className="p-3 rounded-lg bg-secondary/20 mr-8">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Assistant is thinking...</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+      <CardFooter className="border-t p-4">
+        <form onSubmit={handleSubmit} className="flex gap-2 w-full">
+          <Textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
             placeholder={placeholder}
-            className="min-h-[100px] w-full resize-none"
+            className="flex-1 min-h-[80px] resize-none"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSubmit(e)
+              }
+            }}
             disabled={isLoading}
           />
-          <div className="flex justify-end">
-            <Button 
-              type="submit" 
-              disabled={!inputValue.trim() || isLoading}
-              className="flex items-center gap-1"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4" />
-                  Send
-                </>
-              )}
-            </Button>
-          </div>
+          <Button 
+            type="submit" 
+            size="icon" 
+            className="h-[80px] w-[80px]"
+            disabled={!input.trim() || isLoading}
+          >
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
         </form>
-      </CardContent>
+      </CardFooter>
     </Card>
-  );
+  )
 } 
