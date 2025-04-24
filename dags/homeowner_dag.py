@@ -103,14 +103,15 @@ def create_tasks(dag: DAG) -> Dict[str, PythonOperator]:
         python_callable=preprocess_data,
         op_kwargs={
             'data_path': "{{ ti.xcom_pull(task_ids='ingest_data') }}",
-            'output_path': LOCAL_PROCESSED_PATH
+            'output_path': LOCAL_PROCESSED_PATH,
+            'force_reprocess': False  # Set to True to force reprocessing even if file exists
         },
         executor_config={
             "KubernetesExecutor": {
-                "request_memory": "4Gi",
-                "limit_memory": "8Gi",
-                "request_cpu": "1",
-                "limit_cpu": "2"
+                "request_memory": "8Gi",
+                "limit_memory": "12Gi",
+                "request_cpu": "2",
+                "limit_cpu": "4"
             }
         },
         dag=dag

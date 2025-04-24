@@ -31,6 +31,9 @@ from utils.storage import download as s3_download
 from utils.storage import upload as s3_upload
 from utils.slack import post as send_message
 from tasks.data_quality import DataQualityMonitor
+import multiprocessing as mp
+from functools import partial
+import swifter
 
 # configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -205,10 +208,18 @@ def generate_profile_report(df: pd.DataFrame, output_path: str = PROFILE_REPORT_
         logging.warning(f"Slack notification failed: {e}")
 
 
-def preprocess_data(data_path, output_path):
+def preprocess_data(data_path, output_path, force_reprocess=False):
     """
     Preprocess the data and perform quality checks.
     Uses advanced memory-efficient processing with pyarrow 14.0.2 optimizations.
+    
+    Args:
+        data_path: Path to input data file (parquet format)
+        output_path: Path to write processed output file
+        force_reprocess: If True, always reprocess even if output file exists
+        
+    Returns:
+        Path to output file
     """
     try:
         # Import necessary dependencies
@@ -225,6 +236,39 @@ def preprocess_data(data_path, output_path):
         from utils.storage import upload as s3_upload
         from utils.slack import post as send_message
         from tasks.data_quality import DataQualityMonitor
+        import multiprocessing as mp
+        from functools import partial
+        import swifter
+        
+        # Check if output file already exists and is valid
+        if not force_reprocess and os.path.exists(output_path):
+            try:
+                # Check if the existing file is a valid parquet file with expected schema
+                logger = logging.getLogger(__name__)
+                logger.info(f"Output file {output_path} already exists. Checking if it's valid...")
+                
+                # Try to open the file with pyarrow to validate it
+                existing_dataset = ds.dataset(output_path, format="parquet")
+                existing_schema = existing_dataset.schema
+                
+                # Check if pure_premium column exists (indicates the file was properly processed)
+                if 'pure_premium' in [field.name for field in existing_schema]:
+                    logger.info(f"Valid preprocessed file already exists at {output_path} with pure_premium column. Skipping preprocessing.")
+                    
+                    # Just to make sure the file is readable, try to read a small sample
+                    test_sample = pq.read_table(output_path, columns=['pure_premium'], nrows=5)
+                    
+                    # Create a minimal performance report for consistent return format
+                    return output_path
+            except Exception as e:
+                # If there's any error reading the existing file, log it and continue with processing
+                logger.warning(f"Existing file at {output_path} couldn't be validated: {str(e)}. Proceeding with preprocessing.")
+        elif force_reprocess and os.path.exists(output_path):
+            logger = logging.getLogger(__name__)
+            logger.info(f"Force reprocessing enabled. Reprocessing data even though {output_path} exists.")
+        
+        # Get available cores, but reserve one for system operations
+        n_cores = max(mp.cpu_count() - 1, 1)
         
         # Set pandas options for memory efficiency
         pd.options.mode.chained_assignment = None  # default='warn'
@@ -234,7 +278,7 @@ def preprocess_data(data_path, output_path):
         
         # Load data with memory optimization
         logger = logging.getLogger(__name__)
-        logger.info(f"Loading data from {data_path} with advanced pyarrow 14.0.2 optimizations")
+        logger.info(f"Loading data from {data_path} with advanced pyarrow 14.0.2 optimizations using {n_cores} cores")
         
         # First, explore the dataset schema
         dataset = ds.dataset(data_path, format="parquet")
@@ -243,50 +287,56 @@ def preprocess_data(data_path, output_path):
         # Log schema information
         logger.info(f"Dataset schema: {schema}")
         
-        # Create scanner with multi-threading enabled - remove memory_pool parameter if it causes issues
+        # Set batch processing parameters for optimal performance
+        # Adjust batch_size based on available memory
+        batch_size = 100000  # Increased from 50000 for better throughput
+        
+        # Create scanner with optimized parallelism - adjust batch_readahead based on batch_size
         scanner = ds.Scanner.from_dataset(
             dataset,
-            use_threads=True
-            # Removed memory_pool parameter which might not be supported
+            use_threads=True,
+            batch_size=batch_size,
+            batch_readahead=2  # Read ahead 2 batches for better I/O utilization
         )
         
         # Process in batches to control memory usage
-        batch_size = 50000
-        table_batches = []
         processed_rows = 0
+        start_time = time.time()
         
-        # Custom batch processing function
-        def process_batch(batch):
+        # Define optimized batch processing function
+        def process_batch(batch, batch_num):
             nonlocal processed_rows
             # Convert to pandas for processing
-            df_batch = batch.to_pandas()
-            processed_rows += len(df_batch)
+            df_batch = batch.to_pandas(split_blocks=True, self_destruct=True)  # Use pyarrow's memory optimization
+            batch_rows = len(df_batch)
+            processed_rows += batch_rows
             
-            # Downcast numeric columns to reduce memory usage
+            # Downcast numeric columns for memory efficiency
             for col in df_batch.select_dtypes(include=['float64']).columns:
                 df_batch[col] = pd.to_numeric(df_batch[col], downcast='float')
             for col in df_batch.select_dtypes(include=['int64']).columns:
                 df_batch[col] = pd.to_numeric(df_batch[col], downcast='integer')
-                
-            logger.info(f"Processed {len(df_batch)} rows (total: {processed_rows})")
+            
+            # Avoid logging for every batch to reduce overhead
+            if batch_num % 5 == 0 or batch_rows < 10000:
+                batch_time = time.time() - start_time
+                rows_per_sec = processed_rows / max(batch_time, 0.001)
+                logger.info(f"Processed batch {batch_num}: {batch_rows} rows, Total: {processed_rows} rows, Speed: {rows_per_sec:.0f} rows/sec")
+            
             return df_batch
         
-        # Read and process batches
-        data_batches = []
-        for batch in scanner.to_batches():
-            df_batch = process_batch(batch)
-            data_batches.append(df_batch)
-            
-            # Clean up to free memory
-            gc.collect()
+        # Read and process batches - using list comprehension for efficiency
+        logger.info(f"Starting batch processing with size {batch_size}")
+        data_batches = [process_batch(batch, i) for i, batch in enumerate(scanner.to_batches())]
         
-        # Combine processed batches
+        # Combine processed batches efficiently
         logger.info("Combining processed batches")
-        data = pd.concat(data_batches, ignore_index=True)
+        data = pd.concat(data_batches, ignore_index=True, copy=False)
         del data_batches
         gc.collect()
         
-        logger.info(f"Data loaded and preprocessed, shape={data.shape}")
+        process_time = time.time() - start_time
+        logger.info(f"Data loaded and preprocessed in {process_time:.1f}s, shape={data.shape}, speed={processed_rows/max(process_time, 0.001):.0f} rows/sec")
         
         # Perform initial quality check
         logger.info("Performing initial quality check")
@@ -299,24 +349,96 @@ def preprocess_data(data_path, output_path):
                 urgency="medium"
             )
         
-        # Basic preprocessing
+        # Optimize memory before heavy processing
+        gc.collect()
+        
+        # Basic preprocessing - with timing for performance analysis
+        start_time = time.time()
         logger.info("Handling missing data")
         data = handle_missing_data(data)
-        gc.collect()  # Force garbage collection after operations
-        
-        logger.info("Handling outliers")
-        data = handle_outliers(data)
+        missing_time = time.time() - start_time
+        logger.info(f"Missing data handling completed in {missing_time:.1f}s")
         gc.collect()
         
+        start_time = time.time()
+        logger.info("Handling outliers")
+        # Optimize outlier handling by processing in parallel for large datasets
+        if len(data) > 100000:
+            # Define a parallel version of outlier handling for large numeric columns
+            numeric_cols = data.select_dtypes(include=[np.number]).columns
+            # Filter out categorical columns that might be stored as numeric
+            numeric_cols = [col for col in numeric_cols if data[col].nunique() > 20]
+            
+            if len(numeric_cols) > 10:  # Only parallelize if we have many numeric columns
+                # Process in parallel groups for efficiency
+                column_groups = [numeric_cols[i:i+max(1, len(numeric_cols)//n_cores)] 
+                                 for i in range(0, len(numeric_cols), max(1, len(numeric_cols)//n_cores))]
+                
+                def process_column_group(cols):
+                    result = data[cols].copy()
+                    for col in cols:
+                        # Calculate z-scores efficiently
+                        mean_val = data[col].mean()
+                        std_val = data[col].std()
+                        if std_val > 0:
+                            z_scores = np.abs((data[col] - mean_val) / std_val)
+                            mask = z_scores > 3
+                            if mask.any():
+                                # Get the data type of the column
+                                dtype = data[col].dtype
+                                # Explicitly cast the mean value to the column's data type
+                                if np.issubdtype(dtype, np.integer):
+                                    mean_val = int(mean_val)
+                                result.loc[mask, col] = mean_val
+                    return result
+                
+                # Create a pool and process column groups in parallel
+                with mp.Pool(n_cores) as pool:
+                    results = pool.map(process_column_group, column_groups)
+                
+                # Update data with the processed results
+                for i, cols in enumerate(column_groups):
+                    data[cols] = results[i]
+                
+                del results
+            else:
+                data = handle_outliers(data)
+        else:
+            data = handle_outliers(data)
+            
+        outlier_time = time.time() - start_time
+        logger.info(f"Outlier handling completed in {outlier_time:.1f}s")
+        gc.collect()
+        
+        start_time = time.time()
         logger.info("Encoding categorical variables")
         data = encode_categorical_variables(data)
+        encoding_time = time.time() - start_time
+        logger.info(f"Categorical encoding completed in {encoding_time:.1f}s")
         gc.collect()
         
+        start_time = time.time()
         logger.info("Scaling numeric features")
-        data = scale_numeric_features(data)
+        # Use swifter for parallelized column operations if dataset is large
+        if len(data) > 100000:
+            numeric_cols = data.select_dtypes(include=[np.number]).columns
+            for col in numeric_cols:
+                min_val = data[col].min()
+                range_val = data[col].max() - min_val
+                # Avoid division by zero
+                if range_val > 0:
+                    data[col] = data[col].swifter.progress_bar(False).apply(lambda x: (x - min_val) / range_val)
+                else:
+                    data[col] = 0
+        else:
+            data = scale_numeric_features(data)
+            
+        scaling_time = time.time() - start_time
+        logger.info(f"Feature scaling completed in {scaling_time:.1f}s")
         gc.collect()
         
         # Calculate pure_premium as required by schema validation
+        start_time = time.time()
         logger.info("Calculating pure_premium and sample weights")
         if 'il_total' in data.columns and 'eey' in data.columns:
             # Create target variable (Pure Premium)
@@ -333,6 +455,10 @@ def preprocess_data(data_path, output_path):
             error_msg = f"Cannot calculate pure_premium: missing columns {missing_cols}"
             logger.error(error_msg)
             raise ValueError(error_msg)
+            
+        calc_time = time.time() - start_time
+        logger.info(f"Pure premium calculation completed in {calc_time:.1f}s")
+        gc.collect()
         
         # Final quality check after preprocessing
         logger.info("Performing final quality check")
@@ -346,28 +472,40 @@ def preprocess_data(data_path, output_path):
             )
         
         # Save preprocessed data using advanced PyArrow features
+        start_time = time.time()
         logger.info(f"Saving preprocessed data to {output_path} with ZSTD compression")
         
-        # Convert pandas to pyarrow Table
+        # Convert pandas to pyarrow Table with optimized settings
         arrow_table = pa.Table.from_pandas(data)
         
-        # Write with optimized settings - removing potentially unsupported parameters
+        # Write with optimized settings
         pq.write_table(
             arrow_table, 
             output_path,
-            compression='zstd',  # Using ZSTD for better compression ratio
-            compression_level=3,  # Balanced compression level (range 1-22)
+            compression='zstd',  # Using ZSTD for better compression ratio and speed
+            compression_level=3,  # Balanced compression level for speed/size
             use_dictionary=True,
-            write_statistics=True
-            # Removed parameters that might not be supported
+            write_statistics=True,
+            row_group_size=100000  # Optimize for reading performance
         )
+        
+        save_time = time.time() - start_time
+        logger.info(f"Data saved to parquet in {save_time:.1f}s")
         
         # Save quality reports
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         quality_reports = {
             'initial': {'status': quality_report['status']},
             'final': {'status': final_quality_report['status']},
-            'timestamp': timestamp
+            'timestamp': timestamp,
+            'performance': {
+                'missing_handling_time': missing_time,
+                'outlier_handling_time': outlier_time,
+                'categorical_encoding_time': encoding_time,
+                'feature_scaling_time': scaling_time,
+                'pure_premium_calc_time': calc_time,
+                'save_time': save_time
+            }
         }
         
         # Free memory before returning
