@@ -32,6 +32,9 @@ from .data_quality import DataQualityMonitor, manual_override
 from .drift import generate_reference_means, detect_data_drift, self_healing
 from .monitoring import record_system_metrics, update_monitoring_with_ui_components
 
+# Import the caching system for use across modules
+from utils.cache import GLOBAL_CACHE, cache_result, DataFrameCache
+
 # Define exports
 __all__: List[str] = [
     # Data ingestion and preprocessing
@@ -54,7 +57,12 @@ __all__: List[str] = [
     'update_monitoring_with_ui_components',
     
     # Testing and deployment
-    'manual_override'
+    'manual_override',
+    
+    # Caching system
+    'GLOBAL_CACHE',
+    'cache_result',
+    'DataFrameCache'
 ]
 
 # Version information

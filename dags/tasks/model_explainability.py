@@ -5,6 +5,7 @@ import shap
 from typing import Dict, List, Tuple
 import mlflow
 from datetime import datetime
+from utils.cache import GLOBAL_CACHE, cache_result
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,25 @@ class ModelExplainabilityTracker:
         self.feature_importance_history = []
         self.shap_values_history = []
         
+    @cache_result
     def calculate_feature_importance(self, model: object, X: pd.DataFrame) -> Dict[str, float]:
         """Calculate feature importance scores."""
+        # Check if we've already cached this calculation
+        model_hash = str(hash(model))
+        df_hash = str(id(X))
+        cache_key = f"{self.model_id}_{model_hash}_{df_hash}_importance"
+        
+        # Look for feature importance in column cache
+        cached_result = GLOBAL_CACHE.get_column_result(
+            df_name=f"{self.model_id}_df",
+            column="all",
+            operation=f"feature_importance_{model_hash}"
+        )
+        
+        if cached_result is not None:
+            logger.info(f"Using cached feature importance for {self.model_id}")
+            return cached_result
+        
         try:
             if hasattr(model, 'feature_importances_'):
                 importances = model.feature_importances_
@@ -26,21 +44,59 @@ class ModelExplainabilityTracker:
                 importances = np.abs(shap_values).mean(0)
             
             feature_importance = dict(zip(X.columns, importances))
-            return dict(sorted(feature_importance.items(), key=lambda x: x[1], reverse=True))
+            result = dict(sorted(feature_importance.items(), key=lambda x: x[1], reverse=True))
+            
+            # Store in cache for future use
+            GLOBAL_CACHE.store_column_result(
+                df_name=f"{self.model_id}_df",
+                column="all",
+                operation=f"feature_importance_{model_hash}",
+                result=result
+            )
+            
+            return result
         except Exception as e:
             logger.error(f"Error calculating feature importance: {str(e)}")
             return {}
 
+    @cache_result
     def calculate_shap_values(self, model: object, X: pd.DataFrame) -> Tuple[np.ndarray, List[str]]:
         """Calculate SHAP values for the model."""
+        # Check if we've already cached this calculation
+        model_hash = str(hash(model))
+        df_hash = str(id(X))
+        cache_key = f"{self.model_id}_{model_hash}_{df_hash}_shap"
+        
+        # Look for SHAP values in column cache
+        cached_result = GLOBAL_CACHE.get_column_result(
+            df_name=f"{self.model_id}_df",
+            column="all",
+            operation=f"shap_values_{model_hash}"
+        )
+        
+        if cached_result is not None:
+            logger.info(f"Using cached SHAP values for {self.model_id}")
+            return cached_result
+            
         try:
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X)
-            return shap_values, X.columns.tolist()
+            result = (shap_values, X.columns.tolist())
+            
+            # Store in cache for future use
+            GLOBAL_CACHE.store_column_result(
+                df_name=f"{self.model_id}_df",
+                column="all",
+                operation=f"shap_values_{model_hash}",
+                result=result
+            )
+            
+            return result
         except Exception as e:
             logger.error(f"Error calculating SHAP values: {str(e)}")
             return np.array([]), []
     
+    @cache_result
     def detect_feature_shift(self, current_importance: Dict[str, float], threshold: float = 0.1) -> Dict[str, float]:
         """Detect shifts in feature importance from historical data."""
         if not self.feature_importance_history:
@@ -101,6 +157,10 @@ class ModelExplainabilityTracker:
                 'message': 'Feature data is empty or None',
                 'timestamp': datetime.now().isoformat()
             }
+        
+        # Store dataframe in cache for future operations
+        df_name = f"{self.model_id}_df"
+        GLOBAL_CACHE.store_transformed(X, df_name)
         
         # Calculate and store feature importance
         feature_importance = self.calculate_feature_importance(model, X)

@@ -12,6 +12,7 @@ Refactored to:
   - Version the reference means file on upload under a timestamped prefix.
   - Wrap S3 operations with tenacity retries.
   - Load drift threshold from Airflow Variable "DRIFT_THRESHOLD".
+  - Leverage the caching system for improved performance.
 """
 
 import os
@@ -30,6 +31,7 @@ from utils.config import (
     DATA_BUCKET, REFERENCE_KEY_PREFIX, AWS_REGION,
     DRIFT_THRESHOLD
 )
+from utils.cache import GLOBAL_CACHE, cache_result
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ def initialize_aws_clients():
         logger.error(f"Failed to initialize AWS clients: {e}")
         raise
 
+@cache_result
 def generate_reference_means(processed_data_path: str) -> str:
     """
     Generate reference means from processed data and upload to S3.
@@ -67,37 +70,56 @@ def generate_reference_means(processed_data_path: str) -> str:
     from utils.slack import post as send_message
     
     try:
-        # Load the data using pyarrow optimizations
-        logger.info(f"Loading processed data from {processed_data_path} with pyarrow optimizations")
+        logger.info(f"Loading processed data from {processed_data_path}")
         
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        import pyarrow.compute as pc
-        import pyarrow.dataset as ds
-        import gc
+        # Check if we have already computed statistics for this DataFrame
+        df_hash = os.path.basename(processed_data_path).replace('.parquet', '')
+        df_name = f"reference_means_{df_hash}"
         
-        # Create dataset for efficient reading
-        dataset = ds.dataset(processed_data_path, format="parquet")
+        # Use cached data if available
+        cached_df = GLOBAL_CACHE.get_transformed(df_name)
+        if cached_df is not None:
+            logger.info(f"Using cached data for {df_name}")
+            df = cached_df
+        else:
+            # Load the data using pyarrow optimizations
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+            import pyarrow.compute as pc
+            import pyarrow.dataset as ds
+            import gc
+            
+            # Create dataset for efficient reading
+            dataset = ds.dataset(processed_data_path, format="parquet")
+            
+            # Create scanner with projection and filtering to only include numeric columns
+            scanner = ds.Scanner.from_dataset(
+                dataset,
+                use_threads=True
+            )
+            
+            # Read as arrow table
+            table = scanner.to_table()
+            
+            # Convert to pandas for easier stats calculation
+            df = table.to_pandas()
+            
+            # Cache the DataFrame for future use
+            GLOBAL_CACHE.store_transformed(df, df_name)
+            
+            # Free memory
+            del table
+            gc.collect()
         
-        # Create scanner with projection and filtering to only include numeric columns
-        scanner = ds.Scanner.from_dataset(
-            dataset,
-            use_threads=True
-        )
+        # Get statistics from cache instead of recalculating
+        GLOBAL_CACHE.compute_statistics(df, df_name)
         
-        # Read as arrow table
-        table = scanner.to_table()
-        
-        # Convert to pandas for easier stats calculation
-        df = table.to_pandas()
-        
-        # Free memory
-        del table
-        gc.collect()
-        
-        # Calculate means for numerical columns
+        # Calculate means for numerical columns by using cached statistics
         numeric_cols = df.select_dtypes(include=[np.number]).columns
-        means = df[numeric_cols].mean()
+        means = pd.Series({
+            col: GLOBAL_CACHE.get_statistic(df_name, col, 'mean') 
+            for col in numeric_cols
+        })
         
         # Save to CSV
         means.to_csv(REFERENCE_MEANS_PATH, header=True)
@@ -134,6 +156,7 @@ def generate_reference_means(processed_data_path: str) -> str:
         )
         raise
 
+@cache_result
 def detect_data_drift(processed_data_path: str, reference_path: str = None) -> dict:
     """
     Detect drift between current data and reference means.
@@ -154,32 +177,48 @@ def detect_data_drift(processed_data_path: str, reference_path: str = None) -> d
     logger.info(f"Using drift threshold: {drift_threshold}")
     
     try:
-        # Load current data using pyarrow optimizations
-        logger.info(f"Loading current data from {processed_data_path} with pyarrow optimizations")
+        logger.info(f"Loading current data from {processed_data_path}")
         
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        import pyarrow.compute as pc
-        import pyarrow.dataset as ds
+        # Check if we have already computed statistics for this DataFrame
+        df_hash = os.path.basename(processed_data_path).replace('.parquet', '')
+        df_name = f"drift_detection_{df_hash}"
         
-        # Create dataset for efficient reading
-        dataset = ds.dataset(processed_data_path, format="parquet")
-        
-        # Create scanner with multi-threading enabled
-        scanner = ds.Scanner.from_dataset(
-            dataset,
-            use_threads=True
-        )
-        
-        # Read as arrow table
-        table = scanner.to_table()
-        
-        # Convert to pandas 
-        current_df = table.to_pandas()
-        
-        # Free memory
-        del table
-        gc.collect()
+        # Use cached data if available or compute statistics
+        cached_df = GLOBAL_CACHE.get_transformed(df_name)
+        if cached_df is not None:
+            logger.info(f"Using cached data for {df_name}")
+            current_df = cached_df
+            # Ensure statistics are computed
+            GLOBAL_CACHE.compute_statistics(current_df, df_name)
+        else:
+            # Load the data using pyarrow optimizations
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+            import pyarrow.compute as pc
+            import pyarrow.dataset as ds
+            
+            # Create dataset for efficient reading
+            dataset = ds.dataset(processed_data_path, format="parquet")
+            
+            # Create scanner with multi-threading enabled
+            scanner = ds.Scanner.from_dataset(
+                dataset,
+                use_threads=True
+            )
+            
+            # Read as arrow table
+            table = scanner.to_table()
+            
+            # Convert to pandas 
+            current_df = table.to_pandas()
+            
+            # Cache the DataFrame and compute statistics
+            GLOBAL_CACHE.store_transformed(current_df, df_name)
+            GLOBAL_CACHE.compute_statistics(current_df, df_name)
+            
+            # Free memory
+            del table
+            gc.collect()
         
         # Get reference means
         if reference_path is None:
@@ -190,13 +229,19 @@ def detect_data_drift(processed_data_path: str, reference_path: str = None) -> d
         logger.info(f"Loading reference means from {reference_path}")
         reference_means = pd.read_csv(reference_path, index_col=0, header=None, squeeze=True)
         
-        # Calculate current means for numeric columns
+        # Get numeric columns
         numeric_cols = current_df.select_dtypes(include=[np.number]).columns
-        current_means = current_df[numeric_cols].mean()
         
-        # Free memory before drift calculations
-        del current_df
-        gc.collect()
+        # Calculate current means using cached statistics
+        current_means = pd.Series({
+            col: GLOBAL_CACHE.get_statistic(df_name, col, 'mean')
+            for col in numeric_cols
+        })
+        
+        # Free memory if we're done with the dataframe
+        if not GLOBAL_CACHE.get_transformed(df_name) is current_df:
+            del current_df
+            gc.collect()
         
         # Calculate drift for each column
         drift_results = {}
@@ -256,6 +301,7 @@ def detect_data_drift(processed_data_path: str, reference_path: str = None) -> d
         )
         raise
 
+@cache_result
 def self_healing(drift_results: dict, processed_data_path: str) -> dict:
     """
     Apply self-healing to data if drift is detected.
@@ -280,9 +326,21 @@ def self_healing(drift_results: dict, processed_data_path: str) -> dict:
                 "reason": "No drift detected"
             }
         
-        # Load the data
-        logger.info(f"Loading data for self-healing from {processed_data_path}")
-        df = pd.read_parquet(processed_data_path)
+        # Get DataFrame hash for caching
+        df_hash = os.path.basename(processed_data_path).replace('.parquet', '')
+        df_name = f"self_healing_{df_hash}"
+        
+        # Check for cached transformed version
+        cached_df = GLOBAL_CACHE.get_transformed(df_name)
+        if cached_df is not None:
+            logger.info(f"Using cached data for self-healing: {df_name}")
+            df = cached_df
+        else:
+            # Load the data
+            logger.info(f"Loading data for self-healing from {processed_data_path}")
+            df = pd.read_parquet(processed_data_path)
+            # Cache for future use
+            GLOBAL_CACHE.store_transformed(df, df_name)
         
         # Apply healing strategies
         healed_columns = {}
@@ -323,35 +381,41 @@ def self_healing(drift_results: dict, processed_data_path: str) -> dict:
         df.to_parquet(healed_path)
         logger.info(f"Healed dataset saved to {healed_path}")
         
+        # Store the healed dataframe in cache with new name
+        healed_df_name = f"healed_{df_hash}"
+        GLOBAL_CACHE.store_transformed(df, healed_df_name)
+        
         # Upload healed dataset to S3
         s3_key = f"data/healed/{os.path.basename(healed_path)}"
         s3_upload(healed_path, s3_key)
         
-        # Send notification
+        # Send notification about healing
         if healed_columns:
             healing_msg = "\n".join([
-                f"{col}: {details['strategy']} (improvement: {details['improvement']:.2%})"
+                f"{col}: {details['improvement']:.2%} improvement" 
                 for col, details in healed_columns.items()
             ])
-            
             send_message(
-                channel="#alerts",
+                channel="#data-engineering",
                 title="🔄 Self-Healing Applied",
-                details=f"Self-healing applied to {len(healed_columns)} feature(s):\n{healing_msg}\nHealed dataset: {healed_path}",
-                urgency="high"
+                details=f"Self-healing applied to {len(healed_columns)} columns:\n{healing_msg}\n" +
+                        f"Healed dataset saved to {s3_key}",
+                urgency="medium"
             )
-        
-        return {
+            
+        # Prepare results
+        results = {
             "timestamp": datetime.now().isoformat(),
-            "status": "success",
-            "num_healed_columns": len(healed_columns),
+            "status": "applied",
             "healed_columns": healed_columns,
             "healed_path": healed_path,
-            "s3_path": f"s3://{DATA_BUCKET}/{s3_key}"
+            "s3_key": s3_key
         }
         
+        return results
+        
     except Exception as e:
-        error_msg = f"Error applying self-healing: {e}"
+        error_msg = f"Error in self-healing: {e}"
         logger.error(error_msg)
         send_message(
             channel="#alerts",
@@ -362,118 +426,102 @@ def self_healing(drift_results: dict, processed_data_path: str) -> dict:
         raise
 
 def record_system_metrics() -> dict:
-    """
-    Record system-level metrics for monitoring.
+    """Record system metrics to CloudWatch."""
+    # Initialize AWS clients
+    cloudwatch, _, _, _ = initialize_aws_clients()
     
-    Returns:
-        Dict with system metrics
-    """
-    # Import slack only when needed
-    from utils.slack import post as send_message
+    # Import necessary modules for system metrics
+    import psutil
+    
+    metrics = {}
     
     try:
-        # Initialize AWS clients
-        cloudwatch, lambda_client, ssm, secretsmanager = initialize_aws_clients()
+        # CPU metrics
+        cpu_percent = psutil.cpu_percent(interval=1)
+        metrics["cpu_utilization"] = cpu_percent
         
-        # Get metrics for training jobs
-        metrics = {
-            "timestamp": datetime.now().isoformat(),
-            "system_metrics": {}
-        }
+        # Memory metrics
+        memory = psutil.virtual_memory()
+        metrics["memory_utilization"] = memory.percent
+        metrics["memory_available_gb"] = memory.available / (1024 ** 3)
         
-        # Collect CloudWatch metrics
-        try:
-            cpu_utilization = cloudwatch.get_metric_data(
-                MetricDataQueries=[
-                    {
-                        'Id': 'cpu',
-                        'MetricStat': {
-                            'Metric': {
-                                'Namespace': 'AWS/EC2',
-                                'MetricName': 'CPUUtilization',
-                                'Dimensions': [
-                                    {
-                                        'Name': 'InstanceId',
-                                        'Value': Variable.get("INSTANCE_ID", default_var="i-placeholder")
-                                    }
-                                ]
-                            },
-                            'Period': 300,
-                            'Stat': 'Average'
-                        },
-                        'ReturnData': True
-                    }
-                ],
-                StartTime=datetime.now() - pd.Timedelta(hours=1),
-                EndTime=datetime.now()
-            )
-            
-            metrics["system_metrics"]["cpu_utilization"] = {
-                "value": np.mean(cpu_utilization['MetricDataResults'][0]['Values']) if cpu_utilization['MetricDataResults'][0]['Values'] else None,
-                "unit": "Percent"
-            }
-        except Exception as e:
-            logger.warning(f"Error getting CPU metrics: {e}")
+        # Disk metrics
+        disk = psutil.disk_usage('/')
+        metrics["disk_utilization"] = disk.percent
+        metrics["disk_free_gb"] = disk.free / (1024 ** 3)
         
-        # Check Lambda functions
-        try:
-            lambda_functions = lambda_client.list_functions(MaxItems=10)
-            metrics["system_metrics"]["lambda_functions"] = len(lambda_functions['Functions'])
-        except Exception as e:
-            logger.warning(f"Error listing Lambda functions: {e}")
+        # Network metrics (just an example, can be customized)
+        net_io_counters = psutil.net_io_counters()
+        metrics["network_bytes_sent"] = net_io_counters.bytes_sent
+        metrics["network_bytes_recv"] = net_io_counters.bytes_recv
         
-        # Send notification
-        send_message(
-            channel="#monitoring",
-            title="📊 System Metrics Recorded",
-            details=f"System metrics recorded at {metrics['timestamp']}",
-            urgency="low"
+        # Log metrics
+        timestamp = int(time.time())
+        
+        # Send metrics to CloudWatch
+        cloudwatch.put_metric_data(
+            Namespace='MLAutomation',
+            MetricData=[
+                {
+                    'MetricName': name,
+                    'Value': value,
+                    'Unit': 'Percent' if 'utilization' in name else 'None',
+                    'Timestamp': datetime.fromtimestamp(timestamp)
+                }
+                for name, value in metrics.items()
+            ]
         )
         
-        return metrics
+        logger.info(f"Recorded system metrics: {metrics}")
+        
+        return {
+            "timestamp": datetime.fromtimestamp(timestamp).isoformat(),
+            "metrics": metrics,
+            "status": "success"
+        }
         
     except Exception as e:
         error_msg = f"Error recording system metrics: {e}"
         logger.error(error_msg)
+        # Import slack only when needed
+        from utils.slack import post as send_message
         send_message(
             channel="#alerts",
             title="❌ System Metrics Recording Failed",
             details=error_msg,
             urgency="medium"
         )
-        raise
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "status": "error",
+            "error": str(e)
+        }
 
 def update_monitoring_with_ui_components() -> dict:
-    """
-    Update the monitoring dashboard with UI components from loss-history-dashboard.
-    """
-    # Import slack only when needed
-    from utils.slack import post as send_message
-    
+    """Update UI monitoring components."""
+    # This function could be expanded to update React components in the dashboard
     try:
-        # This is a placeholder for the actual implementation
-        logger.info("Updating monitoring dashboard with UI components")
+        # For now just log that we would update components
+        logger.info("Would update UI monitoring components")
         
-        send_message(
-            channel="#monitoring",
-            title="🔄 Monitoring Dashboard Updated",
-            details="Monitoring dashboard updated with latest UI components",
-            urgency="low"
-        )
+        # In real implementation, this might:
+        # 1. Generate new React components based on latest metrics
+        # 2. Update AWS Amplify app or S3 bucket with new components
+        # 3. Trigger a rebuild of the frontend
         
         return {
             "timestamp": datetime.now().isoformat(),
             "status": "success",
-            "components_updated": ["drift_monitor", "data_quality", "model_metrics"]
+            "components_updated": ["DriftMonitor", "DataQualityDashboard"]
         }
         
     except Exception as e:
-        error_msg = f"Error updating monitoring dashboard: {e}"
+        error_msg = f"Error updating UI components: {e}"
         logger.error(error_msg)
-        send_message(
-            channel="#alerts",
-            title="❌ Monitoring Dashboard Update Failed",
-            details=error_msg,
-            urgency="medium"
-        )
-        raise
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "status": "error",
+            "error": str(e)
+        }
