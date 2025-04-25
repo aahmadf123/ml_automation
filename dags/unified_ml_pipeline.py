@@ -28,6 +28,7 @@ import shutil
 import sys
 import math
 import random
+import time
 from datetime import datetime, timedelta
 from airflow.utils.dates import days_ago
 from pathlib import Path
@@ -2059,26 +2060,128 @@ def wait_for_data_validation(**context):
 
 def wait_for_model_approval(**context):
     """
-    Wait for the model to be approved by a human reviewer
+    Wait for model approval before proceeding with deployment.
+    
+    Args:
+        context: Airflow task context
+        
+    Returns:
+        Dictionary with approval status
     """
-    logger.info("Starting wait_for_model_approval task")
+    try:
+        # Get model comparison results
+        ti = context['ti']
+        comparison_results = ti.xcom_pull(task_ids='model_comparison')
+        
+        if not comparison_results:
+            logger.warning("No model comparison results found")
+            return {
+                "status": "waiting",
+                "message": "Waiting for model comparison results"
+            }
+        
+        # Log model comparison results
+        logger.info(f"Model comparison results: {comparison_results}")
+        
+        # In a real scenario, this could trigger an approval workflow
+        # For now, we'll simulate automatic approval after a short delay
+        time.sleep(5)  # Simulate approval delay
+        
+        # Push approval status to XCom
+        approval_status = {
+            "status": "approved",
+            "approved_at": datetime.now().isoformat(),
+            "approved_by": "system",
+            "message": "Model automatically approved"
+        }
+        
+        ti.xcom_push(key='model_approval', value=approval_status)
+        
+        logger.info(f"Model approved for deployment: {approval_status}")
+        return approval_status
+        
+    except Exception as e:
+        logger.error(f"Error in wait_for_model_approval task: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error in model approval: {str(e)}"
+        }
+
+def train_models(**context):
+    """
+    Train machine learning models using processed data.
     
-    # Get the run_id from XCom and the model registry client
-    run_id = context['ti'].xcom_pull(task_ids='train_models_task')
-    
-    # Always auto-approve
-    auto_approve = True
-    
-    if auto_approve:
-        logger.info("Model automatically approved")
-        return True
-    
-    # Rest of function not needed since we're auto-approving
-    return True
+    Args:
+        context: Airflow task context
+        
+    Returns:
+        Dictionary with training results
+    """
+    try:
+        # Get processed data path from XCom
+        ti = context['ti']
+        process_data_results = ti.xcom_pull(task_ids='preprocess_data_task')
+        
+        if not process_data_results or 'processed_data_path' not in process_data_results:
+            error_msg = "No processed data path found in XCom"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "message": error_msg
+            }
+        
+        processed_data_path = process_data_results['processed_data_path']
+        logger.info(f"Using processed data from {processed_data_path}")
+        
+        # Import the training module for model training
+        from tasks.training import train_multiple_models
+        
+        # Train the models
+        training_results = train_multiple_models(
+            processed_path=processed_data_path,
+            parallel=True,
+            max_workers=3
+        )
+        
+        # Log training results
+        if training_results:
+            success_count = sum(1 for result in training_results.values() 
+                               if result.get('status') == 'completed')
+            logger.info(f"Training completed with {success_count} successful models")
+            
+            # Push results to XCom
+            ti.xcom_push(key='training_results', value=training_results)
+            
+            return {
+                "status": "success",
+                "message": f"Successfully trained {success_count} models",
+                "results": training_results
+            }
+        else:
+            logger.warning("No training results returned")
+            return {
+                "status": "warning",
+                "message": "No training results returned"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in train_models task: {str(e)}")
+        logger.exception("Full exception details:")
+        
+        return {
+            "status": "error",
+            "message": f"Error in model training: {str(e)}"
+        }
 
 def deploy_model(**context):
     """
-    Deploy the best model to production
+    Deploy the best model based on evaluation metrics.
+    
+    Args:
+        context: Airflow task context
+        
+    Returns:
+        Dictionary with deployment results
     """
     logger.info("Starting deploy_model task")
     
