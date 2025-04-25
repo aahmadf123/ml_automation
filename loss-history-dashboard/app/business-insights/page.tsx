@@ -7,6 +7,8 @@ import { DollarSign, PieChart, TrendingUp, Users } from "lucide-react"
 import { SummaryCard } from "@/components/ui/summary-card"
 import { ROIVisualization } from "@/components/roi-visualization"
 import { CompetitiveAdvantageMetrics } from "@/components/competitive-advantage-metrics"
+import { HistoricalPerformance } from "@/components/historical-performance"
+
 export default function BusinessInsightsPage() {
   return (
     <div className="flex min-h-screen flex-col">
@@ -14,6 +16,7 @@ export default function BusinessInsightsPage() {
       <div className="container flex-1 items-start md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10">
         <DashboardSidebar />
         <main className="flex w-full flex-col overflow-hidden p-4 md:p-6">
+          {/* Key Metrics Summary */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
             <SummaryCard
               title="Total Projected Savings"
@@ -54,9 +57,41 @@ export default function BusinessInsightsPage() {
             />
           </div>
           
+          {/* ROI Analysis Section */}
+          <div className="mb-12">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold">Return on Investment Analysis</h2>
+              <p className="text-muted-foreground">Detailed breakdown of financial benefits and cost savings from ML implementation</p>
+            </div>
+            <ROIVisualization />
           </div>
-          
-          <BusinessInsights />
+
+          {/* Competitive Advantages Section */}
+          <div className="mb-12">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold">Competitive Advantages</h2>
+              <p className="text-muted-foreground">How our ML solutions outperform traditional methods and industry standards</p>
+            </div>
+            <CompetitiveAdvantageMetrics />
+          </div>
+
+          {/* Historical Performance Section */}
+          <div className="mb-12">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold">Model Performance Validation</h2>
+              <p className="text-muted-foreground">Historical accuracy and stability metrics demonstrating consistent results</p>
+            </div>
+            <HistoricalPerformance />
+          </div>
+
+          {/* Detailed Business Insights */}
+          <div className="mb-8">
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold">Detailed Analysis</h2>
+              <p className="text-muted-foreground">Comprehensive breakdown of predictions, trends, and risk assessments</p>
+            </div>
+            <BusinessInsights />
+          </div>
         </main>
       </div>
     </div>

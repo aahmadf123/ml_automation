@@ -17,25 +17,25 @@ import {
 } from 'recharts';
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
-import { format, subMonths, subYears, addMonths, parseISO } from "date-fns"
-import dynamic from 'next/dynamic'
-import { motion, AnimatePresence } from "framer-motion"
-import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, ExclamationCircleIcon, CheckCircleIcon, SparklesIcon } from "@heroicons/react/24/outline"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format, subMonths, subYears, addMonths, parseISO } from "date-fns";
+import dynamic from 'next/dynamic';
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, ExclamationCircleIcon, CheckCircleIcon, SparklesIcon } from "@heroicons/react/24/outline";
 
 // Dynamically import Plotly to avoid SSR issues
-const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
+const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
 
 // Dynamically import Recharts Sankey component
-const Sankey = dynamic(() => import('recharts').then(mod => mod.Sankey), { ssr: false })
-const Tooltip = dynamic(() => import('recharts').then(mod => mod.Tooltip), { ssr: false })
-const Layer = dynamic(() => import('recharts').then(mod => mod.Layer), { ssr: false })
-const Rectangle = dynamic(() => import('recharts').then(mod => mod.Rectangle), { ssr: false })
+const Sankey = dynamic(() => import('recharts').then(mod => mod.Sankey), { ssr: false });
+const TooltipDynamic = dynamic(() => import('recharts').then(mod => mod.Tooltip), { ssr: false });
+const Layer = dynamic(() => import('recharts').then(mod => mod.Layer), { ssr: false });
+const Rectangle = dynamic(() => import('recharts').then(mod => mod.Rectangle), { ssr: false });
 
 // Regions and products for filters
-const regions = ["Northeast", "Southeast", "Midwest", "Southwest", "West"]
-const products = ["Auto", "Home", "Commercial", "Life", "Health"]
+const regions = ["Northeast", "Southeast", "Midwest", "Southwest", "West"];
+const products = ["Auto", "Home", "Commercial", "Life", "Health"];
 
 // Sample historical and projected data
 const historicalLossData = [
@@ -50,6 +50,34 @@ const historicalLossData = [
   { year: 2026, actual: null, predicted: 20700000, ratio: null },
   { year: 2027, actual: null, predicted: 21800000, ratio: null },
 ];
+
+// Confidence interval data (95% confidence)
+const confidenceIntervals = {
+  2025: [0.92, 1.08],
+  2026: [0.89, 1.14],
+  2027: [0.85, 1.22]
+};
+
+// Sample historical and projected data
+const historicalLossData = [
+  { year: 2018, actual: 12500000, predicted: null, ratio: null },
+  { year: 2019, actual: 14200000, predicted: null, ratio: null },
+  { year: 2020, actual: 13800000, predicted: null, ratio: null },
+  { year: 2021, actual: 15400000, predicted: 15100000, ratio: 1.02 },
+  { year: 2022, actual: 16700000, predicted: 16200000, ratio: 1.03 },
+  { year: 2023, actual: 17900000, predicted: 17500000, ratio: 1.02 },
+  { year: 2024, actual: 18700000, predicted: 18900000, ratio: 0.99 },
+  { year: 2025, actual: null, predicted: 19800000, ratio: null },
+  { year: 2026, actual: null, predicted: 20700000, ratio: null },
+  { year: 2027, actual: null, predicted: 21800000, ratio: null },
+];
+
+// Confidence interval data (95% confidence)
+const confidenceIntervals = {
+  2025: [0.92, 1.08],
+  2026: [0.89, 1.14],
+  2027: [0.85, 1.22]
+};
 
 // Sample pure premium by decile data
 const purePremiumByDecile = [
@@ -109,27 +137,6 @@ const purePremiumByDecile = [
     optimizationImpact: { revenue: "+3.2%", retention: "-0.8%" },
     recommendation: "Offer risk assessment services to reduce potential claims"
   },
-  { 
-    decile: 5, 
-    actual2023: 256, 
-    predicted2024: 262, 
-    predicted2025: 278, 
-    predicted2026: 288, 
-    risk: "Medium",
-    pricingStatus: "underpriced",
-    riskReduction: { potential: 18, savings: 48000, action: "Implement risk mitigation technologies" },
-    peerComparison: { position: "bottom40", averagePremium: 305 },
-    riskTrend: "worsening",
-    optimizationImpact: { revenue: "+6.5%", retention: "-1.2%" },
-    recommendation: "Increase premiums by 6-8% and offer risk mitigation incentives"
-  },
-  { 
-    decile: 6, 
-    actual2023: 320, 
-    predicted2024: 318, 
-    predicted2025: 335, 
-    predicted2026: 352, 
-    risk: "Medium",
     pricingStatus: "optimal",
     riskReduction: { potential: 22, savings: 65000, action: "Require safety equipment upgrades" },
     peerComparison: { position: "average", averagePremium: 347 },
@@ -221,13 +228,13 @@ const riskTransitionData = [
   { source: "Extreme", target: "Extreme", value: 97, count: 19400 },
 ];
 
-// Calculate some useful statistics for the dashboard
-const lossAccuracy = historicalLossData
-  .filter(d => d.actual && d.predicted)
-  .map(d => Math.abs(1 - d.ratio || 0))
-  .reduce((sum, val, _, arr) => sum + val / arr.length, 0);
-
-const lossAccuracyFormatted = (100 - lossAccuracy * 100).toFixed(1) + '%';
+  { source: "Medium", target: "Medium", value: 65, count: 13000 },
+  { source: "Medium", target: "Medium-High", value: 25, count: 5000 },
+  { source: "Medium-High", target: "Medium", value: 8, count: 1600 },
+  { source: "Medium-High", target: "Medium-High", value: 62, count: 12400 },
+  { source: "Medium-High", target: "High", value: 30, count: 6000 },
+  { source: "High", target: "Medium-High", value: 7, count: 1400 },
+  { source: "High", target: "High", value: 63, count
 
 // Component for visualization of historical vs projected losses
 const HistoricalVsProjectedLosses = () => {
@@ -236,20 +243,180 @@ const HistoricalVsProjectedLosses = () => {
   const [compareToBaseline, setCompareToBaseline] = useState<boolean>(true);
   const [date, setDate] = useState<Date | undefined>(new Date());
 
-  // Confidence interval data (95% confidence)
-  const confidenceIntervals = {
-    // Year: [lower bound percentage, upper bound percentage]
-    2025: [0.92, 1.08],
-    2026: [0.89, 1.14],
-    2027: [0.85, 1.22]
-  };
+// Component for Pure Premium Prediction by Decile
+const PurePremiumByDecile: React.FC = () => {
+  const [selectedYear, setSelectedYear] = useState<string>("predicted2026");
+  const [showActual, setShowActual] = useState<boolean>(true);
+  const [sortBy, setSortBy] = useState<string>("decile");
   
-  // Baseline is a simple linear projection without ML
+  const yearLabels = {
+    "actual2023": "2023 Actual",
+    "predicted2024": "2024 Prediction",
+    "predicted2025": "2025 Prediction",
+    "predicted2026": "2026 Prediction"
+  };
+out ML
   const baselineProjection = [
     { year: 2025, predicted: 19200000 },
     { year: 2026, predicted: 19800000 },
     { year: 2027, predicted: 20400000 },
   ];
+      maximumFractionDigits: 0
+    }).format(value);
+  };
+  
+  // Format currency in millions for axis labels
+  const formatMillions = (value: number) => {
+    return `$${(value / 1000000).toFixed(0)}M`;
+  };
+  
+  // Custom tooltip for the chart
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload || !payload.length) return null;
+    
+    return (
+      <div className="bg-background border rounded-lg shadow-lg p-3 text-sm">
+        <h3 className="font-medium">{label}</h3>
+        {payload.map((item: any, index: number) => {
+          if (item.value === null) return null;
+          
+          return (
+            <div key={index} className="flex items-center mt-1">
+              <div 
+                className="w-3 h-3 rounded-full mr-2" 
+                style={{ backgroundColor: item.color }}
+              ></div>
+              <span className="font-medium">{item.name}:</span>
+              <span className="ml-2">{formatCurrency(item.value)}</span>
+            </div>
+          );
+        })}
+        
+        {payload[0]?.payload.ratio && (
+          <div className="mt-1 pt-1 border-t">
+            <span className="font-medium">Accuracy Ratio:</span>
+            <span className="ml-2">{(payload[0].payload.ratio * 100).toFixed(1)}%</span>
+          </div>
+        )}
+        
+        {payload[0]?.payload.year >= 2025 && showConfidenceInterval && (
+          <div className="mt-1 pt-1 border-t">
+            <span className="font-medium">95% Confidence Interval:</span>
+            <div className="ml-2">
+              {formatCurrency(payload[0].payload.predicted * confidenceIntervals[payload[0].payload.year][0])} - {formatCurrency(payload[0].payload.predicted * confidenceIntervals[payload[0].payload.year][1])}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Create visible data based on selected forecast years
+  const visibleData = historicalLossData.filter(d => d.year <= 2024 || d.year <= 2024 + forecastYears);
+
+  return (
+    <Card className="w-full">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-xl font-semibold">Historical vs. Projected Losses</CardTitle>
+            <CardDescription>
+              Actual loss history compared with ML model projections
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant={"outline"}
+                  className="w-[240px] justify-start text-left font-normal"
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {date ? format(date, "PPP") : <span>Pick a date</span>}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={date}
+                  onSelect={setDate}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon">
+                    <Printer className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Print Report</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon">
+                    <Download className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Download Data</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex-col space-y-8">
+          <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+            <div className="flex gap-4 flex-wrap">
+              <div>
+                <span className="text-sm font-medium mr-2">Forecast Years:</span>
+                <Select 
+                  value={forecastYears.toString()} 
+                  onValueChange={(val) => setForecastYears(parseInt(val))}
+                >
+                  <SelectTrigger className="w-24">
+                    <SelectValue placeholder="Years" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 Year</SelectItem>
+                    <SelectItem value="2">2 Years</SelectItem>
+                    <SelectItem value="3">3 Years</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="show-confidence"
+                  checked={showConfidenceInterval}
+                  onChange={() => setShowConfidenceInterval(!showConfidenceInterval)}
+                  className="mr-2"
+                />
+                <label htmlFor="show-confidence" className="text-sm font-medium">
+                  Show Confidence Intervals
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="compare-baseline"
+                  checked={compareToBaseline}
+                  onChange={() => setCompareToBaseline(!compareToBaseline)}
+                  className="mr-2"
+                />
+                <label
+    "predicted2025": "2025 Prediction",
+    "predicted2025": "2025 Prediction",
+    "predicted2026": "2026 Prediction"
+  };
+  
   
   // Format currency for tooltips and axes
   const formatCurrency = (value: number) => {
@@ -554,12 +721,6 @@ const HistoricalVsProjectedLosses = () => {
     };
     return riskColors[risk] || "#888888";
   };
-  
-  // Custom tooltip
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload || !payload.length) return null;
-    
-    const data = payload[0].payload;
     const yearLabel = yearLabels[payload[0].dataKey] || payload[0].dataKey;
     
     const percentChange = data.actual2023 
@@ -783,9 +944,27 @@ const HistoricalVsProjectedLosses = () => {
             Export
           </Button>
         </div>
-      </CardFooter>
-    </Card>
-  );
+        </CardFooter>
+      </Card>
+    );
+};
+
+// Function to generate mock data when the API fails
+const generateMockData = (setHistoricalData, setProjectedData, setDecileData) => {
+  // Generate sample data for testing
+  setHistoricalData(historicalLossData.slice(0, 7).map(d => ({
+    date: new Date(d.year, 0),
+    value: d.actual
+  })));
+  setProjectedData(historicalLossData.slice(7).map(d => ({
+    date: new Date(d.year, 0),
+    value: d.predicted || 0
+  })));
+  setDecileData(purePremiumByDecile.map(d => ({
+    decile: d.decile,
+    predicted: d.predicted2024,
+    actual: d.actual2023
+  })));
 };
 
 export default function BusinessInsights() {
@@ -891,7 +1070,7 @@ export default function BusinessInsights() {
         setError(err instanceof Error ? err.message : "An error occurred while fetching data");
         
         // Fall back to generating mock data
-        generateMockData();
+        generateMockData(setHistoricalData, setProjectedData, setDecileData);
       } finally {
         setIsLoading(false);
       }
@@ -899,7 +1078,6 @@ export default function BusinessInsights() {
     
     // Call the fetch function
     fetchProjectionsData();
-    
   }, [dateRange, lineView, selectedRegion, selectedProduct]);
   
   // Helper function to aggregate data points
@@ -1102,9 +1280,7 @@ export default function BusinessInsights() {
                 </CardContent>
               </Card>
             </TabsContent>
-          </Tabs>
-        </>
-      )}
-    </div>
-  )
+                <label htmlFor="compare-baseline" className="text-sm font-medium">
+                  Compare to Baseline
+                </label>
 } 
