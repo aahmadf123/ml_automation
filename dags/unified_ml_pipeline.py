@@ -1053,15 +1053,38 @@ def train_models(**context):
                     # Calculate trgt as il_total / eey
                     logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
                     df['trgt'] = df['il_total'] / df['eey']
+                    
+                    # Also create pure_premium since that's what should be used as the target
+                    logger.info("Creating 'pure_premium' column from 'il_total' / 'eey'")
+                    df['pure_premium'] = df['il_total'] / df['eey']
                 else:
-                    error_msg = "Cannot create target variable: missing required columns"
-                    logger.error(error_msg)
-                    logger.info(f"Available columns: {df.columns.tolist()}")
-                    try:
-                        slack.simple_post("❌ Model training failed: Missing target column", channel="#data-pipeline")
-                    except Exception as e:
-                        logger.warning(f"Error sending Slack notification: {str(e)}")
-                    raise ValueError(error_msg)
+                    # Check if we can create the pure_premium directly
+                    cols = df.columns.tolist()
+                    logger.info(f"Available columns: {cols}")
+                    
+                    # Look for variations of column names that might be useful
+                    losses_cols = [col for col in cols if 'loss' in col.lower()]
+                    premium_cols = [col for col in cols if 'premium' in col.lower()]
+                    exposure_cols = [col for col in cols if any(word in col.lower() for word in ['exposure', 'eey', 'earned'])]
+                    
+                    logger.info(f"Potential loss columns: {losses_cols}")
+                    logger.info(f"Potential premium columns: {premium_cols}")
+                    logger.info(f"Potential exposure columns: {exposure_cols}")
+                    
+                    # Try to find suitable columns to create target variable
+                    if losses_cols and exposure_cols:
+                        logger.info(f"Attempting to create target variable using {losses_cols[0]} and {exposure_cols[0]}")
+                        df['pure_premium'] = df[losses_cols[0]] / df[exposure_cols[0]]
+                        df['trgt'] = df['pure_premium']
+                    else:
+                        error_msg = "Cannot create target variable: missing required columns"
+                        logger.error(error_msg)
+                        logger.info(f"Available columns: {df.columns.tolist()}")
+                        try:
+                            slack.simple_post("❌ Model training failed: Cannot create target variable", channel="#data-pipeline")
+                        except Exception as e:
+                            logger.warning(f"Error sending Slack notification: {str(e)}")
+                        raise ValueError(error_msg)
                 
                 # Create weight column if not present
                 if 'wt' not in df.columns and 'eey' in df.columns:
