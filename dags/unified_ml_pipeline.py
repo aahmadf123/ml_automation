@@ -111,14 +111,9 @@ try:
     slack_channels = ensure_default_channels()
     logger.info(f"Slack channels initialized: {slack_channels}")
 except Exception as e:
-    logger.warning(f"Failed to initialize Slack: {str(e)}. Notifications may not be sent.")
-    # Define a dummy slack module if initialization fails
-    class DummySlack:
-        def post(self, channel=None, title=None, details=None, urgency=None):
-            logger.info(f"[DUMMY SLACK] {title}: {details}")
-            return {"ok": True, "dummy": True}
-    
-    slack = DummySlack()
+    logger.warning(f"Failed to initialize Slack: {str(e)}. Notifications will not be sent.")
+    # Import the EmptyModule as slack to prevent errors
+    slack = EmptyModule()
 
 # Constants
 LOCAL_PROCESSED_PATH = "/tmp/unified_processed.parquet"
@@ -201,49 +196,32 @@ def download_data(**context):
     bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
     key = config.RAW_DATA_KEY
     
-    # Enhanced debugging
-    logger.info(f"S3 DEBUGGING - Using bucket: '{bucket}', key: '{key}'")
-    logger.info(f"S3 DEBUGGING - AWS region: {config.AWS_REGION}")
-    logger.info(f"S3 DEBUGGING - RAW_DATA_KEY in config: {config.RAW_DATA_KEY}")
+    logger.info(f"Using bucket: '{bucket}', key: '{key}'")
     
-    # Add debugging to list objects in the bucket
     try:
         s3_client = boto3.client('s3', region_name=config.AWS_REGION)
-        logger.info("S3 DEBUGGING - Listing objects in the bucket for debugging:")
         
-        # List objects in the raw_data directory
-        raw_data_prefix = "raw-data/"
-        logger.info(f"S3 DEBUGGING - Objects with prefix '{raw_data_prefix}':")
-        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=raw_data_prefix)
-        if 'Contents' in response:
-            for obj in response['Contents']:
-                logger.info(f"S3 DEBUGGING -   - {obj['Key']} ({obj['Size']} bytes)")
-        else:
-            logger.warning(f"S3 DEBUGGING - No objects found with prefix '{raw_data_prefix}'")
-            
-        # Try also with raw-data (hyphenated) just in case
-        alt_prefix = "raw_data/"
-        logger.info(f"S3 DEBUGGING - Objects with alternate prefix '{alt_prefix}':")
-        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=alt_prefix)
-        if 'Contents' in response:
-            for obj in response['Contents']:
-                logger.info(f"S3 DEBUGGING -   - {obj['Key']} ({obj['Size']} bytes)")
-                # If the file is found here, update the key to use this path
-                if obj['Key'].endswith('ut_loss_history_1.csv'):
-                    key = obj['Key']
-                    logger.info(f"S3 DEBUGGING - Found target file at alternate path, updating key to: {key}")
-        else:
-            logger.warning(f"S3 DEBUGGING - No objects found with alternate prefix '{alt_prefix}'")
-            
-        # Check if the file exists at the exact key
+        # Check both raw-data and raw_data prefixes to find the target file
+        for prefix in ["raw-data/", "raw_data/"]:
+            response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+            if 'Contents' in response:
+                for obj in response['Contents']:
+                    if obj['Key'].endswith('ut_loss_history_1.csv'):
+                        key = obj['Key']
+                        logger.info(f"Found target file at path: {key}")
+                        break
+                        
+        # Verify the file exists
         try:
             s3_client.head_object(Bucket=bucket, Key=key)
-            logger.info(f"S3 DEBUGGING - File exists at exact path: s3://{bucket}/{key}")
+            logger.info(f"Verified file exists at: s3://{bucket}/{key}")
         except Exception as e:
-            logger.warning(f"S3 DEBUGGING - File does NOT exist at exact path: s3://{bucket}/{key}. Error: {str(e)}")
+            logger.error(f"File not found at specified path: s3://{bucket}/{key}")
+            raise FileNotFoundError(f"Target file not found in S3: {str(e)}")
             
     except Exception as e:
-        logger.warning(f"S3 DEBUGGING - Error listing objects in bucket: {str(e)}")
+        logger.error(f"Error accessing S3: {str(e)}")
+        raise
     
     try:
         # Create a list of potential data directories, in order of preference
@@ -335,21 +313,6 @@ def download_data(**context):
         logger.info(f"Pushing data_path to XCom: {data_path}")
         context['ti'].xcom_push(key='data_path', value=data_path)
         
-        # Add additional debugging
-        ti = context['ti']
-        task_id = ti.task_id
-        dag_id = ti.dag_id
-        logger.info(f"XCom values for debugging - task_id: {task_id}, dag_id: {dag_id}")
-        
-        # Verify the XCom push by directly reading from Airflow's XCom table
-        try:
-            execution_date = context.get('execution_date')
-            logger.info(f"Execution date: {execution_date}")
-            xcom_value = ti.xcom_pull(task_ids=task_id, key='data_path')
-            logger.info(f"Verification of XCom value (self-pull): {xcom_value}")
-        except Exception as e:
-            logger.warning(f"Could not verify XCom value: {str(e)}")
-
         if backup_paths:
             logger.info(f"Pushing backup_paths to XCom: {backup_paths}")
             context['ti'].xcom_push(key='backup_paths', value=backup_paths)
@@ -968,28 +931,11 @@ def check_for_drift(**context):
         return drift_results
 
 def train_models(**context):
-    """Train all models"""
-    logger.info("Starting train_models task")
+    """Load pretrained Model1 and Model4 from S3 and compare them"""
+    logger.info("Starting load_models task (loading pretrained Model1 and Model4)")
     logger.info(f"Running in context: {context.get('task_instance')}")
     
     try:
-        # Log all XCom values received from upstream tasks for diagnostic purposes
-        ti = context.get('ti')
-        if ti:
-            # Get upstream task IDs
-            task_instances = context.get('task_instance').get_dagrun().get_task_instances()
-            upstream_task_ids = [t.task_id for t in task_instances if t.task_id != 'train_models']
-            
-            logger.info(f"Upstream tasks: {upstream_task_ids}")
-            
-            # Log XCom values from upstream tasks
-            for task_id in upstream_task_ids:
-                try:
-                    xcom_values = ti.xcom_pull(task_ids=task_id)
-                    logger.info(f"XCom from {task_id}: {str(xcom_values)[:500]}...")  # Log first 500 chars
-                except Exception as e:
-                    logger.warning(f"Error pulling XCom from {task_id}: {str(e)}")
-        
         # Get processed data path
         processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
         standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
@@ -1028,19 +974,18 @@ def train_models(**context):
             error_msg = "No valid processed data path found and no fallback available"
             logger.error(error_msg)
             try:
-                slack.simple_post("❌ Model training failed: No valid data path found", channel="#data-pipeline")
+                slack.simple_post("❌ Model loading failed: No valid data path found", channel="#data-pipeline")
             except Exception as e:
                 logger.warning(f"Error sending Slack notification: {str(e)}")
             raise FileNotFoundError(error_msg)
             
-        logger.info(f"Training models using data from {data_path}")
+        logger.info(f"Loading pretrained models using data from {data_path}")
         
-        # Load the data and ensure target variable exists
+        # Check if data has target variable
         try:
             logger.info(f"Loading dataframe from {data_path}")
             df = pd.read_parquet(data_path)
             logger.info(f"Loaded dataframe with shape {df.shape}")
-            logger.info(f"Columns: {df.columns.tolist()}")
             
             # Check for target column and create if needed
             if 'trgt' not in df.columns:
@@ -1057,42 +1002,12 @@ def train_models(**context):
                     # Also create pure_premium since that's what should be used as the target
                     logger.info("Creating 'pure_premium' column from 'il_total' / 'eey'")
                     df['pure_premium'] = df['il_total'] / df['eey']
-                else:
-                    # Check if we can create the pure_premium directly
-                    cols = df.columns.tolist()
-                    logger.info(f"Available columns: {cols}")
-                    
-                    # Look for variations of column names that might be useful
-                    losses_cols = [col for col in cols if 'loss' in col.lower()]
-                    premium_cols = [col for col in cols if 'premium' in col.lower()]
-                    exposure_cols = [col for col in cols if any(word in col.lower() for word in ['exposure', 'eey', 'earned'])]
-                    
-                    logger.info(f"Potential loss columns: {losses_cols}")
-                    logger.info(f"Potential premium columns: {premium_cols}")
-                    logger.info(f"Potential exposure columns: {exposure_cols}")
-                    
-                    # Try to find suitable columns to create target variable
-                    if losses_cols and exposure_cols:
-                        logger.info(f"Attempting to create target variable using {losses_cols[0]} and {exposure_cols[0]}")
-                        df['pure_premium'] = df[losses_cols[0]] / df[exposure_cols[0]]
-                        df['trgt'] = df['pure_premium']
-                    else:
-                        error_msg = "Cannot create target variable: missing required columns"
-                        logger.error(error_msg)
-                        logger.info(f"Available columns: {df.columns.tolist()}")
-                        try:
-                            slack.simple_post("❌ Model training failed: Cannot create target variable", channel="#data-pipeline")
-                        except Exception as e:
-                            logger.warning(f"Error sending Slack notification: {str(e)}")
-                        raise ValueError(error_msg)
                 
                 # Create weight column if not present
                 if 'wt' not in df.columns and 'eey' in df.columns:
                     logger.info("Creating 'wt' column from 'eey'")
                     df['wt'] = df['eey']
-                elif 'wt' not in df.columns:
-                    logger.warning("Cannot create weight column, no 'eey' column found")
-                
+                    
                 # Save the updated dataframe
                 temp_path = os.path.join(os.path.dirname(data_path), f"model_ready_{os.path.basename(data_path)}")
                 logger.info(f"Saving model-ready dataframe to {temp_path}")
@@ -1100,40 +1015,26 @@ def train_models(**context):
                 logger.info(f"Saved model-ready dataframe to {temp_path}")
                 data_path = temp_path
             
-            logger.info(f"Dataframe ready for training with shape {df.shape}")
-            logger.info(f"First few rows: {df.head(2)}")
-            
-            # Log basic statistics about the target variable
-            if 'trgt' in df.columns:
-                logger.info(f"Target variable statistics: mean={df['trgt'].mean()}, min={df['trgt'].min()}, max={df['trgt'].max()}")
-                logger.info(f"Target variable non-null count: {df['trgt'].count()} out of {len(df)}")
+            logger.info(f"Dataframe ready for evaluation with shape {df.shape}")
         except Exception as e:
-            error_msg = f"Error preparing data for training: {str(e)}"
+            error_msg = f"Error preparing data for evaluation: {str(e)}"
             logger.error(error_msg)
             try:
-                slack.simple_post(f"❌ Model training failed during data preparation: {str(e)}", channel="#data-pipeline")
+                slack.simple_post(f"❌ Model loading failed during data preparation: {str(e)}", channel="#data-pipeline")
             except Exception as slack_e:
                 logger.warning(f"Error sending Slack notification: {str(slack_e)}")
             raise
         
-        # Check if we want to force parallel training (default: True)
+        # Check if we want to force parallel loading (default: True)
         parallel = Variable.get('PARALLEL_TRAINING', default_var='True').lower() == 'true'
         max_workers = int(Variable.get('MAX_PARALLEL_WORKERS', default_var=str(MAX_WORKERS)))
         
-        logger.info(f"Parallel training: {parallel}, Max workers: {max_workers}")
+        logger.info(f"Parallel loading: {parallel}, Max workers: {max_workers}")
         
-        # Train all models
+        # Load pretrained models
         try:
-            logger.info("Calling training.train_multiple_models")
-            # Check if the training module and function exist
-            if not hasattr(training, 'train_multiple_models'):
-                error_msg = "training module does not have train_multiple_models function"
-                logger.error(error_msg)
-                available_funcs = [name for name in dir(training) if callable(getattr(training, name)) and not name.startswith('_')]
-                logger.info(f"Available functions in training module: {available_funcs}")
-                raise AttributeError(error_msg)
-                
-            # Call the training function
+            logger.info("Loading pretrained models (Model1 and Model4) from S3")
+            # Call the training function to load pretrained models
             results = training.train_multiple_models(
                 processed_path=data_path,
                 parallel=parallel,
@@ -1143,15 +1044,15 @@ def train_models(**context):
             )
             
             if not results:
-                error_msg = "No results returned from train_multiple_models"
+                error_msg = "No results returned from loading pretrained models"
                 logger.error(error_msg)
                 try:
-                    slack.simple_post("❌ Model training failed: No results returned", channel="#data-pipeline")
+                    slack.simple_post("❌ Model loading failed: No results returned", channel="#data-pipeline")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
                 raise ValueError(error_msg)
                 
-            logger.info(f"Training completed with results for {len(results) if isinstance(results, dict) else 0} models")
+            logger.info(f"Loading completed with results for {len(results) if isinstance(results, dict) else 0} models")
             
             # Store results in XCom
             context['ti'].xcom_push(key='training_results', value=results)
@@ -1159,17 +1060,16 @@ def train_models(**context):
             # Count results by status if results is a dictionary
             if isinstance(results, dict):
                 completed = sum(1 for r in results.values() if r.get('status') == 'completed')
-                skipped = sum(1 for r in results.values() if r.get('status') == 'skipped')
                 failed = sum(1 for r in results.values() if r.get('status') == 'failed')
                 
-                logger.info(f"Training results: {completed} completed, {skipped} skipped, {failed} failed")
+                logger.info(f"Loading results: {completed} completed, {failed} failed")
                 
-                # Verify at least one model trained successfully
+                # Verify at least one model loaded successfully
                 if completed == 0:
-                    error_msg = f"No models completed training successfully. {failed} models failed, {skipped} models skipped."
+                    error_msg = f"No models loaded successfully. {failed} models failed."
                     logger.error(error_msg)
                     try:
-                        slack.simple_post("❌ Critical Training Failure: No models completed successfully", channel="#data-pipeline")
+                        slack.simple_post("❌ Critical Loading Failure: No models loaded successfully", channel="#data-pipeline")
                     except Exception as e:
                         logger.warning(f"Error sending Slack notification: {str(e)}")
                     raise RuntimeError(error_msg)
@@ -1184,27 +1084,27 @@ def train_models(**context):
                 # Send notification with summary
                 try:
                     emoji = ":white_check_mark:" if completed > 0 else ":warning:"
-                    slack.simple_post(f"{emoji} Training completed: {completed} models trained, {skipped} skipped, {failed} failed", channel="#data-pipeline")
+                    slack.simple_post(f"{emoji} Models loaded: {completed} successful, {failed} failed", channel="#data-pipeline")
                 except Exception as e:
                     logger.warning(f"Failed to send Slack notification: {str(e)}")
             
             return results
             
         except Exception as e:
-            error_msg = f"Error training models: {str(e)}"
+            error_msg = f"Error loading models: {str(e)}"
             logger.error(error_msg)
             logger.exception("Full exception details:")
             # Store error in XCom but still raise exception
             results = {"status": "error", "message": error_msg}
             context['ti'].xcom_push(key='training_results', value=results)
             try:
-                slack.simple_post(f"❌ Model training failed: {str(e)}", channel="#data-pipeline")
+                slack.simple_post(f"❌ Model loading failed: {str(e)}", channel="#data-pipeline")
             except Exception as slack_e:
                 logger.warning(f"Error sending Slack notification: {str(slack_e)}")
             raise
             
     except Exception as e:
-        error_msg = f"Error in train_models task: {str(e)}"
+        error_msg = f"Error in load_models task: {str(e)}"
         logger.error(error_msg)
         logger.exception("Full exception details:")
         
@@ -1213,7 +1113,7 @@ def train_models(**context):
         context['ti'].xcom_push(key='training_results', value=results)
         
         try:
-            slack.simple_post(f"❌ Model training failed: {str(e)}", channel="#data-pipeline")
+            slack.simple_post(f"❌ Model loading failed: {str(e)}", channel="#data-pipeline")
         except Exception as slack_e:
             logger.warning(f"Error sending Slack notification: {str(slack_e)}")
         

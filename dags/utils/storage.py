@@ -114,6 +114,11 @@ class StorageManager:
             log.error(f"Upload failed: {str(e)}")
             raise RuntimeError("Upload failed") from e
             
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(5),
+        reraise=True
+    )
     def download(
         self,
         bucket: str,
@@ -122,7 +127,7 @@ class StorageManager:
         metadata: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
-        Download a file from S3.
+        Download a file from S3 with retry logic.
         
         Args:
             bucket: S3 bucket name
@@ -134,45 +139,48 @@ class StorageManager:
             Dict[str, Any]: S3 download response
             
         Raises:
-            ClientError: If S3 download fails
+            ClientError: If S3 download fails after retries
         """
-        # Lazy initialization
-        self._initialize_client()
-        
-        if self._s3_client is None:
-            error_msg = f"Cannot download file, S3 client not initialized. Key: {key}, Path: {file_path}"
-            log.error(error_msg)
-            raise RuntimeError(error_msg)
-            
         try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            log.info(f"Attempting to download s3://{bucket}/{key} to {file_path}")
             
-            # Get object size for progress bar
-            response = self._s3_client.head_object(Bucket=bucket, Key=key)
-            file_size = response['ContentLength']
+            # Create directory structure if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
             
-            with tqdm(total=file_size, unit='B', unit_scale=True, desc=f"Downloading {key}") as pbar:
-                def download_progress(chunk):
-                    pbar.update(chunk)
-                    
-                self._s3_client.download_file(
-                    bucket,
-                    key,
-                    file_path,
-                    ExtraArgs={'Metadata': metadata or {}},
-                    Callback=download_progress
-                )
-                
-            log.info(f"Successfully downloaded {key} from {bucket}")
+            # Check if file already exists and has content
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                log.info(f"File already exists at {file_path}, skipping download")
+                return {'status': 'success', 'bucket': bucket, 'key': key, 'cached': True}
+            
+            result = self._s3_client.download_file(
+                bucket,
+                key,
+                file_path,
+                ExtraArgs={'Metadata': metadata or {}}
+            )
+            
+            # Verify the download completed successfully
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Download seemed to succeed, but file not found at {file_path}")
+            
+            if os.path.getsize(file_path) == 0:
+                raise ValueError(f"Downloaded file is empty: {file_path}")
+            
+            log.info(f"Successfully downloaded {key} from {bucket} to {file_path}")
             return {'status': 'success', 'bucket': bucket, 'key': key}
             
-        except ClientError as e:
-            log.error(f"S3 download failed: {str(e)}")
-            raise
         except Exception as e:
-            log.error(f"Download failed: {str(e)}")
-            raise RuntimeError("Download failed") from e
+            log.error(f"Error downloading {key} from {bucket}: {str(e)}")
+            # Clean up partial downloads
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    log.info(f"Removed partial download at {file_path}")
+                except:
+                    pass
+            
+            # Re-raise to trigger retry
+            raise
             
     def validate_file(
         self,
@@ -248,9 +256,25 @@ def upload(local_path: str, key: str, bucket: str = DATA_BUCKET, metadata: Optio
     """
     return get_manager().upload(local_path, bucket, key, metadata)
 
-def download(key: str, local_path: str, bucket: str = DATA_BUCKET, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+@retry(
+    wait=wait_exponential(multiplier=1, min=2, max=60),
+    stop=stop_after_attempt(5),
+    reraise=True
+)
+def download(
+    key: str, 
+    local_path: str, 
+    bucket: str = DATA_BUCKET, 
+    metadata: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
     """
-    Download a file from S3 with retry logic.
+    Download a file from S3 with retry logic and validation.
+    
+    This function will:
+    1. Create directory structure if it doesn't exist
+    2. Check if file already exists and has content before downloading
+    3. Validate the download completed successfully
+    4. Clean up partial downloads on failure
     
     Args:
         key: S3 object key
@@ -262,9 +286,79 @@ def download(key: str, local_path: str, bucket: str = DATA_BUCKET, metadata: Opt
         Dict[str, Any]: S3 download response
         
     Raises:
-        ClientError: If S3 download fails
+        ClientError: If S3 download fails after retries
     """
-    return get_manager().download(bucket, key, local_path, metadata)
+    try:
+        log.info(f"Attempting to download s3://{bucket}/{key} to {local_path}")
+        
+        # Ensure the S3 client is initialized
+        _manager = get_manager()
+        _manager._initialize_client()
+        
+        if _manager._s3_client is None:
+            raise RuntimeError("S3 client could not be initialized")
+        
+        # Create directory structure if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
+        
+        # Check if file already exists and has content
+        if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+            log.info(f"File already exists at {local_path}, skipping download")
+            return {'status': 'success', 'bucket': bucket, 'key': key, 'cached': True}
+        
+        # Perform the download with progress tracking if possible
+        file_size = None
+        try:
+            # Get file size for progress tracking
+            response = _manager._s3_client.head_object(Bucket=bucket, Key=key)
+            file_size = response['ContentLength']
+        except Exception as e:
+            log.warning(f"Could not get file size, proceeding without progress tracking: {str(e)}")
+        
+        # Download with progress tracking if size is available
+        if file_size:
+            with tqdm(total=file_size, unit='B', unit_scale=True, desc=f"Downloading {key}") as pbar:
+                def download_progress(chunk):
+                    pbar.update(chunk)
+                
+                _manager._s3_client.download_file(
+                    Bucket=bucket,
+                    Key=key,
+                    Filename=local_path,
+                    Callback=download_progress,
+                    ExtraArgs={'Metadata': metadata or {}} if metadata else {}
+                )
+        else:
+            # Download without progress tracking
+            _manager._s3_client.download_file(
+                Bucket=bucket,
+                Key=key,
+                Filename=local_path,
+                ExtraArgs={'Metadata': metadata or {}} if metadata else {}
+            )
+        
+        # Verify the download completed successfully
+        if not os.path.exists(local_path):
+            raise FileNotFoundError(f"Download seemed to succeed, but file not found at {local_path}")
+        
+        if os.path.getsize(local_path) == 0:
+            raise ValueError(f"Downloaded file is empty: {local_path}")
+        
+        log.info(f"Successfully downloaded {key} from {bucket} to {local_path}")
+        return {'status': 'success', 'bucket': bucket, 'key': key}
+        
+    except Exception as e:
+        log.error(f"Error downloading {key} from {bucket}: {str(e)}")
+        # Clean up partial downloads
+        if os.path.exists(local_path):
+            try:
+                os.remove(local_path)
+                log.info(f"Removed partial download at {local_path}")
+            except:
+                pass
+        
+        # Re-raise to trigger retry
+        raise
 
 def update_storage_process_with_ui_components():
     """

@@ -203,6 +203,8 @@ def select_model_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Keep only the loss‑history features needed for current MODEL_ID,
     plus all non–loss‑history columns.
+    
+    Only supports Model1 (traditional 48 attributes) and Model4 (fast decay)
     """
     model_id = (
         os.getenv("MODEL_ID")
@@ -210,12 +212,18 @@ def select_model_features(df: pd.DataFrame) -> pd.DataFrame:
     ).strip().lower()
     logging.info(f"Selecting features for MODEL_ID='{model_id}'")
 
+    # Only allow Model1 or Model4
+    if model_id not in ['model1', 'model4']:
+        logging.warning(f"Unknown MODEL_ID '{model_id}', defaulting to model1")
+        model_id = 'model1'
+
     if model_id == "model1":
         keep_prefixes = RAW_PREFIXES
-    elif model_id in DECAY_PREFIXES:
+    elif model_id == "model4":
         keep_prefixes = DECAY_PREFIXES[model_id]
     else:
-        raise ValueError(f"Unknown MODEL_ID '{model_id}'")
+        # Should never get here due to check above
+        keep_prefixes = RAW_PREFIXES
 
     all_loss_prefixes = RAW_PREFIXES + sum(DECAY_PREFIXES.values(), [])
     def is_loss_col(col: str) -> bool:
@@ -227,6 +235,7 @@ def select_model_features(df: pd.DataFrame) -> pd.DataFrame:
     ]
     removed = [col for col in df.columns if col not in keep_cols]
     logging.info(f"Dropped loss‑history cols for {model_id}: {removed}")
+    
     return df[keep_cols]
 
 @cache_result

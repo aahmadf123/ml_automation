@@ -32,7 +32,7 @@ import pandas as pd
 import shap
 import xgboost as xgb
 import matplotlib.pyplot as plt
-from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
+from hyperopt import STATUS_OK, Trials, fmin, hp, tpe, space_eval
 from mlflow.tracking import MlflowClient
 from mlflow.exceptions import RestException
 from sklearn.metrics import (
@@ -229,139 +229,198 @@ def should_skip_training(model_id: str, current_rmse: float) -> bool:
         logger.warning(f"Error in skip training check: {e}. Will proceed with training.")
         return False
 
-@cache_result
-def find_best_hyperparams(X_train, y_train, max_evals=50):
-    """Find optimal hyperparameters using Hyperopt."""
-    # Check for cached results
-    df_hash = str(id(X_train))
-    y_hash = str(id(y_train))
-    cache_key = f"hyperparams_{df_hash}_{y_hash}_{max_evals}"
+def find_best_hyperparams(X_train, y_train, max_evals=50, sample_weight=None):
+    """Find the best hyperparameters for XGBoost model using Hyperopt.
     
-    cached_result = GLOBAL_CACHE.get_column_result(
-        df_name=f"training_df_{df_hash}",
-        column="hyperparams",
-        operation=f"hyperopt_{max_evals}"
-    )
+    Args:
+        X_train: Training features
+        y_train: Training targets
+        max_evals: Maximum number of evaluations
+        sample_weight: Optional sample weights for training
+        
+    Returns:
+        Dictionary of best hyperparameters
+    """
+    # Check for cached result
+    cache_key = f"hyperopt_{hash(str(X_train.columns))}"
+    cached = GLOBAL_CACHE.get(cache_key)
+    if cached:
+        logger.info("Using cached hyperparameters")
+        return cached
     
-    if cached_result is not None:
-        logger.info(f"Using cached hyperparameters from previous optimization")
-        return cached_result
+    logger.info(f"Starting hyperparameter optimization with max_evals={max_evals}")
     
-    # Define hyperparameter search space
+    # Define the search space - use more conservative ranges to avoid extreme values
     space = {
-        'max_depth': hp.choice('max_depth', [3, 4, 5, 6, 7, 8, 9, 10]),
-        'learning_rate': hp.uniform('learning_rate', 0.01, 0.3),
-        'min_child_weight': hp.uniform('min_child_weight', 1, 10),
-        'subsample': hp.uniform('subsample', 0.5, 1.0),
-        'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1.0),
+        'max_depth': hp.choice('max_depth', [3, 4, 5, 6]),
+        'learning_rate': hp.loguniform('learning_rate', np.log(0.01), np.log(0.3)),
+        'min_child_weight': hp.choice('min_child_weight', [1, 2, 3, 4]),
+        'subsample': hp.uniform('subsample', 0.6, 0.95),
+        'colsample_bytree': hp.uniform('colsample_bytree', 0.6, 0.95),
         'gamma': hp.uniform('gamma', 0, 1),
-        'reg_alpha': hp.loguniform('reg_alpha', -5, 0),
-        'reg_lambda': hp.loguniform('reg_lambda', -5, 0)
+        'reg_alpha': hp.loguniform('reg_alpha', np.log(1e-5), np.log(1.0)),
+        'reg_lambda': hp.loguniform('reg_lambda', np.log(1e-5), np.log(1.0))
     }
     
     # Create validation set for early stopping
-    X_train_opt, X_val, y_train_opt, y_val = train_test_split(
-        X_train, y_train, test_size=0.2, random_state=42
-    )
-    
-    # Store the splits in the cache for reuse
-    train_val_split = {
-        "X_train": X_train_opt,
-        "X_val": X_val,
-        "y_train": y_train_opt,
-        "y_val": y_val
-    }
-    
-    # Cache the split data
-    df_name = f"training_df_{df_hash}"
-    GLOBAL_CACHE.store_column_result(
-        df_name=df_name,
-        column="data_split",
-        operation="train_val_split",
-        result=train_val_split
-    )
-    
-    # Define the objective function for optimization
-    def objective(params):
-        # Create a CV set first
-        train_data = xgb.DMatrix(X_train_opt, label=y_train_opt)
-        val_data = xgb.DMatrix(X_val, label=y_val)
-        
-        # Train model with early stopping
-        model = xgb.train(
-            params,
-            train_data,
-            num_boost_round=1000,
-            evals=[(val_data, 'validation')],
-            early_stopping_rounds=50,
-            verbose_eval=False
+    try:
+        X_train_opt, X_valid_opt, y_train_opt, y_valid_opt = train_test_split(
+            X_train, y_train, test_size=0.2, random_state=42
         )
         
-        # Get best validation score (rmse)
-        val_pred = model.predict(val_data)
-        rmse = np.sqrt(mean_squared_error(y_val, val_pred))
-        
-        # Store intermediate results in cache
-        intermediate_results = GLOBAL_CACHE.get_column_result(
-            df_name=df_name,
-            column="hyperparams",
-            operation="hyperopt_intermediate"
-        ) or []
-        
-        # Append this result
-        intermediate_results.append({
-            'params': params,
-            'rmse': float(rmse),
-            'timestamp': datetime.now().isoformat()
-        })
-        
-        # Store updated results
-        GLOBAL_CACHE.store_column_result(
-            df_name=df_name,
-            column="hyperparams",
-            operation="hyperopt_intermediate",
-            result=intermediate_results
-        )
-        
-        return {'loss': rmse, 'status': STATUS_OK}
+        # Handle sample weights for validation split if provided
+        if sample_weight is not None:
+            if isinstance(sample_weight, pd.Series):
+                train_indices = X_train_opt.index
+                valid_indices = X_valid_opt.index
+                
+                train_weights = sample_weight.loc[train_indices].values if all(idx in sample_weight.index for idx in train_indices) else None
+                valid_weights = sample_weight.loc[valid_indices].values if all(idx in sample_weight.index for idx in valid_indices) else None
+            else:
+                # If weights are numpy array, use the indices from the train/valid split
+                if len(sample_weight) == len(X_train):
+                    train_mask = X_train.index.isin(X_train_opt.index)
+                    valid_mask = X_train.index.isin(X_valid_opt.index)
+                    
+                    train_weights = sample_weight[train_mask] if sum(train_mask) > 0 else None
+                    valid_weights = sample_weight[valid_mask] if sum(valid_mask) > 0 else None
+                else:
+                    logger.warning("Sample weight length doesn't match training data, ignoring weights for hyperopt")
+                    train_weights = None
+                    valid_weights = None
+        else:
+            train_weights = None
+            valid_weights = None
+            
+        logger.info(f"Split data for hyperopt: train={len(X_train_opt)}, valid={len(X_valid_opt)}")
+    except Exception as e:
+        logger.warning(f"Error creating validation split for hyperopt: {str(e)}")
+        # Fall back to using all training data
+        X_train_opt = X_train
+        y_train_opt = y_train
+        X_valid_opt = None
+        y_valid_opt = None
+        train_weights = sample_weight
+        valid_weights = None
+        logger.info("Using all training data for hyperopt without validation split")
     
-    # Run the optimization
-    logger.info(f"Starting hyperparameter optimization with max_evals={max_evals}")
+    start_time = time.time()
     trials = Trials()
-    best = fmin(
-        fn=objective,
-        space=space,
-        algo=tpe.suggest,
-        max_evals=max_evals,
-        trials=trials,
-        rstate=np.random.RandomState(42)
-    )
     
-    # Extract best parameters
-    best_params = {
-        'max_depth': [3, 4, 5, 6, 7, 8, 9, 10][best['max_depth']],
-        'learning_rate': best['learning_rate'],
-        'min_child_weight': best['min_child_weight'],
-        'subsample': best['subsample'],
-        'colsample_bytree': best['colsample_bytree'],
-        'gamma': best['gamma'],
-        'reg_alpha': np.exp(best['reg_alpha']),
-        'reg_lambda': np.exp(best['reg_lambda']),
-        'objective': 'reg:squarederror',
-        'seed': 42
-    }
+    def objective(params):
+        """Objective function for hyperopt - maximize validation performance."""
+        # Convert from log-space to actual space for some parameters
+        actual_params = params.copy()
+        actual_params['objective'] = 'reg:squarederror'
+        actual_params['seed'] = 42
+        
+        # Add tree_method='hist' for faster training
+        actual_params['tree_method'] = 'hist'
+        
+        # Attempt training and evaluation
+        try:
+            # Create model
+            model = xgb.XGBRegressor(**actual_params)
+            
+            # Check if we have validation data
+            if X_valid_opt is not None and y_valid_opt is not None:
+                # Train with early stopping
+                eval_set = [(X_train_opt, y_train_opt), (X_valid_opt, y_valid_opt)]
+                
+                # Include sample weights in eval_set if available
+                sample_weight_params = {}
+                if train_weights is not None:
+                    sample_weight_params['sample_weight'] = train_weights
+                    
+                eval_weights = None
+                if valid_weights is not None:
+                    eval_weights = [train_weights, valid_weights]
+                    sample_weight_params['sample_weight_eval_set'] = eval_weights
+                
+                # Fit the model
+                model.fit(
+                    X_train_opt, y_train_opt,
+                    eval_set=eval_set,
+                    early_stopping_rounds=10,
+                    verbose=False,
+                    **sample_weight_params
+                )
+                
+                # Get best score from early stopping
+                val_score = model.best_score
+                
+                # Return validation RMSE for minimization
+                return val_score
+            else:
+                # Train without validation (using cross-validation)
+                cv_result = xgb.cv(
+                    actual_params,
+                    xgb.DMatrix(X_train_opt, label=y_train_opt, weight=train_weights),
+                    num_boost_round=100,
+                    nfold=3,
+                    early_stopping_rounds=10,
+                    metrics='rmse',
+                    seed=42,
+                    verbose_eval=False
+                )
+                
+                # Get best mean test score
+                best_score = cv_result['test-rmse-mean'].min()
+                return best_score
+        except Exception as e:
+            # Log the error but don't fail the optimization
+            logger.warning(f"Error in hyperopt iteration: {str(e)}")
+            # Return a high loss value to penalize this parameter set
+            return 9999.0
     
-    logger.info(f"Best hyperparameters found: {best_params}")
-    
-    # Cache the final result
-    GLOBAL_CACHE.store_column_result(
-        df_name=f"training_df_{df_hash}",
-        column="hyperparams",
-        operation=f"hyperopt_{max_evals}",
-        result=best_params
-    )
-    
-    return best_params
+    # Run hyperopt optimization
+    try:
+        best = fmin(
+            fn=objective,
+            space=space,
+            algo=tpe.suggest,
+            max_evals=max_evals,
+            trials=trials,
+            show_progressbar=False
+        )
+        
+        logger.info(f"Hyperparameter optimization completed in {time.time() - start_time:.2f} seconds")
+        
+        # Get best parameters
+        best_params = space_eval(space, best)
+        
+        # Add required parameters
+        best_params['objective'] = 'reg:squarederror'
+        best_params['seed'] = 42
+        best_params['tree_method'] = 'hist'  # Add hist method for faster training
+        
+        # Log results
+        logger.info(f"Best hyperparameters: {best_params}")
+        logger.info(f"Best score: {min([r['loss'] for r in trials.results if r['loss'] < 999])}")
+        
+        # Cache the result
+        GLOBAL_CACHE[cache_key] = best_params
+        
+        return best_params
+    except Exception as e:
+        logger.error(f"Error during hyperparameter optimization: {str(e)}")
+        # Return default parameters
+        default_params = {
+            'max_depth': 5,
+            'learning_rate': 0.1,
+            'min_child_weight': 1,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'gamma': 0,
+            'reg_alpha': 0.001,
+            'reg_lambda': 0.001,
+            'objective': 'reg:squarederror',
+            'seed': 42,
+            'tree_method': 'hist'
+        }
+        
+        logger.info(f"Using default parameters due to optimization error: {default_params}")
+        return default_params
 
 def train_and_compare_fn(model_id: str, processed_path: str) -> None:
     """
@@ -435,14 +494,12 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
                     logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
                     df['trgt'] = df['il_total'] / df['eey']
                     target_col = 'trgt'
-                    found = True
                 elif losses_cols and exposure_cols:
                     loss_col = losses_cols[0]
                     exposure_col = exposure_cols[0]
                     logger.info(f"Creating 'trgt' column from {loss_col} / {exposure_col}")
                     df['trgt'] = df[loss_col] / df[exposure_col]
                     target_col = 'trgt'
-                    found = True
                 else:
                     target_col = "claim_amount"  # default that likely won't be found
                     
@@ -461,7 +518,7 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
             
         if target_values.min() < 0:
             logger.warning(f"Negative values found in target column {target_col}. This may be problematic for insurance modeling.")
-            
+        
         # Split features and target
         X = df.drop(columns=[target_col])
         y = df[target_col]
@@ -779,243 +836,453 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
 # backward‑compatibility alias
 train_xgboost_hyperopt = train_and_compare_fn
 
-def train_single_model(model_key, model_cfg, X_train, y_train, X_test, y_test, baseline_rmse, sample_weight=None):
-    """Train an individual model with the given configuration.
+def train_single_model(
+    model_id,
+    processed_df,
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    target_column,
+    sample_weight=None,
+    max_evals=None,
+    evaluate_only=False
+):
+    """Train a single model with XGBoost and evaluate its performance.
     
     Args:
-        model_key: Identifier for the model
-        model_cfg: Model configuration dictionary
+        model_id: Identifier for the model
+        processed_df: Processed DataFrame
         X_train: Training features
-        y_train: Training targets
-        X_test: Test features
-        y_test: Test targets
-        baseline_rmse: RMSE of baseline model for comparison
+        X_test: Testing features
+        y_train: Training target
+        y_test: Testing target
+        target_column: Name of the target column
         sample_weight: Optional sample weights
+        max_evals: Maximum evaluations for hyperparameter tuning
+        evaluate_only: If True, only evaluate existing model without training
         
     Returns:
-        Tuple of (model_id, results_dict)
+        Dictionary with model results
     """
-    model_id = f"{model_key}_{datetime.now().strftime('%Y%m%d')}"
+    start_time = time.time()
+    
+    # Validate inputs
+    if processed_df is None or processed_df.empty:
+        logger.error(f"Model {model_id}: Empty or None input data")
+        return {"success": False, "error": "Empty input data", "model_id": model_id}
+    
+    if X_train is None or X_train.empty or y_train is None or len(y_train) == 0:
+        logger.error(f"Model {model_id}: Empty or None training data")
+        return {"success": False, "error": "Empty training data", "model_id": model_id}
+    
+    # Try to get MLflow connection
     try:
-        # Initialize MLflow - with error handling
-        try:
-            mlflow.set_tracking_uri(MLFLOW_URI)
-            mlflow.set_experiment(MLFLOW_EXPERIMENT)
-            mlflow_available = True
-            logger.info(f"Connected to MLflow tracking server at {MLFLOW_URI}")
-        except Exception as mlflow_e:
-            logger.warning(f"Error connecting to MLflow: {str(mlflow_e)}. Metrics will not be logged.")
-            mlflow_available = False
-        
-        # Use the specific feature set from model config
-        features = model_cfg.get('features', None)
-        if features:
-            # Use only specified features
-            model_X_train = X_train[features]
-            model_X_test = X_test[features]
-        else:
-            # Use all features
-            model_X_train = X_train
-            model_X_test = X_test
-        
-        logger.info(f"Training model {model_id} with {len(model_X_train.columns)} features")
-        
-        # Check if we should skip based on previous model performance
-        if should_skip_training(model_id, baseline_rmse):
-            logger.info(f"Skipping training for {model_id} based on previous performance")
-            return model_id, {"status": "skipped", "baseline_rmse": baseline_rmse}
-        
-        # Training will proceed regardless of MLflow availability
-        # Start MLflow run for this model
+        client = MlflowClient()
+    except Exception as e:
+        logger.error(f"Model {model_id}: Failed to initialize MLflow client: {str(e)}")
+        client = None
+    
+    # Set MLflow experiment
+    experiment_id = None
+    try:
+        if client is not None:
+            experiment_name = f"model_{model_id}"
+            try:
+                experiment = client.get_experiment_by_name(experiment_name)
+                if experiment:
+                    experiment_id = experiment.experiment_id
+                else:
+                    experiment_id = client.create_experiment(experiment_name)
+            except Exception as exp_err:
+                logger.warning(f"Model {model_id}: Error setting MLflow experiment: {str(exp_err)}")
+    except Exception as e:
+        logger.warning(f"Model {model_id}: Error with MLflow experiment: {str(e)}")
+    
+    # Start MLflow run
+    mlflow_run = None
+    try:
+        if experiment_id is not None:
+            mlflow_run = client.create_run(experiment_id)
+            run_id = mlflow_run.info.run_id
+            logger.info(f"Model {model_id}: Started MLflow run {run_id}")
+    except Exception as e:
+        logger.warning(f"Model {model_id}: Failed to start MLflow run: {str(e)}")
         run_id = None
-        if mlflow_available:
-            try:
-                with mlflow.start_run() as run:
-                    run_id = run.info.run_id
-                    logger.info(f"Started MLflow run with ID: {run_id}")
-            except Exception as run_e:
-                logger.warning(f"Error starting MLflow run: {str(run_e)}")
-                mlflow_available = False
-        
-        # Start ClearML task
-        clearml_task = None
+    
+    # Get model features based on model_id
+    try:
+        model_X_train = select_model_features(X_train, model_id)
+        model_X_test = select_model_features(X_test, model_id)
+        if model_X_train.empty or model_X_test.empty:
+            logger.error(f"Model {model_id}: Empty feature sets after selection")
+            return {"success": False, "error": "Empty feature sets", "model_id": model_id}
+        logger.info(f"Model {model_id}: Selected {len(model_X_train.columns)} features")
+    except Exception as e:
+        logger.error(f"Model {model_id}: Error in feature selection: {str(e)}")
+        return {"success": False, "error": f"Feature selection error: {str(e)}", "model_id": model_id}
+    
+    # Log feature names to MLflow
+    if run_id is not None:
         try:
-            clearml_task = init_clearml(model_id)
+            client.log_param(run_id, "features", list(model_X_train.columns))
+            client.log_param(run_id, "feature_count", len(model_X_train.columns))
         except Exception as e:
-            logger.warning(f"Error initializing ClearML: {str(e)}")
+            logger.warning(f"Model {model_id}: Failed to log features to MLflow: {str(e)}")
+    
+    # Skip training if evaluate_only is True
+    if evaluate_only:
+        logger.info(f"Model {model_id}: Skipping training, evaluate_only=True")
+        # Implement evaluation-only logic if needed
+        return {"success": False, "error": "Training skipped - evaluate_only", "model_id": model_id}
+    
+    # Find best hyperparameters or use default if optimization fails
+    try:
+        max_evals_actual = max_evals or 20  # Default to 20 if not specified
+        best_params = find_best_hyperparams(model_X_train, y_train, max_evals=max_evals_actual, sample_weight=sample_weight)
+        logger.info(f"Model {model_id}: Found best hyperparameters: {best_params}")
+    except Exception as e:
+        logger.warning(f"Model {model_id}: Error finding hyperparameters: {str(e)}, using defaults")
+        # Use default hyperparameters as fallback
+        best_params = {
+            'max_depth': 5,
+            'learning_rate': 0.1,
+            'min_child_weight': 1,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'gamma': 0,
+            'reg_alpha': 0.001,
+            'reg_lambda': 0.001,
+            'objective': 'reg:squarederror',
+            'seed': 42,
+            'tree_method': 'hist'
+        }
+    
+    # Log hyperparameters to MLflow
+    if run_id is not None:
+        try:
+            for param_name, param_value in best_params.items():
+                client.log_param(run_id, param_name, param_value)
+        except Exception as e:
+            logger.warning(f"Model {model_id}: Failed to log hyperparameters to MLflow: {str(e)}")
+    
+    # Train model with error handling
+    model = None
+    try:
+        # Train with best parameters
+        logger.info(f"Model {model_id}: Training model with best parameters")
+        model = xgb.XGBRegressor(**best_params)
         
-        # Log model config to MLflow if available
-        if mlflow_available and run_id:
-            try:
-                mlflow.log_params({
-                    "model_type": model_key,
-                    "model_description": model_cfg.get('description', ''),
-                    "feature_count": len(model_X_train.columns)
-                })
-                
-                if features:
-                    mlflow.log_param("features", ",".join(features))
-            except Exception as e:
-                logger.warning(f"Error logging parameters to MLflow: {str(e)}")
+        # Use early_stopping for better performance
+        eval_set = [(model_X_train, y_train), (model_X_test, y_test)]
         
-        # Find optimal hyperparameters (using the model's specific features)
-        max_evals = model_cfg.get('max_evals', 20)
-        best_params = find_best_hyperparams(model_X_train, y_train, max_evals=max_evals, sample_weight=sample_weight)
+        # Prepare sample weight parameters
+        sample_weight_params = {}
+        if sample_weight is not None:
+            sample_weight_params['sample_weight'] = sample_weight
         
-        # Log hyperparameters to MLflow if available
-        if mlflow_available and run_id:
-            try:
-                mlflow.log_params(best_params)
-            except Exception as e:
-                logger.warning(f"Error logging hyperparameters to MLflow: {str(e)}")
-        
-        # Train model with best parameters
-        model = xgb.XGBRegressor(
-            objective='reg:squarederror',
-            random_state=42,
-            **best_params
+        # Fit model with early stopping
+        model.fit(
+            model_X_train, y_train,
+            eval_set=eval_set,
+            early_stopping_rounds=10,
+            verbose=False,
+            **sample_weight_params
         )
         
-        if sample_weight is not None:
-            model.fit(model_X_train, y_train, sample_weight=sample_weight)
-        else:
-            model.fit(model_X_train, y_train)
+        logger.info(f"Model {model_id}: Training completed with {model.get_booster().num_boosted_rounds()} boosting rounds")
+    except Exception as e:
+        logger.warning(f"Model {model_id}: Error training model with best parameters: {str(e)}")
+        logger.info(f"Model {model_id}: Trying with simplified parameters")
         
-        # Evaluate
+        # Fallback to simpler parameters
+        try:
+            simple_params = {
+                'max_depth': 3,
+                'learning_rate': 0.1,
+                'min_child_weight': 1,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'objective': 'reg:squarederror',
+                'tree_method': 'hist',
+                'seed': 42
+            }
+            
+            model = xgb.XGBRegressor(**simple_params)
+            model.fit(model_X_train, y_train)
+            logger.info(f"Model {model_id}: Training succeeded with simplified parameters")
+            
+            # Update best_params to reflect what was actually used
+            best_params = simple_params
+            
+            # Log the fallback parameters to MLflow
+            if run_id is not None:
+                try:
+                    client.log_param(run_id, "used_fallback_params", True)
+                    for param_name, param_value in simple_params.items():
+                        client.log_param(run_id, f"fallback_{param_name}", param_value)
+                except Exception as mlflow_err:
+                    logger.warning(f"Model {model_id}: Failed to log fallback params to MLflow: {str(mlflow_err)}")
+                    
+        except Exception as fallback_err:
+            logger.error(f"Model {model_id}: Failed to train even with simplified parameters: {str(fallback_err)}")
+            return {
+                "success": False, 
+                "error": f"Training failed: {str(fallback_err)}", 
+                "model_id": model_id
+            }
+    
+    # If we got here, model training succeeded
+    if model is None:
+        logger.error(f"Model {model_id}: Model is None after training")
+        return {"success": False, "error": "Model is None after training", "model_id": model_id}
+    
+    # Evaluate model
+    try:
+        # Make predictions
         y_pred = model.predict(model_X_test)
-        model_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
         
         # Calculate metrics
-        metrics = {
-            "rmse": float(model_rmse),
-            "mse": float(mean_squared_error(y_test, y_pred)),
-            "mae": float(mean_absolute_error(y_test, y_pred)),
-            "r2": float(r2_score(y_test, y_pred)),
-            "baseline_rmse": float(baseline_rmse),
-            "improvement": float((baseline_rmse - model_rmse) / baseline_rmse * 100)
-        }
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        mae = mean_absolute_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
         
-        # Log metrics to MLflow if available
-        if mlflow_available and run_id:
+        logger.info(f"Model {model_id}: Evaluation - RMSE: {rmse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
+        
+        # Log metrics to MLflow
+        if run_id is not None:
             try:
-                with mlflow.start_run(run_id=run_id):
-                    for name, value in metrics.items():
-                        mlflow.log_metric(name, value)
-                logger.info(f"Logged metrics to MLflow run {run_id}")
+                client.log_metric(run_id, "rmse", rmse)
+                client.log_metric(run_id, "mae", mae)
+                client.log_metric(run_id, "r2", r2)
             except Exception as e:
-                logger.warning(f"Error logging metrics to MLflow: {str(e)}")
+                logger.warning(f"Model {model_id}: Failed to log metrics to MLflow: {str(e)}")
         
-        # Generate reports and log artifacts
+        # Create and log feature importance plot
         try:
-            # Create plots directory
-            plots_dir = tempfile.mkdtemp(prefix=f"model_{model_key}_")
+            feature_importance_fig = plt.figure(figsize=(10, 6))
+            xgb.plot_importance(model, ax=feature_importance_fig.gca(), importance_type='weight')
+            plt.title(f'Feature Importance (Model {model_id})')
+            plt.tight_layout()
             
-            # Feature importance
-            plt.figure(figsize=(12, 6))
-            xgb.plot_importance(model, max_num_features=20)
-            plt.title(f'Feature Importance - {model_key}')
-            feat_imp_path = f"{plots_dir}/feature_importance_{model_key}.png"
-            plt.savefig(feat_imp_path)
+            # Save feature importance plot
+            feature_importance_path = f"/tmp/feature_importance_{model_id}.png"
+            plt.savefig(feature_importance_path)
             plt.close()
             
-            # Log artifact to MLflow if available
-            if mlflow_available and run_id:
+            # Log feature importance to MLflow
+            if run_id is not None:
                 try:
-                    with mlflow.start_run(run_id=run_id):
-                        mlflow.log_artifact(feat_imp_path)
+                    client.log_artifact(run_id, feature_importance_path)
                 except Exception as e:
-                    logger.warning(f"Error logging artifacts to MLflow: {str(e)}")
+                    logger.warning(f"Model {model_id}: Failed to log feature importance plot: {str(e)}")
+        except Exception as plot_err:
+            logger.warning(f"Model {model_id}: Error creating feature importance plot: {str(plot_err)}")
+        
+        # Create and log actual vs predicted plot
+        try:
+            actual_vs_pred_fig = plt.figure(figsize=(8, 8))
+            plt.scatter(y_test, y_pred, alpha=0.5)
+            plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], 'r--')
+            plt.xlabel('Actual')
+            plt.ylabel('Predicted')
+            plt.title(f'Actual vs Predicted (Model {model_id})')
+            plt.tight_layout()
             
-            # Log model to MLflow if available
-            if mlflow_available and run_id:
+            # Save actual vs predicted plot
+            actual_vs_pred_path = f"/tmp/actual_vs_pred_{model_id}.png"
+            plt.savefig(actual_vs_pred_path)
+            plt.close()
+            
+            # Log actual vs predicted plot to MLflow
+            if run_id is not None:
                 try:
-                    with mlflow.start_run(run_id=run_id):
-                        mlflow.xgboost.log_model(
-                            model, 
-                            "model",
-                            registered_model_name=model_id if AUTO_APPROVE_MODEL else None
-                        )
-                    
-                    # Register model if manual approval is required (!AUTO_APPROVE_MODEL)
-                    if not AUTO_APPROVE_MODEL:
-                        try:
-                            client = MlflowClient()
-                            
-                            # Try to register model version
-                            try:
-                                registered_model = client.get_registered_model(model_id)
-                                logger.info(f"Found existing registered model: {model_id}")
-                            except RestException:
-                                client.create_registered_model(model_id)
-                                logger.info(f"Created new registered model: {model_id}")
-                                
-                            model_version = client.create_model_version(
-                                name=model_id,
-                                source=f"runs:/{run_id}/model",
-                                run_id=run_id
-                            )
-                            logger.info(f"Registered model version: {model_version.version}")
-                            
-                            # Set to Staging by default when approval required
-                            client.transition_model_version_stage(
-                                name=model_id,
-                                version=model_version.version,
-                                stage="Staging"
-                            )
-                            logger.info(f"Set model to Staging stage for approval")
-                        except Exception as reg_e:
-                            logger.warning(f"Error registering model in MLflow: {str(reg_e)}")
-                    elif AUTO_APPROVE_MODEL:
-                        # Auto promote if significant improvement (already registered during log_model)
-                        try:
-                            client = MlflowClient()
-                            model_versions = client.search_model_versions(f"name='{model_id}'")
-                            newest_version = max([int(v.version) for v in model_versions])
-                            
-                            # Promote to production if significant improvement
-                            if metrics["improvement"] > 5.0:
-                                client.transition_model_version_stage(
-                                    name=model_id,
-                                    version=str(newest_version),
-                                    stage="Production",
-                                    archive_existing_versions=True
-                                )
-                                logger.info(f"Auto-promoted model to Production stage")
-                            else:
-                                logger.info(f"Model improvement not significant enough for auto-promotion")
-                        except Exception as auto_e:
-                            logger.warning(f"Error in auto-promotion: {str(auto_e)}")
+                    client.log_artifact(run_id, actual_vs_pred_path)
                 except Exception as e:
-                    logger.warning(f"Error logging model to MLflow: {str(e)}")
-                    
-            logger.info(f"Model {model_id} trained successfully with RMSE {model_rmse:.4f}")
-            
-            return model_id, {
-                "status": "completed",
-                "model": model,
-                "metrics": metrics,
-                "run_id": run_id,
-                "mlflow_available": mlflow_available,
-                "feature_count": len(model_X_train.columns)
-            }
-        except Exception as e:
-            logger.error(f"Error in feature importance plotting: {str(e)}")
-            return model_id, {
-                "status": "completed_no_plots",
-                "model": model,
-                "metrics": metrics,
-                "run_id": run_id,
-                "mlflow_available": mlflow_available,
-                "feature_count": len(model_X_train.columns),
-                "error": str(e)
-            }
-            
-    except Exception as e:
-        logger.error(f"Error training model {model_id}: {str(e)}")
-        return model_id, {
-            "status": "failed",
-            "error": str(e)
+                    logger.warning(f"Model {model_id}: Failed to log actual vs predicted plot: {str(e)}")
+        except Exception as plot_err:
+            logger.warning(f"Model {model_id}: Error creating actual vs predicted plot: {str(plot_err)}")
+                
+    except Exception as eval_err:
+        logger.error(f"Model {model_id}: Error evaluating model: {str(eval_err)}")
+        return {
+            "success": False, 
+            "error": f"Evaluation failed: {str(eval_err)}", 
+            "model_id": model_id
         }
+    
+    # End MLflow run
+    if run_id is not None:
+        try:
+            client.set_terminated(run_id)
+        except Exception as e:
+            logger.warning(f"Model {model_id}: Failed to terminate MLflow run: {str(e)}")
+    
+    # Log training time
+    training_time = time.time() - start_time
+    logger.info(f"Model {model_id}: Training completed in {training_time:.2f} seconds")
+    
+    # Return results
+    return {
+        "success": True,
+        "model": model,
+        "model_id": model_id,
+        "best_params": best_params,
+        "rmse": rmse,
+        "mae": mae,
+        "r2": r2,
+        "training_time": training_time
+    }
+
+def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any]:
+    """
+    Load a pretrained model from S3
+    
+    Args:
+        model_id: ID of the model to load (model1 or model4)
+        model_dir: Local directory to save the model to
+        
+    Returns:
+        Dict with model and related information
+    """
+    import os
+    import tempfile
+    import joblib
+    from utils.storage import download
+    from utils.config import DATA_BUCKET, MODEL_KEY_PREFIX
+    
+    logger.info(f"Loading pretrained model {model_id} from S3")
+    
+    # Only allow model1 and model4
+    if model_id not in ['model1', 'model4']:
+        error_msg = f"Only model1 and model4 are supported, got {model_id}"
+        logger.error(error_msg)
+        return {"status": "failed", "error": error_msg, "model_id": model_id}
+    
+    # Create a temporary directory if model_dir is not provided
+    if model_dir is None:
+        model_dir = tempfile.mkdtemp()
+    
+    # Ensure the directory exists
+    os.makedirs(model_dir, exist_ok=True)
+    
+    # Define model S3 key and local path
+    model_key = f"{MODEL_KEY_PREFIX}/{model_id}.joblib"
+    local_model_path = os.path.join(model_dir, f"{model_id}.joblib")
+    
+    # Try to download the model from S3
+    try:
+        logger.info(f"Downloading model from S3: s3://{DATA_BUCKET}/{model_key}")
+        download(model_key, local_model_path, bucket=DATA_BUCKET)
+        
+        # Verify the file was downloaded
+        if not os.path.exists(local_model_path):
+            error_msg = f"Failed to download model file: {local_model_path}"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg, "model_id": model_id}
+        
+        # Load the model
+        logger.info(f"Loading model from {local_model_path}")
+        model = joblib.load(local_model_path)
+        
+        # Basic validation to check if it's a valid model
+        if not hasattr(model, 'predict'):
+            error_msg = f"Loaded object does not seem to be a valid model: {type(model)}"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg, "model_id": model_id}
+        
+        # Create a run ID in MLflow to track this loaded model
+        run_id = None
+        try:
+            # Initialize MLflow properly with fallback options
+            if not MLFLOW_URI:
+                logger.warning("MLFLOW_URI is not set, using default local URI")
+                mlflow.set_tracking_uri("file:/tmp/mlruns")
+            else:
+                mlflow.set_tracking_uri(MLFLOW_URI)
+                
+            client = MlflowClient(tracking_uri=mlflow.get_tracking_uri())
+            experiment_name = f"model_{model_id}"
+            
+            # First try to get the experiment by name
+            experiment = client.get_experiment_by_name(experiment_name)
+            if experiment:
+                experiment_id = experiment.experiment_id
+                logger.info(f"Found existing MLflow experiment: {experiment_name} (ID: {experiment_id})")
+            else:
+                # Create a new experiment
+                experiment_id = client.create_experiment(experiment_name)
+                logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id})")
+                
+            # Create a new run in the experiment
+            mlflow_run = client.create_run(experiment_id)
+            run_id = mlflow_run.info.run_id
+            logger.info(f"Created new MLflow run: {run_id}")
+            
+            # Log model info
+            client.log_param(run_id, "model_source", "pretrained")
+            client.log_param(run_id, "model_path", f"s3://{DATA_BUCKET}/{model_key}")
+            client.log_param(run_id, "model_id", model_id)
+            client.log_param(run_id, "load_time", datetime.now().isoformat())
+            
+            # Get model metadata from MODEL_CONFIG for additional params
+            from utils.config import MODEL_CONFIG
+            model_config = MODEL_CONFIG.get(model_id, {})
+            for param_key, param_value in model_config.get('hyperparameters', {}).items():
+                try:
+                    client.log_param(run_id, param_key, param_value)
+                except Exception as param_error:
+                    logger.warning(f"Error logging parameter {param_key}: {str(param_error)}")
+            
+            # Log model to MLflow with proper error handling
+            try:
+                with mlflow.start_run(run_id=run_id):
+                    # Use appropriate MLflow flavor based on model type
+                    if 'xgboost' in str(type(model)).lower():
+                        mlflow.xgboost.log_model(model, f"{model_id}_model")
+                    else:
+                        mlflow.sklearn.log_model(model, f"{model_id}_model")
+                    logger.info(f"Successfully logged model to MLflow")
+            except Exception as model_log_error:
+                logger.warning(f"Error logging model artifact to MLflow: {str(model_log_error)}")
+                
+        except Exception as e:
+            logger.warning(f"Error setting up MLflow tracking for pretrained model: {str(e)}")
+            if run_id:
+                # Try to clean up the partially created run
+                try:
+                    client.set_terminated(run_id, "FAILED")
+                except:
+                    pass
+            run_id = None
+        
+        logger.info(f"Successfully loaded pretrained model {model_id}")
+        
+        # Get model metadata from MODEL_CONFIG
+        from utils.config import MODEL_CONFIG
+        model_config = MODEL_CONFIG.get(model_id, {})
+        
+        # Return success result
+        return {
+            "status": "completed",
+            "model": model,
+            "model_id": model_id,
+            "run_id": run_id,
+            "is_pretrained": True,
+            "name": model_config.get("name", model_id),
+            "description": model_config.get("description", "Pretrained model loaded from S3"),
+            "metrics": {
+                # These will be populated when evaluating on test data
+                "rmse": None,
+                "mae": None,
+                "r2": None
+            }
+        }
+        
+    except Exception as e:
+        error_msg = f"Error loading pretrained model {model_id}: {str(e)}"
+        logger.error(error_msg)
+        return {"status": "failed", "error": error_msg, "model_id": model_id}
 
 def train_multiple_models(
     processed_path: str,
@@ -1025,30 +1292,29 @@ def train_multiple_models(
     weight_column: str = None
 ) -> Dict[str, Dict]:
     """
-    Train multiple models on the same dataset with different configurations.
+    Load pretrained models (Model1 and Model4 only) from S3 and evaluate them
     
     Args:
-        processed_path: Path to the processed data file
-        parallel: Whether to train models in parallel
-        max_workers: Maximum number of worker processes when parallel=True
-        target_column: Name of the target column (defaults to 'claim_amount' if not specified)
-        weight_column: Name of the weight column (optional)
+        processed_path: Path to processed data
+        parallel: Whether to load/evaluate models in parallel
+        max_workers: Maximum number of parallel workers
+        target_column: Name of target column
+        weight_column: Name of weight column
         
     Returns:
-        Dict mapping model names to their results
+        Dict with model results keyed by model_id
     """
-    # Add start_time here to fix the error
-    start_time = time.time()
-    
-    logger.info(f"Starting training of multiple models from {processed_path}")
-    logger.info(f"Parallel: {parallel}, Max workers: {max_workers}")
-    if target_column:
-        logger.info(f"Using target column: {target_column}")
-    if weight_column:
-        logger.info(f"Using weight column: {weight_column}")
+    logger.info("Starting train_multiple_models (loading pretrained models)")
+    logger.info(f"Using processed data from {processed_path}")
     
     try:
-        # Load data once for all models - shared preparation
+        # Verify the file exists
+        if not os.path.exists(processed_path):
+            error_msg = f"Processed data file not found: {processed_path}"
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+        
+        # Load data for evaluation
         logger.info(f"Loading data from {processed_path}")
         
         # Check cache first
@@ -1060,309 +1326,313 @@ def train_multiple_models(
             logger.info("Using cached DataFrame")
             df = cached_df
         else:
-            df = pd.read_parquet(processed_path)
-            GLOBAL_CACHE.store_transformed(df, df_name)
-        
-        # Validate data before proceeding
-        if len(df) == 0:
-            error_msg = "Training dataset is empty"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        # Get target column
-        if target_column and target_column in df.columns:
-            target_col = target_column
-            logger.info(f"Using specified target column: {target_col}")
-        else:
-            # Try different common target column names in order of preference
-            potential_targets = ['trgt', 'pure_premium', 'target', 'claim_amount']
-            found = False
-            
-            for col in potential_targets:
-                if col in df.columns:
-                    target_col = col
-                    logger.info(f"Using target column: {target_col}")
-                    found = True
-                    break
-            
-            if not found:
-                # Look for columns that could be used to create a target
-                logger.info("Target column not found, looking for components to create it")
-                cols = df.columns.tolist()
-                
-                losses_cols = [col for col in cols if 'loss' in col.lower()]
-                premium_cols = [col for col in cols if 'premium' in col.lower()]
-                exposure_cols = [col for col in cols if any(word in col.lower() for word in ['exposure', 'eey', 'earned'])]
-                
-                logger.info(f"Potential loss columns: {losses_cols}")
-                logger.info(f"Potential premium columns: {premium_cols}")
-                logger.info(f"Potential exposure columns: {exposure_cols}")
-                
-                # Try to create target column from components
-                if 'il_total' in df.columns and 'eey' in df.columns:
-                    logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
-                    df['trgt'] = df['il_total'] / df['eey']
-                    target_col = 'trgt'
-                    found = True
-                elif losses_cols and exposure_cols:
-                    loss_col = losses_cols[0]
-                    exposure_col = exposure_cols[0]
-                    logger.info(f"Creating 'trgt' column from {loss_col} / {exposure_col}")
-                    df['trgt'] = df[loss_col] / df[exposure_col]
-                    target_col = 'trgt'
-                    found = True
-                else:
-                    target_col = "claim_amount"  # default that likely won't be found
-                    
-        if target_col not in df.columns:
-            error_msg = f"Target column '{target_col}' not found in the data and could not be created"
-            logger.error(error_msg)
-            logger.info(f"Available columns: {df.columns.tolist()}")
-            raise ValueError(error_msg)
-            
-        # Validate target column - critical for insurance modeling
-        target_values = df[target_col].dropna()
-        if len(target_values) < 100:  # Minimum sample size for meaningful modeling
-            error_msg = f"Insufficient non-null values in target column ({len(target_values)} found)"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-            
-        if target_values.min() < 0:
-            logger.warning(f"Negative values found in target column {target_col}. This may be problematic for insurance modeling.")
-            
-        # Split features and target - do this once for all models
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-        
-        # Apply weights if provided
-        sample_weight = None
-        if weight_column and weight_column in df.columns:
-            logger.info(f"Using weight column: {weight_column}")
-            sample_weight = df[weight_column].values
-            
-            # Validate weights
-            if np.any(sample_weight <= 0):
-                logger.warning("Non-positive weights found. This may affect model training.")
-        
-        # Calculate feature statistics and cache them for future use
-        GLOBAL_CACHE.compute_statistics(X, df_name)
-        
-        # Create train-test split once for all models
-        try:
-            # First try time-series split if date column exists
-            if 'date' in df.columns or 'timestamp' in df.columns:
-                date_col = 'date' if 'date' in df.columns else 'timestamp'
-                logger.info(f"Using time-series split with date column: {date_col}")
-                
-                # Sort by date
-                df = df.sort_values(by=date_col)
-                
-                # Use the last 20% as test set
-                split_idx = int(len(df) * 0.8)
-                X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-                y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-            else:
-                # Fallback to random split
-                logger.info("No date column found, using random train-test split")
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=0.2, random_state=42
-                )
-                
-            # Validate split data
-            if len(X_train) < 50 or len(X_test) < 20:
-                error_msg = f"Train/test split resulted in too few samples (train: {len(X_train)}, test: {len(X_test)})"
+            # Add error handling for data loading
+            try:
+                df = pd.read_parquet(processed_path)
+                logger.info(f"Successfully loaded parquet file with shape {df.shape}")
+                GLOBAL_CACHE.store_transformed(df, df_name)
+            except Exception as load_error:
+                error_msg = f"Error loading parquet file: {str(load_error)}"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-        except Exception as e:
-            logger.warning(f"Error in time-series split, falling back to random split: {e}")
+        
+        # Get target column (improved logic)
+        target_col = None
+        target_candidates = [target_column] if target_column else []
+        target_candidates.extend(['trgt', 'pure_premium', 'target', 'claim_amount'])
+        
+        # Try each candidate
+        for col in target_candidates:
+            if col in df.columns:
+                target_col = col
+                logger.info(f"Using '{target_col}' as target column")
+                break
+                
+        if target_col is None:
+            error_msg = f"Target column not found. Candidates: {target_candidates}, Available: {df.columns.tolist()}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        # Extract features and target
+        y = df[target_col]
+        X = df.drop(columns=[target_col])
+        
+        # Get weight column if specified
+        sample_weight = None
+        if weight_column and weight_column in df.columns:
+            sample_weight = df[weight_column]
+            logger.info(f"Using '{weight_column}' as sample weight")
+            
+        # Create train-test split with additional validation
+        try:
+            # Create train-test split
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=0.2, random_state=42
             )
             
-        # Train a shared baseline model for comparison
-        logger.info("Training common baseline model")
-        baseline_model = xgb.XGBRegressor(
-            objective='reg:squarederror',
-            n_estimators=100,
-            max_depth=3,
-            learning_rate=0.1,
-            random_state=42
-        )
+            # Validate split data
+            if len(X_train) < 30 or len(X_test) < 10:  # Reduced minimum for small datasets
+                error_msg = f"Train/test split resulted in too few samples (train: {len(X_train)}, test: {len(X_test)})"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            logger.info(f"Created train-test split with {len(X_train)} training samples and {len(X_test)} test samples")
+        except Exception as split_error:
+            logger.error(f"Error creating train-test split: {str(split_error)}")
+            raise
+            
+        # Get model IDs from MODEL_CONFIG - only use Model1 and Model4
+        from utils.config import MODEL_CONFIG
+        model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+        logger.info(f"Loading pretrained models: {model_ids}")
         
-        # Train baseline with error handling
-        try:
-            baseline_model.fit(X_train, y_train)
-        except Exception as e:
-            error_msg = f"Failed to train baseline model: {e}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-        
-        # Ensure baseline model performance is reasonable
-        baseline_preds = baseline_model.predict(X_test)
-        baseline_rmse = np.sqrt(mean_squared_error(y_test, baseline_preds))
-        baseline_r2 = r2_score(y_test, baseline_preds)
-        logger.info(f"Baseline RMSE: {baseline_rmse:.4f}, R²: {baseline_r2:.4f}")
-        
-        # Basic model quality check - R² should be positive for a reasonable model
-        if baseline_r2 < 0:
-            logger.warning(f"Baseline model has negative R² ({baseline_r2:.4f}), which indicates poor fit")
-        
-        # Pre-calculate SHAP values for baseline model using sampled test data
-        logger.info("Precalculating SHAP values for baseline features")
-        X_test_sample = X_test.sample(min(200, len(X_test)))
-        explainer = shap.TreeExplainer(baseline_model)
-        try:
-            baseline_shap_values = explainer.shap_values(X_test_sample)
-        except Exception as e:
-            logger.warning(f"Failed to calculate SHAP values for baseline: {e}")
-            baseline_shap_values = None
-        
-        # Get model configs
-        model_configs = list(MODEL_CONFIG.items())
-        if not model_configs:
-            error_msg = "No model configurations found in MODEL_CONFIG"
+        if not model_ids:
+            error_msg = "No valid model configurations found in MODEL_CONFIG"
             logger.error(error_msg)
             raise ValueError(error_msg)
             
-        logger.info(f"Found {len(model_configs)} model configurations to train")
-            
+        # Load and evaluate models
         results = {}
         
-        # Train all models
-        if parallel and len(model_configs) > 1:
-            logger.info(f"Training {len(model_configs)} models in parallel with {max_workers} workers")
-            
+        # First attempt: Parallel loading/evaluation
+        if parallel and len(model_ids) > 1:
             try:
+                logger.info(f"Attempting parallel loading/evaluation with {max_workers} workers")
                 with ProcessPoolExecutor(max_workers=max_workers) as executor:
                     futures = []
-                    for model_key, model_cfg in model_configs:
+                    for model_id in model_ids:
                         futures.append(
                             executor.submit(
-                                train_single_model,
-                                model_key,
-                                model_cfg,
-                                X_train,
-                                y_train,
-                                X_test,
-                                y_test,
-                                baseline_rmse,
-                                sample_weight
+                                evaluate_pretrained_model,
+                                model_id=model_id,
+                                X_test=X_test,
+                                y_test=y_test
                             )
                         )
                         
                     # Collect results as they complete
                     for future in as_completed(futures):
                         try:
-                            model_id, model_result = future.result()
-                            results[model_id] = model_result
-                        except Exception as e:
-                            logger.error(f"Error in parallel training: {str(e)}")
+                            result = future.result()
+                            if result and 'model_id' in result:
+                                results[result['model_id']] = result
+                                logger.info(f"Completed evaluation for model {result['model_id']} with status: {result.get('status', 'unknown')}")
+                        except Exception as future_error:
+                            logger.error(f"Error in parallel model evaluation: {str(future_error)}")
                 
-            except Exception as e:
-                for model_key, _ in model_configs:
-                    logger.error(f"Error in parallel training of {model_key}: {str(e)}")
-                # Fall back to sequential training
+                # Check if any models completed successfully
+                completed = sum(1 for r in results.values() if r.get('status') == 'completed')
+                logger.info(f"Parallel evaluation completed with {completed} successful models")
+                
+            except Exception as parallel_error:
+                logger.error(f"Error in parallel evaluation setup: {str(parallel_error)}")
+                # Fall back to sequential evaluation
                 parallel = False
-                
-        # Sequential training (fallback or if parallel=False)
-        if not parallel or not results:
-            for model_key, model_cfg in model_configs:
+                results = {}  # Clear any partial results
+        
+        # Second attempt: Sequential loading/evaluation (if parallel failed or wasn't requested)
+        if not parallel or not results or not any(r.get('status') == 'completed' for r in results.values()):
+            logger.info("Using sequential loading/evaluation approach")
+            for model_id in model_ids:
                 try:
-                    model_id, model_result = train_single_model(
-                        model_key, model_cfg, X_train, y_train, X_test, y_test, baseline_rmse, sample_weight
+                    result = evaluate_pretrained_model(
+                        model_id=model_id,
+                        X_test=X_test,
+                        y_test=y_test
                     )
-                    results[model_id] = model_result
-                except Exception as e:
-                    logger.error(f"Error training model {model_key}: {str(e)}")
-                    results[f"{model_key}_{datetime.now().strftime('%Y%m%d')}"] = {
+                    if result:
+                        results[model_id] = result
+                        logger.info(f"Sequential evaluation completed for model {model_id} with status: {result.get('status', 'unknown')}")
+                except Exception as model_error:
+                    logger.error(f"Error evaluating model {model_id}: {str(model_error)}")
+                    results[model_id] = {
                         "status": "failed",
-                        "error": str(e)
+                        "error": str(model_error),
+                        "model_id": model_id
                     }
-        
-        # Summarize results
-        completed = sum(1 for r in results.values() if r.get('status') in ['completed', 'completed_no_plots'])
-        skipped = sum(1 for r in results.values() if r.get('status') == 'skipped')
-        failed = sum(1 for r in results.values() if r.get('status') == 'failed')
-        
-        # Verify that at least one model completed successfully
-        if completed == 0 and len(model_configs) > 0:
-            error_msg = f"No models completed training successfully. {failed} models failed, {skipped} models skipped."
-            logger.error(error_msg)
-            
-            # Send notification about critical failure
-            from utils.slack import post as slack_post
-            try:
-                slack_post(
-                    channel="#alerts",
-                    title="❌ Critical Training Failure",
-                    details=f"No models completed training successfully.\n{error_msg}",
-                    urgency="high"
-                )
-            except Exception as slack_e:
-                logger.error(f"Error sending Slack notification: {str(slack_e)}")
-                
-            raise RuntimeError(error_msg)
-        
-        summary = f"Multi-model training complete in {time.time() - start_time:.2f} seconds.\n"
-        summary += f"Models: {len(results)} total, {completed} completed, {skipped} skipped, {failed} failed"
-        logger.info(summary)
-        
-        # Compare model performance
-        model_metrics = {}
-        for model_id, result in results.items():
-            if result.get('status') == 'completed' and 'metrics' in result:
-                metrics = result['metrics']
-                model_metrics[model_id] = {
-                    'rmse': metrics.get('rmse', float('inf')),
-                    'r2': metrics.get('r2', -1),
-                    'improvement': metrics.get('improvement', 0)
-                }
-                
-        if model_metrics:
-            # Find best model by RMSE
-            best_model_id = min(model_metrics.keys(), key=lambda k: model_metrics[k]['rmse'])
-            best_rmse = model_metrics[best_model_id]['rmse']
-            best_r2 = model_metrics[best_model_id]['r2']
-            best_improvement = model_metrics[best_model_id]['improvement']
-            
-            logger.info(f"Best model: {best_model_id} with RMSE: {best_rmse:.4f}, R²: {best_r2:.4f}, Improvement: {best_improvement:.2f}%")
-            
-            # Enhanced summary with best model details
-            summary += f"\nBest model: {best_model_id} (RMSE: {best_rmse:.4f}, Improvement: {best_improvement:.2f}%)"
-            
-            # Add best model info to results
-            results['best_model'] = {
-                'model_id': best_model_id,
-                'metrics': model_metrics[best_model_id]
+                    
+        # Check results
+        completed = sum(1 for r in results.values() if r.get('status') == 'completed')
+        if completed == 0:
+            logger.error("No models were successfully loaded and evaluated")
+            # Return results with error status
+            return {
+                "status": "error",
+                "message": "No models were successfully loaded and evaluated",
+                "results": results
             }
-        
-        # Send notification about completion
-        from utils.slack import post as slack_post
-        try:
-            slack_post(
-                channel="#ml-training",
-                title=f"{'✅' if completed > 0 else '⚠️'} Multi-Model Training Complete",
-                details=summary,
-                urgency="normal" if completed > 0 else "high"
-            )
-        except Exception as e:
-            logger.error(f"Error sending Slack notification: {str(e)}")
-        
+            
+        logger.info(f"Successfully loaded and evaluated {completed} models")
         return results
         
     except Exception as e:
-        logger.error(f"Error in multi-model training: {str(e)}")
+        error_msg = f"Error in train_multiple_models: {str(e)}"
+        logger.error(error_msg)
+        logger.exception("Full exception details:")
+        return {
+            "status": "error",
+            "message": error_msg
+        }
+
+def evaluate_pretrained_model(model_id: str, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, Any]:
+    """
+    Load a pretrained model and evaluate it on test data
+    
+    Args:
+        model_id: ID of the model to load (model1 or model4)
+        X_test: Test features
+        y_test: Test target variable
         
-        # Send notification about failure
-        from utils.slack import post as slack_post
-        try:
-            slack_post(
-                channel="#alerts",
-                title="❌ Multi-Model Training Failed",
-                details=f"Error in multi-model training process:\n{str(e)}",
-                urgency="high"
-            )
-        except Exception as slack_e:
-            logger.error(f"Error sending Slack notification: {str(slack_e)}")
+    Returns:
+        Dict with model and evaluation results
+    """
+    try:
+        # Load the pretrained model
+        result = load_pretrained_model(model_id)
+        
+        if result.get('status') != 'completed':
+            logger.error(f"Failed to load pretrained model {model_id}: {result.get('error')}")
+            return result
             
-        raise
+        model = result.get('model')
+        if model is None:
+            error_msg = f"Loaded model {model_id} is None"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg, "model_id": model_id}
+            
+        # Select the relevant features for this model
+        try:
+            # Use the feature selection from preprocessing
+            from utils.config import MODEL_CONFIG
+            model_features = MODEL_CONFIG.get(model_id, {}).get('features', [])
+            
+            # Get all columns that start with any of the model features
+            keep_cols = []
+            for col in X_test.columns:
+                if any(col.startswith(prefix) for prefix in model_features) or not any(col.startswith(prefix) for prefix in ['num_loss_', 'lhdwc_']):
+                    keep_cols.append(col)
+                    
+            if not keep_cols:
+                logger.warning(f"No matching features found for model {model_id}, using all features")
+                X_test_model = X_test
+            else:
+                logger.info(f"Selected {len(keep_cols)} features for model {model_id}")
+                X_test_model = X_test[keep_cols]
+                
+        except Exception as e:
+            logger.warning(f"Error selecting features for model {model_id}: {str(e)}, using all features")
+            X_test_model = X_test
+            
+        # Evaluate the model
+        try:
+            y_pred = model.predict(X_test_model)
+            
+            # Calculate metrics
+            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+            mae = mean_absolute_error(y_test, y_pred)
+            r2 = r2_score(y_test, y_pred)
+            
+            logger.info(f"Model {model_id}: Evaluation - RMSE: {rmse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
+            
+            # Update metrics in the result
+            result['metrics'] = {
+                "rmse": rmse,
+                "mae": mae,
+                "r2": r2
+            }
+            
+            # Log metrics to MLflow
+            run_id = result.get('run_id')
+            if run_id is not None:
+                try:
+                    # Initialize MLflow client with proper error handling
+                    if not MLFLOW_URI:
+                        logger.warning("MLFLOW_URI is not set, using default local URI")
+                        mlflow.set_tracking_uri("file:/tmp/mlruns")
+                    else:
+                        mlflow.set_tracking_uri(MLFLOW_URI)
+                    
+                    client = MlflowClient(tracking_uri=mlflow.get_tracking_uri())
+                    
+                    # Log all metrics
+                    metrics_to_log = {
+                        "rmse": rmse,
+                        "mae": mae,
+                        "r2": r2,
+                        "evaluation_time": time.time()
+                    }
+                    
+                    for metric_name, metric_value in metrics_to_log.items():
+                        try:
+                            client.log_metric(run_id, metric_name, metric_value)
+                        except Exception as metric_error:
+                            logger.warning(f"Failed to log metric {metric_name}: {str(metric_error)}")
+                    
+                    # Create and log feature importance plot
+                    try:
+                        # Only attempt for XGBoost models
+                        if hasattr(model, 'get_booster') or 'xgboost' in str(type(model)).lower():
+                            feature_importance_path = f"/tmp/feature_importance_{model_id}.png"
+                            plt.figure(figsize=(10, 6))
+                            
+                            if hasattr(model, 'feature_importances_'):
+                                # For sklearn-like models
+                                feature_indices = np.argsort(model.feature_importances_)[-20:]  # Top 20 features
+                                plt.barh(range(len(feature_indices)), 
+                                        model.feature_importances_[feature_indices])
+                                plt.yticks(range(len(feature_indices)), 
+                                         [X_test_model.columns[i] for i in feature_indices])
+                            else:
+                                # For XGBoost models
+                                import xgboost as xgb
+                                xgb.plot_importance(model, max_num_features=20, height=0.8, 
+                                                 ax=plt.gca(), importance_type='weight')
+                                
+                            plt.title(f'Feature Importance (Model {model_id})')
+                            plt.tight_layout()
+                            plt.savefig(feature_importance_path)
+                            plt.close()
+                            
+                            # Log the plot
+                            client.log_artifact(run_id, feature_importance_path)
+                            logger.info(f"Logged feature importance plot to MLflow")
+                    except Exception as plot_error:
+                        logger.warning(f"Failed to create or log feature importance plot: {str(plot_error)}")
+                    
+                    # Create and log actual vs predicted plot
+                    try:
+                        actual_vs_pred_path = f"/tmp/actual_vs_pred_{model_id}.png"
+                        plt.figure(figsize=(8, 8))
+                        plt.scatter(y_test, y_pred, alpha=0.5)
+                        plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], 'r--')
+                        plt.xlabel('Actual')
+                        plt.ylabel('Predicted')
+                        plt.title(f'Actual vs Predicted (Model {model_id})')
+                        plt.tight_layout()
+                        plt.savefig(actual_vs_pred_path)
+                        plt.close()
+                        
+                        # Log the plot
+                        client.log_artifact(run_id, actual_vs_pred_path)
+                        logger.info(f"Logged actual vs predicted plot to MLflow")
+                    except Exception as plot_error:
+                        logger.warning(f"Failed to create or log actual vs predicted plot: {str(plot_error)}")
+                    
+                    # Set run status to completed
+                    client.set_terminated(run_id, "FINISHED")
+                    logger.info(f"MLflow run {run_id} updated with evaluation metrics")
+                    
+                except Exception as e:
+                    logger.warning(f"Model {model_id}: Failed to log metrics to MLflow: {str(e)}")
+                    
+            return result
+                
+        except Exception as eval_error:
+            error_msg = f"Error evaluating model {model_id}: {str(eval_error)}"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg, "model_id": model_id}
+            
+    except Exception as e:
+        error_msg = f"Unexpected error in evaluate_pretrained_model for {model_id}: {str(e)}"
+        logger.error(error_msg)
+        return {"status": "failed", "error": error_msg, "model_id": model_id}

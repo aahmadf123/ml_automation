@@ -208,8 +208,8 @@ UI_COMPONENTS = {
 # ─── MODEL CONFIG ────────────────────────────────────────────────────────────
 MODEL_CONFIG = {
     "model1": {
-        "name": "XGBoost Baseline",
-        "description": "XGBoost regressor with default parameters using raw loss history features",
+        "name": "XGBoost Baseline (48 Old Attributes)",
+        "description": "XGBoost regressor with default parameters using raw loss history features (48 old attributes)",
         "features": ["num_loss_3yr_", "num_loss_yrs45_", "num_loss_free_yrs_"],
         "hyperparameters": {
             "learning_rate": 0.1,
@@ -217,40 +217,10 @@ MODEL_CONFIG = {
             "n_estimators": 100
         }
     },
-    "model2": {
-        "name": "XGBoost Equal Weight",
-        "description": "XGBoost regressor with equal weighting of loss history features",
-        "features": ["lhdwc_5y_1d_"],
-        "hyperparameters": {
-            "learning_rate": 0.1,
-            "max_depth": 6,
-            "n_estimators": 100
-        }
-    },
-    "model3": {
-        "name": "XGBoost Linear Decay",
-        "description": "XGBoost regressor with linear decay weighting of loss history features",
-        "features": ["lhdwc_5y_2d_"],
-        "hyperparameters": {
-            "learning_rate": 0.1,
-            "max_depth": 6,
-            "n_estimators": 100
-        }
-    },
     "model4": {
-        "name": "XGBoost Fast Decay",
-        "description": "XGBoost regressor with fast decay weighting of loss history features",
+        "name": "XGBoost Fast Decay (Best Performing Model)",
+        "description": "XGBoost regressor with fast decay weighting of loss history features, providing best performance",
         "features": ["lhdwc_5y_3d_"],
-        "hyperparameters": {
-            "learning_rate": 0.1,
-            "max_depth": 6,
-            "n_estimators": 100
-        }
-    },
-    "model5": {
-        "name": "XGBoost Slow Decay",
-        "description": "XGBoost regressor with slow decay weighting of loss history features",
-        "features": ["lhdwc_5y_4d_"],
         "hyperparameters": {
             "learning_rate": 0.1,
             "max_depth": 6,

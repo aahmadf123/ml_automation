@@ -21,7 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { AlertCircle, Download, BarChart4, RefreshCw, BrainCircuit } from 'lucide-react'
+import { AlertCircle, Download, BarChart4, RefreshCw, BrainCircuit, TrendingUp, BarChart } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import PageHeader from '@/components/ui/page-header'
 import LoadingSpinner from '@/components/ui/loading-spinner'
@@ -70,15 +70,50 @@ export default async function ModelComparisonPage() {
   
   return (
     <div className="container mx-auto py-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Model Comparison</h1>
+      <div className="mb-8">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Model Performance Comparison</h1>
+            <p className="text-gray-600 max-w-3xl">
+              Compare the traditional model using 48 attributes with our enhanced best-performing model.
+              See how the R² score improvements translate to better business outcomes.
+            </p>
+          </div>
+          
+          <Link href="/model-comparison/ai-assistant">
+            <Button className="gap-2">
+              <BrainCircuit className="h-4 w-4" />
+              AI Assistant
+            </Button>
+          </Link>
+        </div>
         
-        <Link href="/model-comparison/ai-assistant">
-          <Button className="gap-2">
-            <BrainCircuit className="h-4 w-4" />
-            AI Assistant
-          </Button>
-        </Link>
+        {/* Business Value Banner */}
+        <Card className="mt-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-100">
+          <CardContent className="p-6">
+            <div className="flex flex-col md:flex-row items-center justify-between">
+              <div className="mb-4 md:mb-0 md:mr-6">
+                <h2 className="text-xl font-bold text-blue-900 mb-2">
+                  Improved R² Score = Better Business Decisions
+                </h2>
+                <p className="text-blue-800">
+                  Our enhanced model with fast decay weighting significantly outperforms the traditional 
+                  approach with 48 old attributes, providing superior loss predictions.
+                </p>
+              </div>
+              <div className="flex items-center gap-6 p-4 bg-white rounded-lg shadow-sm">
+                <div className="text-center">
+                  <BarChart className="h-8 w-8 text-blue-500 mx-auto mb-1" />
+                  <div className="text-sm text-blue-700">Better Risk Assessment</div>
+                </div>
+                <div className="text-center">
+                  <TrendingUp className="h-8 w-8 text-green-500 mx-auto mb-1" />
+                  <div className="text-sm text-green-700">Improved Pricing Precision</div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
       
       <Tabs defaultValue={reports[0]?.id || "no-data"} className="w-full">
@@ -93,13 +128,6 @@ export default async function ModelComparisonPage() {
               <TabsTrigger value="no-data">No Reports</TabsTrigger>
             )}
           </TabsList>
-          
-          {reports.length > 0 && (
-            <MetricSelector 
-              metrics={reports[0].metricNames} 
-              defaultMetric="f1_score"
-            />
-          )}
         </div>
         
         {reports.length === 0 ? (
@@ -123,46 +151,39 @@ export default async function ModelComparisonPage() {
   );
 }
 
-function MetricSelector({ metrics, defaultMetric }: { metrics: string[], defaultMetric: string }) {
-  // In a real implementation, this would update state and affect the table
-  return (
-    <div className="flex items-center space-x-2">
-      <label className="text-sm font-medium">Primary Metric:</label>
-      <Select defaultValue={metrics.includes(defaultMetric) ? defaultMetric : metrics[0]}>
-        <SelectTrigger className="w-[180px]">
-          <SelectValue placeholder="Select metric" />
-        </SelectTrigger>
-        <SelectContent>
-          {metrics.map(metric => (
-            <SelectItem key={metric} value={metric}>
-              {metric.replace(/_/g, ' ')}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
 function ReportDetails({ report }: { report: ComparisonReportData }) {
+  // Filter to only show models 1 and 4 if available
+  const filteredModels = report.models.filter(model => 
+    model.modelId === 'model1' || model.modelId === 'model4'
+  );
+  
+  // Create a filtered report to pass to ComparisonTable
+  const filteredReport = {
+    ...report,
+    models: filteredModels.length > 0 ? filteredModels : report.models
+  };
+  
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Models Comparison</CardTitle>
+          <CardTitle>Model Performance Comparison</CardTitle>
           <CardDescription>
-            Comparing {report.models.length} models from {new Date(report.timestamp).toLocaleString()}
+            Comparing traditional vs. enhanced model from {new Date(report.timestamp).toLocaleString()}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ComparisonTable report={report} primaryMetric="f1_score" />
+          <ComparisonTable report={filteredReport} primaryMetric="r2" />
         </CardContent>
       </Card>
       
       {report.plots && report.plots.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Performance Comparison Plots</CardTitle>
+            <CardTitle>Performance Visualizations</CardTitle>
+            <CardDescription>
+              Visual representation of model performance metrics
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -182,6 +203,39 @@ function ReportDetails({ report }: { report: ComparisonReportData }) {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Business Impact Analysis</CardTitle>
+          <CardDescription>
+            How improved model performance translates to business outcomes
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="p-4 border rounded-lg bg-green-50 border-green-100">
+              <h3 className="font-semibold text-green-800 mb-2">Pricing Accuracy</h3>
+              <p className="text-green-700 text-sm">
+                Improved R² score leads to more precise risk assessments, allowing for better pricing accuracy.
+              </p>
+            </div>
+            
+            <div className="p-4 border rounded-lg bg-blue-50 border-blue-100">
+              <h3 className="font-semibold text-blue-800 mb-2">Claims Prediction</h3>
+              <p className="text-blue-700 text-sm">
+                The enhanced Fast Decay model better captures recent claims patterns, improving loss predictions.
+              </p>
+            </div>
+            
+            <div className="p-4 border rounded-lg bg-purple-50 border-purple-100">
+              <h3 className="font-semibold text-purple-800 mb-2">Competitive Advantage</h3>
+              <p className="text-purple-700 text-sm">
+                Better predictions allow for more competitive pricing for lower-risk policies.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="flex justify-end mt-4">
         <Link href="/model-comparison/ai-assistant">

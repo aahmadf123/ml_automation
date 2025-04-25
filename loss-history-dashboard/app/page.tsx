@@ -53,11 +53,8 @@ export default function Home() {
       label: "Model",
       type: "multiselect",
       options: [
-        { value: "model1", label: "XGBoost Baseline (model1)" },
-        { value: "model2", label: "XGBoost Equal Weight (model2)" },
-        { value: "model3", label: "XGBoost Linear Decay (model3)" },
-        { value: "model4", label: "XGBoost Fast Decay (model4)" },
-        { value: "model5", label: "XGBoost Slow Decay (model5)" },
+        { value: "model1", label: "Traditional Model (48 Attributes)" },
+        { value: "model4", label: "Enhanced Model (Fast Decay)" },
       ],
     },
     {
@@ -225,11 +222,8 @@ export default function Home() {
 
   // Sample model data for the filter
   const models = [
-    { id: "model1", name: "XGBoost Baseline (model1)", type: "Regression" },
-    { id: "model2", name: "XGBoost Equal Weight (model2)", type: "Regression" },
-    { id: "model3", name: "XGBoost Linear Decay (model3)", type: "Regression" },
-    { id: "model4", name: "XGBoost Fast Decay (model4)", type: "Regression" },
-    { id: "model5", name: "XGBoost Slow Decay (model5)", type: "Regression" },
+    { id: "model1", name: "Traditional Model (48 Attributes)", type: "Regression" },
+    { id: "model4", name: "Enhanced Model (Fast Decay)", type: "Regression" },
   ]
 
   useEffect(() => {

@@ -11,7 +11,9 @@ import {
   Activity, 
   AlertTriangle, 
   RefreshCw,
-  ArrowRight
+  ArrowRight,
+  TrendingUp,
+  ArrowDownRight
 } from "lucide-react"
 
 interface MetricItem {
@@ -35,13 +37,13 @@ interface HeroSectionProps {
 }
 
 export function HeroSection({
-  title = "ML Automation Dashboard",
-  description = "Monitor, analyze, and optimize your machine learning models in one place.",
+  title = "Model Comparison Dashboard",
+  description = "Compare the traditional model with 48 attributes to our enhanced fast decay model with significantly improved predictive power.",
   metrics,
-  primaryActionLabel = "Get Started",
-  primaryActionHref = "#",
-  secondaryActionLabel = "Learn More",
-  secondaryActionHref = "#",
+  primaryActionLabel = "View Detailed Comparison",
+  primaryActionHref = "/model-comparison",
+  secondaryActionLabel = "See Performance Metrics",
+  secondaryActionHref = "/model-metrics",
 }: HeroSectionProps) {
   const controls = useAnimation()
   const { ref, inView } = useInView({ 
@@ -57,38 +59,38 @@ export function HeroSection({
 
   const defaultMetrics: MetricItem[] = [
     {
-      label: "Total Models",
-      value: "23",
+      label: "Traditional Model",
+      value: "67%",
       icon: <BarChart3 className="h-4 w-4" />,
       change: {
-        value: "+3",
-        positive: true
+        value: "R² Score",
+        positive: false
       }
     },
     {
-      label: "Average Accuracy",
-      value: "92.7%",
+      label: "Enhanced Model",
+      value: "79%",
       icon: <Activity className="h-4 w-4" />,
       change: {
-        value: "+1.2%",
+        value: "R² Score",
         positive: true
       }
     },
     {
-      label: "Drift Incidents",
-      value: "3",
-      icon: <AlertTriangle className="h-4 w-4" />,
+      label: "R² Improvement",
+      value: "+17.9%",
+      icon: <TrendingUp className="h-4 w-4" />,
       change: {
-        value: "-2",
+        value: "Better",
         positive: true
       }
     },
     {
-      label: "Training Jobs",
-      value: "156",
-      icon: <RefreshCw className="h-4 w-4" />,
+      label: "Error Reduction",
+      value: "26%",
+      icon: <ArrowDownRight className="h-4 w-4" />,
       change: {
-        value: "+12",
+        value: "Lower RMSE",
         positive: true
       }
     }
