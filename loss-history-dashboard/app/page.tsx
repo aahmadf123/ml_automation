@@ -32,6 +32,7 @@ import { motion } from "framer-motion"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MetricCard } from "@/components/ui/metric-card"
 import { BusinessImpactProjections } from "@/components/business-impact-projections"
+import { PipelineProgress } from "@/components/pipeline-progress"
 
 export default function Home() {
   const [mounted, setMounted] = useState(false)
@@ -271,6 +272,11 @@ export default function Home() {
         
         {/* Enhanced Quick Stats */}
         <QuickStats />
+        
+        {/* Pipeline Progress */}
+        <div className="mb-6">
+          <PipelineProgress />
+        </div>
         
         {/* Business Impact Projections */}
         <div className="mb-6">
