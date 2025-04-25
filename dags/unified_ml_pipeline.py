@@ -392,7 +392,7 @@ def download_data(**context):
             logger.warning(f"Error logging to ClearML: {str(e)}")
         
         try:
-            slack.simple_post(f"✅ Data accessed from s3://{bucket}/{key}", channel="#data-pipeline")
+            slack.simple_post(f"✅ Data accessed from s3://{bucket}/{key}", channel="#all-airflow-notification")
         except Exception as e:
             logger.warning(f"Error sending Slack notification: {str(e)}")
             
@@ -606,9 +606,14 @@ def run_data_quality_checks(**context):
         standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
-        data_path = standardized_path if os.path.exists(standardized_path) else processed_path
+        # Fix: Check if standardized_path is None before checking if it exists
+        data_path = None
+        if standardized_path is not None and os.path.exists(standardized_path):
+            data_path = standardized_path
+        elif processed_path is not None and os.path.exists(processed_path):
+            data_path = processed_path
         
-        if not data_path or not os.path.exists(data_path):
+        if not data_path:
             logger.error("No valid processed data path found")
             raise FileNotFoundError("No valid processed data path found")
             
@@ -639,7 +644,7 @@ def run_data_quality_checks(**context):
             if quality_passed:
                 logger.info("Data quality checks passed")
                 try:
-                    slack.simple_post("✅ Data quality checks passed", channel="#data-pipeline")
+                    slack.simple_post("✅ Data quality checks passed", channel="#data-quality")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
             else:
@@ -647,7 +652,7 @@ def run_data_quality_checks(**context):
                 try:
                     message = quality_results.get('message', 'Unknown issue')
                     issues = quality_results.get('total_issues', 0)
-                    slack.simple_post(f"❌ Data quality checks failed: {issues} issues: {message}", channel="#data-pipeline")
+                    slack.simple_post(f"❌ Data quality checks failed: {issues} issues: {message}", channel="#data-quality")
                 except Exception as e:
                     logger.warning(f"Error sending Slack notification: {str(e)}")
                     
@@ -661,7 +666,7 @@ def run_data_quality_checks(**context):
         logger.error(f"Error in data_quality_checks task: {str(e)}")
         
         try:
-            slack.simple_post(f"❌ Data quality checks failed: {str(e)}", channel="#data-pipeline")
+            slack.simple_post(f"❌ Data quality checks failed: {str(e)}", channel="#data-quality")
         except:
             pass
             
@@ -677,9 +682,14 @@ def run_schema_validation(**context):
         standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
-        data_path = standardized_path if os.path.exists(standardized_path) else processed_path
+        # Fix: Check if standardized_path is None before checking if it exists
+        data_path = None
+        if standardized_path is not None and os.path.exists(standardized_path):
+            data_path = standardized_path
+        elif processed_path is not None and os.path.exists(processed_path):
+            data_path = processed_path
         
-        if not data_path or not os.path.exists(data_path):
+        if not data_path:
             logger.error("No valid processed data path found")
             raise FileNotFoundError("No valid processed data path found")
             
@@ -805,10 +815,10 @@ def check_for_drift(**context):
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
-        if standardized_path and os.path.exists(standardized_path):
+        if standardized_path is not None and os.path.exists(standardized_path):
             data_path = standardized_path
             logger.info(f"Using standardized path: {data_path}")
-        elif processed_path and os.path.exists(processed_path):
+        elif processed_path is not None and os.path.exists(processed_path):
             data_path = processed_path
             logger.info(f"Using processed path: {data_path}")
         else:
@@ -980,10 +990,10 @@ def train_models(**context):
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
-        if standardized_path and os.path.exists(standardized_path):
+        if standardized_path is not None and os.path.exists(standardized_path):
             data_path = standardized_path
             logger.info(f"Using standardized path: {data_path}")
-        elif processed_path and os.path.exists(processed_path):
+        elif processed_path is not None and os.path.exists(processed_path):
             data_path = processed_path
             logger.info(f"Using processed path: {data_path}")
         else:
@@ -1198,10 +1208,10 @@ def run_model_explainability(**context):
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
-        if standardized_path and os.path.exists(standardized_path):
+        if standardized_path is not None and os.path.exists(standardized_path):
             data_path = standardized_path
             logger.info(f"Using standardized path: {data_path}")
-        elif processed_path and os.path.exists(processed_path):
+        elif processed_path is not None and os.path.exists(processed_path):
             data_path = processed_path
             logger.info(f"Using processed path: {data_path}")
         else:
@@ -1254,7 +1264,7 @@ def run_model_explainability(**context):
             context['ti'].xcom_push(key='explainability_results', value=explainability_results)
             return explainability_results
             
-        if not data_path or not os.path.exists(data_path):
+        if not data_path:
             logger.warning("No valid processed data path found")
             explainability_results = {
                 "status": "warning", 
@@ -1396,10 +1406,10 @@ def generate_predictions(**context):
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
-        if standardized_path and os.path.exists(standardized_path):
+        if standardized_path is not None and os.path.exists(standardized_path):
             data_path = standardized_path
             logger.info(f"Using standardized path: {data_path}")
-        elif processed_path and os.path.exists(processed_path):
+        elif processed_path is not None and os.path.exists(processed_path):
             data_path = processed_path
             logger.info(f"Using processed path: {data_path}")
         else:
@@ -1424,7 +1434,7 @@ def generate_predictions(**context):
                         logger.info(f"Found parquet file as fallback: {data_path}")
                         break
         
-        if not data_path or not os.path.exists(data_path):
+        if not data_path:
             logger.warning("No valid processed data path found")
             prediction_results = {
                 "status": "warning", 
