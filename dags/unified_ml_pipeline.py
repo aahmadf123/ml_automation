@@ -176,6 +176,30 @@ default_args = {
 }
 
 # Utility functions
+def safe_module_call(module, function_name, *args, **kwargs):
+    """
+    Safely call a function from a module that might be an EmptyModule.
+    
+    Args:
+        module: The module (or EmptyModule) to call the function from
+        function_name: Name of the function to call
+        *args, **kwargs: Arguments to pass to the function
+        
+    Returns:
+        The result of the function call, or an error status dictionary
+    """
+    try:
+        if not hasattr(module, function_name):
+            logger.error(f"Function {function_name} not found in module")
+            return {"status": "error", "message": f"Function {function_name} not found in module"}
+            
+        function = getattr(module, function_name)
+        result = function(*args, **kwargs)
+        return result
+    except Exception as e:
+        logger.error(f"Error calling {function_name}: {str(e)}")
+        return {"status": "error", "message": f"Error: {str(e)}"}
+
 def validate_file_exists(filepath: str) -> bool:
     """
     Validate that a file exists and is not empty.
@@ -580,6 +604,9 @@ def process_data(**context):
             # Log completion
             logger.info(f"Data processing complete. Output at {processed_path}")
             return processed_path
+        except Exception as e:
+            logger.error(f"Error in processing data: {str(e)}")
+            raise e
             
     except Exception as e:
         logger.error(f"Error in process_data task: {str(e)}")

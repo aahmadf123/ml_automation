@@ -1,8 +1,8 @@
 "use client";
 
 import { PipelineHealth } from "@/components/pipeline-health";
-import DashboardHeader from "@/components/dashboard-header";
-import DashboardSidebar from "@/components/dashboard-sidebar";
+import { DashboardHeader } from "@/components/dashboard-header";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
 
 export default function PipelineHealthPage() {
   return (
