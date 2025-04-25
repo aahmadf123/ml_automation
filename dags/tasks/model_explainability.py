@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import shap
 from typing import Dict, List, Tuple
-import mlflow
+from clearml import Task, Logger
 from datetime import datetime
 from utils.cache import GLOBAL_CACHE, cache_result
 
@@ -14,6 +14,7 @@ class ModelExplainabilityTracker:
         self.model_id = model_id
         self.feature_importance_history = []
         self.shap_values_history = []
+        self.task = Task.init(project_name="ModelExplainability", task_name=f"Explainability_{model_id}")
         
     @cache_result
     def calculate_feature_importance(self, model: object, X: pd.DataFrame) -> Dict[str, float]:
@@ -130,13 +131,13 @@ class ModelExplainabilityTracker:
                            y: pd.Series,
                            run_id: str = None) -> Dict:
         """
-        Track model explainability metrics and log them to MLflow.
+        Track model explainability metrics and log them to ClearML.
         
         Args:
             model: Trained model object
             X: Feature data
             y: Target data
-            run_id: MLflow run ID (optional)
+            run_id: ClearML run ID (optional)
             
         Returns:
             Dict of explainability metrics
@@ -178,30 +179,32 @@ class ModelExplainabilityTracker:
         # Detect feature importance shifts
         feature_shifts = self.detect_feature_shift(feature_importance)
         
-        # Log to MLflow if run_id is provided
+        # Log to ClearML if run_id is provided
         if run_id:
             try:
-                with mlflow.start_run(run_id=run_id):
-                    # Log feature importance
-                    for feature, importance in feature_importance.items():
-                        mlflow.log_metric(f"importance_{feature}", importance)
+                task = Task.get_task(task_id=run_id)
+                logger = task.get_logger()
+                
+                # Log feature importance
+                for feature, importance in feature_importance.items():
+                    logger.report_scalar(title=f"importance_{feature}", series="importance", value=importance)
                         
-                    # Log feature shifts
-                    for feature, shift in feature_shifts.items():
-                        mlflow.log_metric(f"shift_{feature}", shift)
+                # Log feature shifts
+                for feature, shift in feature_shifts.items():
+                    logger.report_scalar(title=f"shift_{feature}", series="shift", value=shift)
                     
-                    # Log summary metrics
-                    mlflow.log_metric("num_features", len(feature_importance))
-                    mlflow.log_metric("num_feature_shifts", len(feature_shifts))
-                    if feature_importance:
-                        mlflow.log_metric("avg_importance", 
-                                         sum(feature_importance.values()) / len(feature_importance))
-                logger.info(f"Logged explainability metrics to MLflow run {run_id}")
+                # Log summary metrics
+                logger.report_scalar(title="num_features", series="summary", value=len(feature_importance))
+                logger.report_scalar(title="num_feature_shifts", series="summary", value=len(feature_shifts))
+                if feature_importance:
+                    logger.report_scalar(title="avg_importance", series="summary", 
+                                         value=sum(feature_importance.values()) / len(feature_importance))
+                logger.info(f"Logged explainability metrics to ClearML task {run_id}")
             except Exception as e:
-                logger.error(f"Failed to log to MLflow: {str(e)}")
-                # Continue execution despite MLflow error
+                logger.error(f"Failed to log to ClearML: {str(e)}")
+                # Continue execution despite ClearML error
         else:
-            logger.info("No MLflow run_id provided, skipping MLflow logging")
+            logger.info("No ClearML run_id provided, skipping ClearML logging")
         
         # Convert NumPy arrays to lists for JSON serialization
         serializable_feature_importance = {k: float(v) for k, v in feature_importance.items()}

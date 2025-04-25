@@ -18,7 +18,7 @@ from datetime import datetime
 from airflow.models import Variable
 from airflow.exceptions import AirflowSkipException
 from airflow.decorators import task
-import mlflow
+from clearml import Task, Model
 
 # Fix import paths - use absolute imports
 import utils.metrics as metrics
@@ -200,30 +200,16 @@ def identify_models_for_retraining(
     Returns:
         Dictionary with models to retrain and reasons
     """
-    # If no historical metrics provided, try to load from MLflow or don't recommend any retrains
+    # If no historical metrics provided, try to load from ClearML or don't recommend any retrains
     if not historical_metrics:
         historical_metrics = {}
         try:
-            # Try to get historical metrics from MLflow if available
+            # Try to get historical metrics from ClearML if available
             for model_id in model_results.keys():
                 try:
-                    runs = mlflow.search_runs(
-                        filter_string=f"tags.model_id = '{model_id}'",
-                        order_by=["start_time DESC"],
-                        max_results=5
-                    )
-                    if not runs.empty:
-                        # Extract metrics from each run
-                        metrics_list = []
-                        for _, run in runs.iterrows():
-                            run_metrics = {}
-                            for col in run.index:
-                                if col.startswith("metrics."):
-                                    metric_name = col.replace("metrics.", "")
-                                    run_metrics[metric_name] = run[col]
-                            if run_metrics:
-                                metrics_list.append(run_metrics)
-                        
+                    task = Task.get_task(task_id=model_id)
+                    if task:
+                        metrics_list = task.get_metrics()
                         if metrics_list:
                             historical_metrics[model_id] = metrics_list
                 except Exception as e:
@@ -293,10 +279,10 @@ def generate_comparison_report(
     model_results = comparison_results.get("model_results", {})
     s3_locations = comparison_results.get("s3_locations", {})
     
-    # Get MLflow tracking URI if available
-    mlflow_uri = None
+    # Get ClearML tracking URI if available
+    clearml_uri = None
     try:
-        mlflow_uri = mlflow.get_tracking_uri()
+        clearml_uri = Task.get_task(task_id=best_model).get_output_log_web_page()
     except:
         pass
     
@@ -343,16 +329,16 @@ def generate_comparison_report(
             
             report += "\n"
         
-        # MLflow links if available
-        if include_mlflow_links and mlflow_uri:
-            report += "\n## MLflow Experiment Tracking\n\n"
+        # ClearML links if available
+        if include_mlflow_links and clearml_uri:
+            report += "\n## ClearML Experiment Tracking\n\n"
             for model_id in model_results.keys():
-                # Create a direct link to MLflow results if possible
-                if mlflow_uri.startswith("http"):
-                    model_uri = f"{mlflow_uri}/#/experiments/0/s?searchFilter=tags.model_id%3D%22{model_id}%22"
-                    report += f"- [{model_id} in MLflow]({model_uri})\n"
+                # Create a direct link to ClearML results if possible
+                if clearml_uri.startswith("http"):
+                    model_uri = f"{clearml_uri}/#/experiments/0/s?searchFilter=tags.model_id%3D%22{model_id}%22"
+                    report += f"- [{model_id} in ClearML]({model_uri})\n"
                 else:
-                    report += f"- {model_id}: Use MLflow UI to view results\n"
+                    report += f"- {model_id}: Use ClearML UI to view results\n"
         
         # S3 links to plots and reports
         if s3_locations:
@@ -481,21 +467,15 @@ def compare_with_production_models(
         logger.warning("No new model results provided for comparison")
         raise AirflowSkipException("No new model results to compare")
     
-    # Load production model results from MLflow
+    # Load production model results from ClearML
     production_model_results = {}
     for model_id in production_model_ids:
         try:
-            runs = mlflow.search_runs(
-                filter_string=f"tags.model_id = '{model_id}'",
-                order_by=["start_time DESC"],
-                max_results=1
-            )
-            if not runs.empty:
-                run = runs.iloc[0]
-                metrics = {col.replace("metrics.", ""): run[col] for col in run.index if col.startswith("metrics.")}
+            task = Task.get_task(task_id=model_id)
+            if task:
+                metrics = task.get_metrics()
                 production_model_results[model_id] = {
                     "model_id": model_id,
-                    "run_id": run["run_id"],
                     "metrics": metrics,
                     "status": "completed"
                 }

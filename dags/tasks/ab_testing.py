@@ -15,8 +15,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
 from sklearn.metrics import mean_squared_error, r2_score
-import mlflow
-from mlflow.tracking import MlflowClient
+from clearml import Task, Model
 from utils.config import DATA_BUCKET, MODEL_KEY_PREFIX
 import joblib
 import boto3
@@ -27,18 +26,15 @@ class ABTestingPipeline:
     def __init__(self, model_id: str, test_duration_days: int = 7):
         self.model_id = model_id
         self.test_duration_days = test_duration_days
-        self.client = MlflowClient()
+        self.task = Task.init(project_name="ABTesting", task_name=f"ABTest_{model_id}")
         
     def get_production_model(self) -> Tuple[object, float]:
         """Retrieve the current production model and its metrics."""
         try:
-            prod_version = self.client.get_latest_versions(
-                name=self.model_id, 
-                stages=["Production"]
-            )[0]
-            prod_model = mlflow.pyfunc.load_model(f"runs:/{prod_version.run_id}/model")
-            prod_metrics = self.client.get_run(prod_version.run_id).data.metrics
-            return prod_model, prod_metrics.get("rmse", float('inf'))
+            model = Model(model_id=self.model_id)
+            prod_model = model.get_local_copy()
+            prod_metrics = model.get_model_metrics()
+            return joblib.load(prod_model), prod_metrics.get("rmse", float('inf'))
         except Exception as e:
             logger.error(f"Error retrieving production model: {str(e)}")
             return None, float('inf')

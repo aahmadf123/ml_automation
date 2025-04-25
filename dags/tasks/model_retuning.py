@@ -8,7 +8,7 @@ based on both automated metrics and human feedback.
 Features:
 - Re-tuning triggers based on human feedback
 - Performance-based auto triggers
-- Integration with MLflow for experiment tracking
+- Integration with ClearML for experiment tracking
 - Hyperparameter optimization restart with tuned parameters
 """
 
@@ -22,8 +22,7 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 from airflow.models import Variable, XCom
 from airflow.exceptions import AirflowSkipException
 import pandas as pd
-import mlflow
-from mlflow.tracking import MlflowClient
+from clearml import Task, Model
 
 # Import utility modules
 from utils.slack import post as slack_post
@@ -291,17 +290,14 @@ def check_needs_retuning(
             logger.warning(f"Metric {metric_name} not found in current metrics")
             return False
         
-        # Connect to MLflow and get production model
-        client = MlflowClient()
+        # Connect to ClearML and get production model
         try:
-            production_versions = client.get_latest_versions(model_id, stages=["Production"])
-            if not production_versions:
+            task = Task.get_task(task_id=model_id)
+            if not task:
                 logger.info(f"No production model found for {model_id}. Retuning not needed.")
                 return False
                 
-            prod_version = production_versions[0]
-            run = client.get_run(prod_version.run_id)
-            prod_value = run.data.metrics.get(metric_name)
+            prod_value = task.get_last_scalar(metric_name)
             
             if prod_value is None:
                 logger.warning(f"Metric {metric_name} not found in production model")
@@ -657,7 +653,7 @@ def decide_retuning_with_hitl(**context) -> Dict[str, Any]:
         })
         
         # Handle human-in-the-loop part
-        production_model_metrics = {}  # Retrieve production model metrics from MLflow or other source
+        production_model_metrics = {}  # Retrieve production model metrics from ClearML or other source
         handle_human_in_the_loop(candidate["metrics"], production_model_metrics)
         
         return {

@@ -49,8 +49,7 @@ from airflow.decorators import task, task_group
 import pandas as pd
 import numpy as np
 import boto3
-import mlflow
-from mlflow.tracking import MlflowClient
+from clearml import Task, Dataset, Model
 
 # Import task modules
 try:
@@ -514,27 +513,23 @@ def process_data(**context):
     shutil.copy2(processed_path, LOCAL_PROCESSED_PATH)
     logger.info(f"Created standardized copy at {LOCAL_PROCESSED_PATH}")
     
-    # Log to MLflow explicitly
+    # Log to ClearML explicitly
     try:
-        # Initialize MLflow
-        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
-        
-        with mlflow.start_run(run_name="data_processing") as run:
-            # Log the artifact
-            mlflow.log_artifact(processed_path, artifact_path="processed_data")
-            mlflow.log_param("raw_data_path", raw_data_path)
-            mlflow.log_param("processed_shape", str(df.shape))
-            mlflow.log_metric("num_rows", df.shape[0])
-            mlflow.log_metric("num_columns", df.shape[1])
-            
-            # Log the run ID for downstream tasks
-            run_id = run.info.run_id
-            logger.info(f"MLflow run ID: {run_id}")
-            ti.xcom_push(key='mlflow_run_id', value=run_id)
-    except Exception as mlflow_err:
-        logger.warning(f"Failed to log to MLflow: {str(mlflow_err)}")
-        # Continue even if MLflow logging fails - we still have the file
+        clearml_task = clearml_config.init_clearml("Data_Processing")
+        if clearml_task:
+            clearml_task.set_parameter("raw_data_path", raw_data_path)
+            clearml_task.set_parameter("processed_shape", str(df.shape))
+            clearml_task.set_parameter("num_rows", df.shape[0])
+            clearml_task.set_parameter("num_columns", df.shape[1])
+            clearml_config.log_dataset_to_clearml(
+                dataset_name="Processed_Data",
+                dataset_path=processed_path,
+                dataset_tags=["processed", "parquet"]
+            )
+            clearml_task.close()
+    except Exception as e:
+        logger.warning(f"Failed to log to ClearML: {str(e)}")
+        # Continue even if ClearML logging fails - we still have the file
     
     # Push paths to XCom - these must be valid paths that actually exist
     ti.xcom_push(key='processed_data_path', value=processed_path)

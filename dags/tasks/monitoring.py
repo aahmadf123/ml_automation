@@ -21,6 +21,7 @@ from prometheus_client import start_http_server, Gauge, REGISTRY
 from typing import Dict, Set, Any
 from tenacity import retry, stop_after_attempt, wait_fixed
 from utils.config import AWS_REGION
+from clearml import Task, Logger
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -214,6 +215,20 @@ def record_system_metrics(runtime: float = None, memory_usage: str = None) -> No
         }
     }
     asyncio.run(broadcast(json.dumps(system_metrics)))
+    
+    # Log metrics to ClearML
+    try:
+        task = Task.current_task()
+        if task:
+            logger = task.get_logger()
+            logger.report_scalar("runtime", "DAG", value=runtime if runtime is not None else now)
+            logger.report_scalar("memory_available_mb", "System", value=avail_mb)
+            logger.report_scalar("memory_used_mb", "System", value=used_mb)
+            logger.report_scalar("memory_total_mb", "System", value=total_mb)
+            logger.report_scalar("memory_usage_percent", "System", value=vm.percent)
+            logging.info("Logged system metrics to ClearML")
+    except Exception as e:
+        logging.error(f"Failed to log metrics to ClearML: {str(e)}")
 
 def update_metrics_history(model_id: str, metrics: Dict[str, Any]):
     """
@@ -235,6 +250,17 @@ def update_metrics_history(model_id: str, metrics: Dict[str, Any]):
         "metrics": metrics
     }
     asyncio.run(broadcast(json.dumps(message)))
+    
+    # Log metrics to ClearML
+    try:
+        task = Task.current_task()
+        if task:
+            logger = task.get_logger()
+            for metric_name, metric_value in metrics.items():
+                logger.report_scalar(metric_name, model_id, value=metric_value)
+            logging.info(f"Logged metrics for model {model_id} to ClearML")
+    except Exception as e:
+        logging.error(f"Failed to log metrics to ClearML: {str(e)}")
 
 def update_monitoring_with_ui_components():
     """
