@@ -16,8 +16,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableHeader, TableRow, TableCell, TableBody, TableHeadCell } from "@/components/ui/table"
 
 interface PipelineRun {
   dagId: string
@@ -63,17 +62,13 @@ export function PipelineHealth() {
       // Simulated data
       setTimeout(() => {
         const mockData: PipelineRun[] = [
-          {
-            dagId: "loss_history_etl",
-            runId: "scheduled__2023-04-15T00:00:00+00:00",
-            status: "success",
-            startDate: "2023-04-15T01:00:00+00:00",
-            endDate: "2023-04-15T01:45:23+00:00",
-            duration: 2723,
-            sla: 3600,
-            nextRun: "2023-04-16T01:00:00+00:00",
-            tasks: [
-              {
+                      <TableHeadCell>Task ID</TableHeadCell>
+                      <TableHeadCell>Status</TableHeadCell>
+                      <TableHeadCell>Start Time</TableHeadCell>
+                      <TableHeadCell>End Time</TableHeadCell>
+                      <TableHeadCell>Duration</TableHeadCell>
+                      <TableHeadCell>Tries</TableHeadCell>
+           {
                 taskId: "extract_data",
                 status: "success",
                 startDate: "2023-04-15T01:00:05+00:00",

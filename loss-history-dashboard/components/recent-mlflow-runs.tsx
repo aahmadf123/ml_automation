@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableHeader, TableRow, TableCell, TableBody, TableHeadCell } from "@/components/ui/table"
 import {
   Dialog,
   DialogContent,
@@ -59,22 +59,12 @@ export function RecentMLflowRuns() {
       // Simulated data
       setTimeout(() => {
         const mockData: MLflowRun[] = [
-          {
-            runId: "run_123456",
-            modelId: "model3",
-            rmse: 0.0632,
-            timestamp: "2023-04-15T08:15:33",
-            status: "FINISHED",
-            duration: 3245,
-            parameters: {
-              learning_rate: 0.05,
-              max_depth: 7,
-              n_estimators: 300,
-              subsample: 0.85,
-              colsample_bytree: 0.75,
-            },
-            metrics: {
-              rmse: 0.0632,
+                        <TableHeadCell>Name</TableHeadCell>
+                        <TableHeadCell>Type</TableHeadCell>
+                        <TableHeadCell>Size</TableHeadCell>
+                        <TableHeadCell>Last Modified</TableHeadCell>
+                        <TableHeadCell className="text-right">Actions</TableHeadCell>
+632,
               mse: 0.004,
               mae: 0.0487,
               r2: 0.9512,
@@ -85,9 +75,9 @@ export function RecentMLflowRuns() {
               version: "7",
             },
             artifacts: [
-              { name: "model.pkl", type: "Model", size: "48.2 MB", lastModified: "2023-04-15T08:15:33" },
-              { name: "requirements.txt", type: "Text", size: "1.3 KB", lastModified: "2023-04-15T08:15:33" },
-              { name: "learning_curve.png", type: "Image", size: "178 KB", lastModified: "2023-04-15T08:15:33" },
+              { name: "model.pkl", type: "Model", size: "45.3 MB", lastModified: "2023-04-15T08:15:33" },
+              { name: "requirements.txt", type: "Text", size: "1.2 KB", lastModified: "2023-04-15T08:15:33" },
+              { name: "feature_importance.png", type: "Image", size: "178 KB", lastModified: "2023-04-15T08:15:33" },
               { name: "metrics.json", type: "JSON", size: "4.8 KB", lastModified: "2023-04-15T08:15:33" },
             ],
             logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training model with parameters: learning_rate=0.05, max_depth=7, n_estimators=300\nINFO - Training completed in 3245 seconds\nINFO - Model evaluation: RMSE=0.0632, MSE=0.004, MAE=0.0487, R2=0.9512\nINFO - Saving model artifacts\nINFO - Run completed successfully",
@@ -123,6 +113,9 @@ export function RecentMLflowRuns() {
               { name: "feature_importance.png", type: "Image", size: "156 KB", lastModified: "2023-04-15T07:45:12" },
               { name: "metrics.json", type: "JSON", size: "4.5 KB", lastModified: "2023-04-15T07:45:12" },
             ],
+            logs: "INFO - Starting model training\nINFO - Load              experiment: "xgboost_optimization",
+              version: "7",
+            },
             logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training model with parameters: learning_rate=0.1, max_depth=6, n_estimators=200\nINFO - Training completed in 2876 seconds\nINFO - Model evaluation: RMSE=0.0842, MSE=0.0071, MAE=0.0623, R2=0.9231\nINFO - Saving model artifacts\nINFO - Run completed successfully",
           },
           {
@@ -401,9 +394,8 @@ export function RecentMLflowRuns() {
                 <Button variant="outline" className="w-full sm:w-[180px] justify-between">
                   <span>
                     {modelFilter.length > 0
-                      ? `${modelFilter.length} model${modelFilter.length > 1 ? "s" : ""}`
-                      : "Filter by model"}
-                  </span>
+                      ? `${modelFilter.length} model${modelFilter.length > 1 ? "s" : ""            </CardHeader>
+              </span>
                   <Filter className="h-4 w-4 ml-2" />
                 </Button>
               </PopoverTrigger>
@@ -567,7 +559,8 @@ export function RecentMLflowRuns() {
               </DialogDescription>
             </DialogHeader>
 
-            <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab}>
+            <Tabs defaultValue="overview" value={activeTab}        </CardHeader>
+veTab}>
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="parameters">Parameters</TabsTrigger>

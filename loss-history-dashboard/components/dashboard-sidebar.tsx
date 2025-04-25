@@ -19,6 +19,8 @@ import {
   ChevronDown,
   PieChart,
   TrendingUp,
+  Activity,
+  FileText,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
@@ -29,6 +31,7 @@ interface NavItem {
   href: string
   icon: any
   active: boolean
+  description?: string
 }
 
 interface NavGroup {
@@ -61,23 +64,66 @@ export function DashboardSidebar() {
           href: "/",
           icon: Home,
           active: isActive("/"),
+          description: "Overall system performance and key metrics",
         },
       ],
     },
     {
-      title: "Analytics",
+      title: "Business Intelligence",
       items: [
+        {
+          title: "Loss Predictions",
+          href: "/predictions",
+          icon: TrendingUp,
+          active: isActive("/predictions"),
+          description: "Forecast potential losses with 95% confidence intervals",
+        },
+        {
+          title: "Premium Projections",
+          href: "/projections",
+          icon: LineChart,
+          active: isActive("/projections"),
+          description: "Project future premium growth with risk adjustments",
+        },
         {
           title: "Business Insights",
           href: "/business-insights",
-          icon: TrendingUp,
+          icon: PieChart,
           active: isActive("/business-insights"),
+          description: "Key business metrics and ROI analysis",
         },
         {
           title: "Visualizations",
           href: "/visualizations",
           icon: BarChart3,
           active: isActive("/visualizations"),
+          description: "Interactive data visualizations and reports",
+        },
+      ],
+    },
+    {
+      title: "Claims Management",
+      items: [
+        {
+          title: "Claims Analysis",
+          href: "/claims",
+          icon: FileText,
+          active: isActive("/claims"),
+          description: "Detailed claims analysis with cost breakdowns",
+        },
+        {
+          title: "Notification Analytics",
+          href: "/notification-analytics",
+          icon: Bell,
+          active: isActive("/notification-analytics"),
+          description: "Track notification effectiveness and response rates",
+        },
+        {
+          title: "Threshold Management",
+          href: "/threshold-management",
+          icon: Gauge,
+          active: isActive("/threshold-management"),
+          description: "Set and manage alert thresholds for claims",
         },
       ],
     },
@@ -87,83 +133,115 @@ export function DashboardSidebar() {
         {
           title: "Pipeline Health",
           href: "/pipeline-health",
-          icon: Gauge,
+          icon: Activity,
           active: isActive("/pipeline-health"),
+          description: "Monitor data pipeline health and performance",
         },
         {
           title: "Drift Monitor",
           href: "/drift-monitor",
-          icon: LineChart,
+          icon: AlertTriangle,
           active: isActive("/drift-monitor"),
+          description: "Track model drift and data distribution changes",
         },
         {
           title: "Data Quality",
           href: "/data-quality",
           icon: FileWarning,
           active: isActive("/data-quality"),
+          description: "Monitor data quality metrics and anomalies",
         },
         {
           title: "Incidents",
           href: "/incidents",
           icon: Bell,
           active: isActive("/incidents"),
+          description: "Track and manage system incidents",
         },
       ],
     },
     {
-      title: "Models",
+      title: "Model Hub",
       items: [
         {
           title: "Model Metrics",
           href: "/model-metrics",
           icon: Gauge,
           active: isActive("/model-metrics"),
+          description: "Performance metrics across all models",
         },
         {
           title: "Model Comparison",
           href: "/model-comparison",
           icon: GitCompare,
           active: isActive("/model-comparison"),
+          description: "Compare models side-by-side with business impact",
         },
         {
           title: "Model Explainability",
           href: "/model-explainability",
           icon: Lightbulb,
           active: isActive("/model-explainability"),
+          description: "Understand what drives model predictions",
+        },
+        {
+          title: "Explanation Comparison",
+          href: "/model-explanation-comparison",
+          icon: GitCompare,
+          active: isActive("/model-explanation-comparison"),
+          description: "Compare feature importance across models",
         },
       ],
     },
     {
-      title: "Data",
+      title: "Data Operations",
       items: [
         {
           title: "Data Ingestion",
           href: "/data-ingestion",
           icon: Database,
           active: isActive("/data-ingestion"),
+          description: "Monitor and manage data ingestion pipelines",
         },
-      ],
-    },
-    {
-      title: "Management",
-      items: [
+        {
+          title: "Fix Proposals",
+          href: "/fix-proposals",
+          icon: Workflow,
+          active: isActive("/fix-proposals"),
+          description: "Review and implement proposed fixes",
+        },
         {
           title: "Fix Templates",
           href: "/fix-templates",
           icon: Workflow,
           active: isActive("/fix-templates"),
+          description: "Manage templates for automated fixes",
+        },
+      ],
+    },
+    {
+      title: "Integration & Settings",
+      items: [
+        {
+          title: "Integrations",
+          href: "/integrations",
+          icon: Code,
+          active: isActive("/integrations"),
+          description: "Manage connections with external systems",
         },
         {
           title: "Code Interpreter",
           href: "/code-interpreter",
           icon: Code,
           active: isActive("/code-interpreter"),
+          description: "Run custom code for data analysis",
         },
         {
           title: "Settings",
           href: "/settings",
           icon: Settings,
           active: isActive("/settings"),
+          description: "Configure system preferences and user settings",
         },
       ],
     },
