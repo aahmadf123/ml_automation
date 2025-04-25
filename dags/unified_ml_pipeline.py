@@ -68,6 +68,7 @@ try:
     import tasks.model_explainability as model_explainability
     import tasks.hitl as hitl  # Import the new Human-in-the-Loop module
     import tasks.model_comparison as model_comparison  # Import model comparison module
+    import tasks.predictions as predictions  # Import predictions module
 except ImportError as e:
     # Log the import error but continue - the specific module will fail at runtime if used
     logger.error(f"Error importing module: {str(e)}")
@@ -107,6 +108,8 @@ except ImportError as e:
         hitl = EmptyModule()
     if 'model_comparison' not in locals():
         model_comparison = EmptyModule()
+    if 'predictions' not in locals():
+        predictions = EmptyModule()
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -464,18 +467,20 @@ def process_data(**context):
     output_dir = "/tmp/airflow_data"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Get raw data path from previous task - fail if not found
-    ti = context['ti']
-    raw_data_path = ti.xcom_pull(task_ids='import_data_task', key='data_path')
-    logger.info(f"Raw data path from XCom: {raw_data_path}")
-    
-    if not raw_data_path:
-        raise AirflowException("No data_path provided by import_data_task")
+    # First, look for data at the known fixed location from ingestion task
+    fixed_path = "/tmp/homeowner_data.csv"
+    if os.path.exists(fixed_path):
+        logger.info(f"Found data at fixed path: {fixed_path}")
+        raw_data_path = fixed_path
+    else:
+        # Fallback: Get raw data path from previous task XCom
+        ti = context['ti']
+        raw_data_path = ti.xcom_pull(task_ids='import_data_task', key='data_path')
+        logger.info(f"Raw data path from XCom: {raw_data_path}")
         
-    # Verify the file exists
-    if not os.path.exists(raw_data_path):
-        raise AirflowException(f"Data file does not exist at: {raw_data_path}")
-    
+        if not raw_data_path or not os.path.exists(raw_data_path):
+            raise AirflowException("No valid data path found at fixed location or from XCom")
+        
     # Generate the output path for the processed data
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     processed_path = os.path.join(output_dir, f"processed_{timestamp}.parquet")
@@ -775,1313 +780,234 @@ def healing_task(**context):
         }
 
 def model_explainability(**context):
-    """Generate model explanations using SHAP or similar techniques"""
+    """Generate explanations for the best model"""
     logger.info("Starting model_explainability task")
     
-    # Get training results
     ti = context['ti']
+    
+    # Get best model ID from model comparison
+    best_model_id = ti.xcom_pull(task_ids='compare_models_task', key='best_model_id')
+    
+    if not best_model_id:
+        logger.warning("No best model ID found for explainability task")
+        return None
+    
+    # First check for data at the standardized location
+    if os.path.exists(LOCAL_PROCESSED_PATH):
+        processed_path = LOCAL_PROCESSED_PATH
+        logger.info(f"Using data from standardized location: {processed_path}")
+    else:
+        # Get processed data path from XCom
+        processed_path = ti.xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        if not processed_path or not os.path.exists(processed_path):
+            raise AirflowException(f"Processed data path not found: {processed_path}")
+    
+    # Check if training was completed
+    training_results = ti.xcom_pull(task_ids='train_models_task', key='training_results')
+    if not training_results:
+        logger.warning("No training results found for explainability task")
+        return None
+    
+    # Create explainer
+    explainer = explainability.ModelExplainer()
+    
+    try:
+        # Generate explanations
+        explanation_results = explainer.explain_model(
+            model_id=best_model_id,
+            processed_data_path=processed_path
+        )
+        
+        if explanation_results:
+            logger.info(f"Generated explanations for model {best_model_id}")
+            
+            # Store explanation results
+            ti.xcom_push(key='explanation_results', value=explanation_results)
+            
+            return explanation_results
+        else:
+            logger.warning(f"No explanation results generated for model {best_model_id}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error generating model explanations: {str(e)}")
+        # Don't fail the pipeline for explainability issues
+        return None
+
+def generate_predictions(**context):
+    """Generate predictions using the best model"""
+    logger.info("Starting predictions generation task")
+    
+    ti = context['ti']
+    
+    # Get best model ID from model comparison
+    best_model_id = ti.xcom_pull(task_ids='compare_models_task', key='best_model_id')
+    
+    if not best_model_id:
+        logger.warning("No best model ID found for predictions task")
+        return None
+    
+    # First check for data at the standardized location
+    if os.path.exists(LOCAL_PROCESSED_PATH):
+        processed_path = LOCAL_PROCESSED_PATH
+        logger.info(f"Using data from standardized location: {processed_path}")
+    else:
+        # Get processed data path from XCom
+        processed_path = ti.xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        if not processed_path or not os.path.exists(processed_path):
+            raise AirflowException(f"Processed data path not found: {processed_path}")
+    
+    # Create predictor
+    predictor = predictions.ModelPredictor()
+    
+    try:
+        # Generate predictions
+        prediction_results = predictor.generate_predictions(
+            model_id=best_model_id,
+            processed_data_path=processed_path
+        )
+        
+        if prediction_results:
+            logger.info(f"Generated predictions for model {best_model_id}")
+            
+            # Store prediction results
+            ti.xcom_push(key='prediction_results', value=prediction_results)
+            
+            return prediction_results
+        else:
+            logger.warning(f"No predictions generated for model {best_model_id}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error generating predictions: {str(e)}")
+        # Don't fail the pipeline for prediction issues
+        return None
+
+def model_evaluation(**context):
+    """Evaluate model against test data and record metrics"""
+    logger.info("Starting model_evaluation task")
+    
+    ti = context['ti']
+    
+    # Get training results
     training_results = ti.xcom_pull(task_ids='train_models_group.train_models_task')
     
     if not training_results:
-        raise AirflowException("No training results found for model explainability")
+        raise AirflowException("No training results found for model evaluation")
     
-    # Get processed data path
-    processed_path = ti.xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
-    if not processed_path or not os.path.exists(processed_path):
-        raise AirflowException(f"Processed data path not found: {processed_path}")
-        
-    # Get the best model from training results
-    best_model = None
-    best_model_id = None
-    best_run_id = None
+    # First check for data at the standardized location
+    if os.path.exists(LOCAL_PROCESSED_PATH):
+        processed_path = LOCAL_PROCESSED_PATH
+        logger.info(f"Using data from standardized location: {processed_path}")
+    else:
+        # Get processed data path from XCom
+        processed_path = ti.xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        if not processed_path or not os.path.exists(processed_path):
+            raise AirflowException(f"Processed data path not found: {processed_path}")
+    
+    # Create evaluator
+    evaluator = model_evaluation.ModelEvaluator()
+    
+    # Evaluate all models
+    evaluation_results = {}
     
     for model_id, result in training_results.items():
         if result and isinstance(result, dict) and result.get('status') == 'completed':
             model = result.get('model')
             run_id = result.get('run_id')
+            
             if model is not None:
-                best_model = model
-                best_model_id = model_id
-                best_run_id = run_id
-                logger.info(f"Selected model {model_id} for explainability")
-                break
-    
-    if not best_model:
-        raise AirflowException("No completed model found in training results")
-    
-    # Load features and target
-    X = pd.read_parquet(processed_path)
-    logger.info(f"Loaded dataframe with shape {X.shape}")
-    
-    # Extract target column if it exists
-    y = None
-    target_column = 'trgt'  # Use 'trgt' as the primary target column
-    
-    if target_column in X.columns:
-        y = X.pop(target_column)
-    elif 'pure_premium' in X.columns:
-        y = X.pop('pure_premium')
-    elif 'il_total' in X.columns and 'eey' in X.columns:
-        y = X['il_total'] / X['eey']
-        X = X.drop(['il_total', 'eey'], axis=1)
-    
-    if y is None:
-        logger.warning("Target column not found, explainability will be limited")
-    
-    # Run the explainability tracking
-    tracker = model_explainability.ModelExplainabilityTracker(best_model_id)
-    explainability_results = tracker.track_model_and_data(model=best_model, X=X, y=y, run_id=best_run_id)
+                try:
+                    # Evaluate this model
+                    metrics = evaluator.evaluate_model(
+                        model=model,
+                        model_id=model_id,
+                        processed_data_path=processed_path,
+                        run_id=run_id
+                    )
+                    
+                    evaluation_results[model_id] = {
+                        'status': 'completed',
+                        'metrics': metrics,
+                        'run_id': run_id
+                    }
+                    
+                    logger.info(f"Evaluation completed for model {model_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error evaluating model {model_id}: {str(e)}")
+                    evaluation_results[model_id] = {
+                        'status': 'failed',
+                        'error': str(e)
+                    }
+            else:
+                logger.warning(f"No model object found for {model_id}")
+                evaluation_results[model_id] = {
+                    'status': 'failed',
+                    'error': 'No model object found'
+                }
+        else:
+            logger.warning(f"No valid training results for {model_id}")
+            evaluation_results[model_id] = {
+                'status': 'failed',
+                'error': 'No valid training results'
+            }
     
     # Store results in XCom
-    ti.xcom_push(key='explainability_results', value=explainability_results)
+    ti.xcom_push(key='evaluation_results', value=evaluation_results)
     
-    return explainability_results
+    return evaluation_results
 
-def generate_predictions(**context):
-    """Generate predictions using the trained model"""
-    logger.info("Starting generate_predictions task")
+def model_comparison(**context):
+    """Compare models and select the best one based on evaluation metrics"""
+    logger.info("Starting model_comparison task")
     
-    try:
-        # Get training results
-        training_results = context['ti'].xcom_pull(task_ids='train_models_group.train_models_task')
-        explainability_results = context['ti'].xcom_pull(task_ids='model_explainability', key='explainability_results') or {}
-        
-        # Get processed data path
-        processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
-        standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
-        
-        # Use standardized path if available, otherwise use processed path
-        data_path = None
-        if standardized_path is not None and os.path.exists(standardized_path):
-            data_path = standardized_path
-            logger.info(f"Using standardized path: {data_path}")
-        elif processed_path is not None and os.path.exists(processed_path):
-            data_path = processed_path
-            logger.info(f"Using processed path: {data_path}")
-        else:
-            logger.warning("No valid processed data path found from XCom")
-            # Try to find any parquet files in common locations as fallback
-            potential_locations = [
-                "/tmp/airflow_data",
-                "/usr/local/airflow/tmp",
-                "/tmp"
-            ]
-            
-            for location in potential_locations:
-                if os.path.exists(location):
-                    logger.info(f"Searching for parquet files in {location}")
-                    parquet_files = [os.path.join(location, f) for f in os.listdir(location) 
-                                   if f.endswith('.parquet') and os.path.isfile(os.path.join(location, f))]
-                    
-                    if parquet_files:
-                        # Sort by modification time to get the newest
-                        newest_file = sorted(parquet_files, key=os.path.getmtime, reverse=True)[0]
-                        data_path = newest_file
-                        logger.info(f"Found parquet file as fallback: {data_path}")
-                        break
-        
-        if not data_path:
-            logger.warning("No valid processed data path found")
-            prediction_results = {
-                "status": "warning", 
-                "message": "No valid processed data path found"
-            }
-            context['ti'].xcom_push(key='prediction_results', value=prediction_results)
-            return prediction_results
-            
-        # Check if we have valid training results
-        if not training_results:
-            logger.warning("No training results found")
-            prediction_results = {
-                "status": "warning", 
-                "message": "No training results found"
-            }
-            context['ti'].xcom_push(key='prediction_results', value=prediction_results)
-            return prediction_results
-        
-        # Find the best model from training results
-        best_model = None
-        best_model_id = None
-        best_run_id = None
-        
-        logger.info("Searching for completed models in training results")
-        for model_id, result in training_results.items():
-            if result and isinstance(result, dict) and result.get('status') == 'completed':
-                model = result.get('model')
-                run_id = result.get('run_id')
-                if model is not None:
-                    best_model = model
-                    best_model_id = model_id
-                    best_run_id = run_id
-                    logger.info(f"Selected model {model_id} for predictions (run_id: {run_id})")
-                    break
-        
-        if not best_model:
-            logger.warning("No completed model found in training results")
-            prediction_results = {
-                "status": "warning", 
-                "message": "No completed model found in training results"
-            }
-            context['ti'].xcom_push(key='prediction_results', value=prediction_results)
-            return prediction_results
-        
-        # Load the data
-        logger.info(f"Loading dataset from {data_path}")
-        df = pd.read_parquet(data_path)
-        logger.info(f"Loaded dataframe with shape {df.shape}")
-        
-        # Prepare data for predictions - separating features from target
-        y = None
-        X = df.copy()
-        
-        # Extract target column if it exists
-        target_column = 'trgt'  # Primary target column name
-        if target_column in X.columns:
-            y = X.pop(target_column)
-            logger.info(f"Extracted target column '{target_column}'")
-        elif 'pure_premium' in X.columns:
-            # Fall back to pure_premium if trgt is not available
-            y = X.pop('pure_premium')
-            logger.info(f"Extracted target column 'pure_premium' (fallback)")
-        elif 'il_total' in X.columns and 'eey' in X.columns:
-            # Calculate target if needed
-            logger.info(f"Calculating target from 'il_total' / 'eey'")
-            y = X['il_total'] / X['eey']
-            # Remove the component columns to avoid leakage
-            X = X.drop(['il_total', 'eey'], axis=1)
-        
-        if y is None:
-            logger.warning("No target column found for evaluation")
-            
-        # Log additional model artifacts to MLflow if we have a target column and run_id
-        if y is not None and best_run_id is not None:
-            try:
-                # Start a new MLflow run or continue the existing one
-                with mlflow.start_run(run_id=best_run_id):
-                    logger.info(f"Logging additional artifacts for run_id: {best_run_id}")
-                    
-                    # 1. Log model metrics if not already logged
-                    if hasattr(best_model, 'predict'):
-                        # Make predictions on the training data
-                        try:
-                            predictions = best_model.predict(X)
-                            
-                            # Calculate basic metrics
-                            from sklearn import metrics
-                            
-                            # For regression models
-                            try:
-                                if len(y) == len(predictions):
-                                    # Mean Absolute Error
-                                    mae = metrics.mean_absolute_error(y, predictions)
-                                    mlflow.log_metric("mean_absolute_error", mae)
-                                    logger.info(f"Logged MAE: {mae}")
-                                    
-                                    # Mean Squared Error
-                                    mse = metrics.mean_squared_error(y, predictions)
-                                    mlflow.log_metric("mean_squared_error", mse)
-                                    logger.info(f"Logged MSE: {mse}")
-                                    
-                                    # Root Mean Squared Error
-                                    rmse = mse ** 0.5
-                                    mlflow.log_metric("root_mean_squared_error", rmse)
-                                    logger.info(f"Logged RMSE: {rmse}")
-                                    
-                                    # R2 Score
-                                    r2 = metrics.r2_score(y, predictions)
-                                    mlflow.log_metric("r2_score", r2)
-                                    logger.info(f"Logged R2: {r2}")
-                                    
-                                    # Create and log the predictions distribution plot
-                                    try:
-                                        import matplotlib.pyplot as plt
-                                        import numpy as np
-                                        
-                                        # Create actual vs predicted plot
-                                        plt.figure(figsize=(10, 6))
-                                        plt.scatter(y, predictions, alpha=0.3)
-                                        
-                                        # Add diagonal line for perfect predictions
-                                        min_val = min(y.min(), predictions.min())
-                                        max_val = max(y.max(), predictions.max())
-                                        plt.plot([min_val, max_val], [min_val, max_val], 'r--')
-                                        
-                                        plt.xlabel('Actual Values')
-                                        plt.ylabel('Predicted Values')
-                                        plt.title('Actual vs Predicted Values')
-                                        
-                                        # Save the plot and log it
-                                        actual_vs_predicted_path = "/tmp/actual_vs_predicted.png"
-                                        plt.savefig(actual_vs_predicted_path)
-                                        plt.close()
-                                        
-                                        mlflow.log_artifact(actual_vs_predicted_path, "plots")
-                                        logger.info(f"Logged actual vs predicted plot to MLflow")
-                                        
-                                        # Create residual plot
-                                        plt.figure(figsize=(10, 6))
-                                        residuals = y - predictions
-                                        plt.scatter(predictions, residuals, alpha=0.3)
-                                        plt.axhline(y=0, color='r', linestyle='--')
-                                        
-                                        plt.xlabel('Predicted Values')
-                                        plt.ylabel('Residuals')
-                                        plt.title('Residual Plot')
-                                        
-                                        residuals_path = "/tmp/residuals_plot.png"
-                                        plt.savefig(residuals_path)
-                                        plt.close()
-                                        
-                                        mlflow.log_artifact(residuals_path, "plots")
-                                        logger.info(f"Logged residuals plot to MLflow")
-                                    except Exception as plot_err:
-                                        logger.warning(f"Error creating actual vs predicted plot: {str(plot_err)}")
-                                        
-                                    # Create decile analysis plot and data
-                                    try:
-                                        # Create a prior_loss_ind indicator if needed
-                                        # First, identify loss history columns for the current model
-                                        model_id_lower = best_model_id.lower().split('_')[0] if '_' in best_model_id else best_model_id.lower()
-                                        
-                                        # Get feature prefixes for this model
-                                        if model_id_lower == 'model1':
-                                            feature_prefixes = ["num_loss_3yr_", "num_loss_yrs45_", "num_loss_free_yrs_"]
-                                        elif model_id_lower == 'model2':
-                                            feature_prefixes = ["lhdwc_5y_1d_"]
-                                        elif model_id_lower == 'model3':
-                                            feature_prefixes = ["lhdwc_5y_2d_"]
-                                        elif model_id_lower == 'model4':
-                                            feature_prefixes = ["lhdwc_5y_3d_"]
-                                        elif model_id_lower == 'model5':
-                                            feature_prefixes = ["lhdwc_5y_4d_"]
-                                        else:
-                                            feature_prefixes = []
-                                            
-                                        # Identify model columns
-                                        model_columns = []
-                                        for prefix in feature_prefixes:
-                                            model_columns.extend([col for col in X.columns if col.startswith(prefix)])
-                                        
-                                        if model_columns:
-                                            # Create prior_loss_ind (1 if no prior loss, 0 if has prior loss)
-                                            is_no_prior_loss = (X[model_columns].sum(axis=1) == 0).astype(int)
-                                        else:
-                                            # Fallback if model columns not found - check for total loss columns
-                                            potential_cols = ["num_loss_3yr_total", "lhdwc_5y_1d_total", 
-                                                             "lhdwc_5y_2d_total", "lhdwc_5y_3d_total", "lhdwc_5y_4d_total"]
-                                            for col in potential_cols:
-                                                if col in X.columns:
-                                                    is_no_prior_loss = (X[col] == 0).astype(int)
-                                                    break
-                                            else:
-                                                # If we can't determine prior loss, use a dummy value
-                                                logger.warning("Could not determine prior loss status, using dummy values")
-                                                is_no_prior_loss = pd.Series(0, index=X.index)
-                                        
-                                        # Calculate sample weights
-                                        # Use 'eey' if available as weight, otherwise use 1.0
-                                        if 'eey' in X.columns:
-                                            weights = X['eey']
-                                        elif 'wt' in X.columns:
-                                            weights = X['wt']
-                                        else:
-                                            weights = pd.Series(1.0, index=X.index)
-                                                
-                                        # Create dataframe for analysis
-                                        df_eval = pd.DataFrame({
-                                            'actual': y,
-                                            'predicted': predictions,
-                                            'prior_loss_ind': is_no_prior_loss,
-                                            'wt': weights
-                                        })
-                                        
-                                        # Split data into records with and without prior claims
-                                        rslta = df_eval.loc[df_eval['prior_loss_ind'] == 1].copy()  # No prior claims
-                                        rsltb = df_eval.loc[df_eval['prior_loss_ind'] == 0].copy()  # With prior claims
-                                        
-                                        # Sort records with prior claims by predicted target
-                                        rsltb.sort_values(by='predicted', ascending=True, inplace=True)
-                                        
-                                        # Create bins/groups for records with prior claims
-                                        num_bins = 4  # We can adjust this as needed
-                                        
-                                        # Calculate cumulative weights
-                                        if len(rsltb) > 0:
-                                            cumulative_weights = rsltb['wt'].cumsum() / rsltb['wt'].sum()
-                                            
-                                            # Cap cumulative weights at 1 to prevent exceeding num_bins
-                                            cumulative_weights = np.minimum(cumulative_weights, 1)
-                                            
-                                            # Assign groups, ensuring they don't exceed num_bins
-                                            rsltb['grp'] = (cumulative_weights * num_bins).apply(np.ceil).astype(int)
-                                            rsltb['grp'] = rsltb['grp'].clip(upper=num_bins)
-                                        
-                                        # Assign group 0 to records with no prior claims
-                                        rslta['grp'] = 0
-                                        
-                                        # Combine the DataFrames
-                                        if len(rsltb) > 0:
-                                            rslt_combined = pd.concat([rslta, rsltb], ignore_index=True)
-                                        else:
-                                            rslt_combined = rslta.copy()
-                                            
-                                        # Calculate 'act_loss' and 'pred_loss'
-                                        rslt_combined['act_loss'] = rslt_combined['actual'] * rslt_combined['wt']
-                                        rslt_combined['pred_loss'] = rslt_combined['predicted'] * rslt_combined['wt']
-                                        
-                                        # Rebalance, so that total predicted loss = total actual loss
-                                        if rslt_combined['pred_loss'].sum() != 0:
-                                            rebalance_factor = rslt_combined['act_loss'].sum() / rslt_combined['pred_loss'].sum()
-                                            rslt_combined['pred_loss'] = rslt_combined['pred_loss'] * rebalance_factor
-                                        
-                                        # Aggregate by 'grp'
-                                        decile_analysis = rslt_combined.groupby('grp').agg({
-                                            'wt': 'sum',
-                                            'act_loss': 'sum',
-                                            'pred_loss': 'sum'
-                                        }).reset_index()
-                                        
-                                        # Calculate average targets
-                                        decile_analysis['actual'] = decile_analysis['act_loss'] / decile_analysis['wt']
-                                        decile_analysis['predicted'] = decile_analysis['pred_loss'] / decile_analysis['wt']
-                                        
-                                        # Save to CSV and log
-                                        decile_path = "/tmp/insurance_decile_analysis.csv"
-                                        decile_analysis.to_csv(decile_path, index=False)
-                                        mlflow.log_artifact(decile_path, "decile_analysis")
-                                        
-                                        # Create more detailed insurance-specific decile plot
-                                        plt.figure(figsize=(14, 8))
-                                        
-                                        # Define custom colors and plotting style
-                                        actual_color = '#22c55e'  # Green
-                                        predicted_color = '#3b82f6'  # Blue
-                                        
-                                        # Sort by group for plotting
-                                        decile_analysis = decile_analysis.sort_values('grp')
-                                        
-                                        # Create bar chart
-                                        bar_width = 0.35
-                                        index = np.arange(len(decile_analysis))
-                                        
-                                        plt.bar(index, decile_analysis['predicted'], bar_width, 
-                                                label='Predicted', color=predicted_color, alpha=0.8)
-                                        plt.bar(index + bar_width, decile_analysis['actual'], bar_width, 
-                                                label='Actual', color=actual_color, alpha=0.8)
-                                        
-                                        # Add percentage difference labels
-                                        for i, (_, row) in enumerate(decile_analysis.iterrows()):
-                                            if row['predicted'] != 0:
-                                                pct_diff = ((row['actual'] / row['predicted']) - 1) * 100
-                                                if abs(pct_diff) >= 1.0:  # Only show if 1% or greater difference
-                                                    plt.text(i + bar_width/2, max(row['predicted'], row['actual']) + 0.01, 
-                                                            f"{pct_diff:.1f}%", ha='center', va='bottom', fontsize=9)
-                                        
-                                        # Group labels
-                                        group_labels = []
-                                        for grp in decile_analysis['grp']:
-                                            if grp == 0:
-                                                group_labels.append("No Prior\nClaims")
-                                            else:
-                                                group_labels.append(f"Group {grp}\n(Prior Claims)")
-                                        
-                                        # Customize plot appearance
-                                        plt.xlabel('Risk Group', fontsize=12)
-                                        plt.ylabel('Average Pure Premium', fontsize=12)
-                                        plt.title('Insurance Risk Segmentation: Actual vs. Predicted Pure Premium by Group', 
-                                                fontsize=14)
-                                        plt.xticks(index + bar_width / 2, group_labels)
-                                        plt.legend(fontsize=10)
-                                        plt.tight_layout()
-                                        
-                                        # Add explanatory annotation
-                                        plt.figtext(0.5, 0.01, 
-                                                    'Group 0: Policies with no prior claims\nGroups 1-4: Policies with prior claims, '
-                                                    'segmented by predicted severity (1=lowest, 4=highest)',
-                                                    ha='center', fontsize=9, style='italic')
-                                        
-                                        # Save insurance-specific plot
-                                        decile_plot_path = "/tmp/insurance_decile_analysis.png"
-                                        plt.savefig(decile_plot_path, dpi=120, bbox_inches='tight')
-                                        plt.close()
-                                        
-                                        mlflow.log_artifact(decile_plot_path, "decile_analysis")
-                                        logger.info(f"Logged insurance-specific decile analysis to MLflow")
-                                        
-                                        # Also create traditional decile analysis for comparison
-                                        df_eval['decile'] = pd.qcut(df_eval['predicted'], 10, labels=False) + 1
-                                        trad_decile = df_eval.groupby('decile').agg({
-                                            'actual': 'mean',
-                                            'predicted': 'mean'
-                                        }).reset_index()
-                                        
-                                        # Save traditional decile analysis
-                                        trad_path = "/tmp/traditional_decile_analysis.csv"
-                                        trad_decile.to_csv(trad_path, index=False)
-                                        mlflow.log_artifact(trad_path, "decile_analysis")
-                                        
-                                    except Exception as decile_err:
-                                        logger.warning(f"Error creating insurance-specific decile analysis: {str(decile_err)}")
-                                        # Fallback to traditional decile analysis if insurance-specific approach fails
-                                        try:
-                                            # Create decile buckets based on predictions
-                                            df_eval = pd.DataFrame({'actual': y, 'predicted': predictions})
-                                            df_eval['decile'] = pd.qcut(df_eval['predicted'], 10, labels=False) + 1
-                                            
-                                            # Calculate average values by decile
-                                            decile_analysis = df_eval.groupby('decile').agg({
-                                                'actual': 'mean',
-                                                'predicted': 'mean'
-                                            }).reset_index()
-                                            
-                                            # Save to CSV and log
-                                            decile_path = "/tmp/decile_analysis.csv"
-                                            decile_analysis.to_csv(decile_path, index=False)
-                                            mlflow.log_artifact(decile_path, "decile_analysis")
-                                            
-                                            # Create decile plot
-                                            plt.figure(figsize=(12, 7))
-                                            bar_width = 0.35
-                                            index = np.arange(len(decile_analysis))
-                                            
-                                            plt.bar(index, decile_analysis['predicted'], bar_width, label='Predicted', color='blue', alpha=0.7)
-                                            plt.bar(index + bar_width, decile_analysis['actual'], bar_width, label='Actual', color='green', alpha=0.7)
-                                            
-                                            plt.xlabel('Decile')
-                                            plt.ylabel('Average Value')
-                                            plt.title('Predicted vs Actual by Decile')
-                                            plt.xticks(index + bar_width / 2, decile_analysis['decile'])
-                                            plt.legend()
-                                            
-                                            # Add labels for prediction accuracy
-                                            for i, (_, row) in enumerate(decile_analysis.iterrows()):
-                                                accuracy = abs(row['actual'] / row['predicted'] - 1) * 100
-                                                plt.text(i + bar_width/2, max(row['predicted'], row['actual']), 
-                                                        f"{accuracy:.1f}%", ha='center', va='bottom')
-                                            
-                                            decile_plot_path = "/tmp/decile_analysis.png"
-                                            plt.savefig(decile_plot_path)
-                                            plt.close()
-                                            
-                                            mlflow.log_artifact(decile_plot_path, "decile_analysis")
-                                            logger.info(f"Logged traditional decile analysis to MLflow (fallback)")
-                                        except Exception as fallback_err:
-                                            logger.warning(f"Error creating fallback decile analysis: {str(fallback_err)}")
-                            except Exception as metrics_err:
-                                logger.warning(f"Error calculating metrics: {str(metrics_err)}")
-                        except Exception as pred_err:
-                            logger.warning(f"Error making predictions: {str(pred_err)}")
-                    
-                    # 2. Log feature importance if available
-                    try:
-                        # Create a proper feature importance plot
-                        if hasattr(best_model, 'feature_importances_'):
-                            import matplotlib.pyplot as plt
-                            import numpy as np
-                            
-                            # Get feature names and importances
-                            feature_names = X.columns.tolist()
-                            importances = best_model.feature_importances_
-                            
-                            # Sort by importance
-                            indices = np.argsort(importances)[::-1]
-                            
-                            # Take top 20 features for readability
-                            top_n = min(20, len(indices))
-                            top_indices = indices[:top_n]
-                            
-                            # Create plot
-                            plt.figure(figsize=(12, 8))
-                            plt.title('Feature Importances')
-                            plt.barh(range(top_n), [importances[i] for i in top_indices], align='center')
-                            plt.yticks(range(top_n), [feature_names[i] for i in top_indices])
-                            plt.xlabel('Importance')
-                            plt.tight_layout()
-                            
-                            # Save and log
-                            feature_importance_path = "/tmp/feature_importance.png"
-                            plt.savefig(feature_importance_path)
-                            plt.close()
-                            
-                            mlflow.log_artifact(feature_importance_path, "feature_importance")
-                            logger.info(f"Logged feature importance plot to MLflow")
-                            
-                            # Also log as a CSV for further analysis
-                            importance_df = pd.DataFrame({
-                                'Feature': feature_names,
-                                'Importance': importances
-                            }).sort_values('Importance', ascending=False)
-                            
-                            importance_csv_path = "/tmp/feature_importance.csv"
-                            importance_df.to_csv(importance_csv_path, index=False)
-                            mlflow.log_artifact(importance_csv_path, "feature_importance")
-                        else:
-                            logger.info("Model doesn't have feature_importances_ attribute")
-                            
-                            # Try coefficients for linear models
-                            if hasattr(best_model, 'coef_'):
-                                coefs = best_model.coef_
-                                if len(coefs.shape) > 1:
-                                    coefs = coefs[0]  # Get first row for multiclass
-                                
-                                feature_names = X.columns.tolist()
-                                
-                                # Create plot
-                                plt.figure(figsize=(12, 8))
-                                plt.title('Feature Coefficients')
-                                
-                                # Sort by absolute value
-                                indices = np.argsort(np.abs(coefs))[::-1]
-                                top_n = min(20, len(indices))
-                                top_indices = indices[:top_n]
-                                
-                                plt.barh(range(top_n), [coefs[i] for i in top_indices], align='center')
-                                plt.yticks(range(top_n), [feature_names[i] for i in top_indices])
-                                plt.xlabel('Coefficient')
-                                plt.tight_layout()
-                                
-                                # Save and log
-                                feature_coef_path = "/tmp/feature_coefficients.png"
-                                plt.savefig(feature_coef_path)
-                                plt.close()
-                                
-                                mlflow.log_artifact(feature_coef_path, "feature_importance")
-                                logger.info(f"Logged feature coefficients plot to MLflow")
-                    except Exception as fi_err:
-                        logger.warning(f"Error logging feature importance: {str(fi_err)}")
-                
-                logger.info("Successfully logged all additional model artifacts to MLflow")
-            except Exception as mlflow_err:
-                logger.warning(f"Error logging to MLflow: {str(mlflow_err)}")
-        
-        # Get region and product information if available
-        regions = []
-        products = []
-        
-        if 'region' in df.columns:
-            regions = df['region'].unique().tolist()
-        else:
-            # Try alternative column names
-            region_columns = ['state', 'territory', 'area']
-            for col in region_columns:
-                if col in df.columns:
-                    regions = df[col].unique().tolist()
-                    break
-            
-            if not regions:
-                regions = ["Northeast", "Southeast", "Midwest", "Southwest", "West"]  # Default regions
-        
-        if 'product' in df.columns:
-            products = df['product'].unique().tolist()
-        else:
-            # Try alternative column names
-            product_columns = ['product_type', 'line', 'coverage']
-            for col in product_columns:
-                if col in df.columns:
-                    products = df[col].unique().tolist()
-                    break
-            
-            if not products:
-                products = ["Auto", "Home", "Commercial", "Life", "Health"]  # Default products
-        
-        # Generate future projections
-        logger.info("Generating future projections")
-        
-        # Create projections for the historical data and future periods
-        historical_periods = 36  # 3 years of historical data
-        future_periods = 12      # 1 year of projections
-        total_periods = historical_periods + future_periods
-        
-        # Get current timestamp for S3 path
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # Create dictionary to store all projection data
-        projections_data = {
-            "metadata": {
-                "model_id": best_model_id,
-                "run_id": best_run_id,
-                "generated_at": datetime.now().isoformat(),
-                "regions": regions,
-                "products": products
-            },
-            "historical_data": {},
-            "projected_data": {},
-            "decile_data": {}
-        }
-        
-        # Generate projections for each region and product combination
-        for region in regions[:5]:  # Limit to 5 regions for simplicity
-            projections_data["historical_data"][region] = {}
-            projections_data["projected_data"][region] = {}
-            projections_data["decile_data"][region] = {}
-            
-            for product in products[:5]:  # Limit to 5 products for simplicity
-                logger.info(f"Generating projections for {region} - {product}")
-                
-                # Filter data if possible
-                filtered_df = df
-                prediction_df = filtered_df
-                if 'region' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['region'] == region]
-                if 'product' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['product'] == product]
-                
-                # 1. Generate historical and projected loss data
-                current_date = datetime.now()
-                start_date = current_date - timedelta(days=30*historical_periods)
-                
-                historical_data = []
-                projected_data = []
-                
-                # Generate historical data (past 36 months) based on actual data patterns
-                for i in range(historical_periods):
-                    date = start_date + timedelta(days=30*i)
-                    
-                    # Use actual predictions from the model if possible, or create realistic-looking data
-                    try:
-                        # Here we would use the model to predict on historical data
-                        # For now, generate synthetic but realistic-looking data
-                        base_value = 1000000 + (i * 25000)  # Increasing trend
-                        variation = base_value * 0.1 * (0.5 - random.random())  # +/- 5% variation
-                        seasonal_factor = 1.0 + 0.2 * math.sin(2 * math.pi * (date.month / 12))  # Seasonal pattern
-                        value = (base_value + variation) * seasonal_factor
-                        
-                        historical_data.append({
-                            "date": date.strftime('%Y-%m-%d'),
-                            "value": round(value, 2)
-                        })
-                    except Exception as e:
-                        logger.warning(f"Error generating historical data: {str(e)}")
-                        # Fallback to simple increasing values
-                        historical_data.append({
-                            "date": date.strftime('%Y-%m-%d'),
-                            "value": 1000000 + (i * 50000)
-                        })
-                
-                # Generate projected data (next 12 months)
-                last_historical_value = historical_data[-1]["value"]
-                confidence_widening_factor = 0.02  # Each period adds 2% to confidence interval width
-                
-                for i in range(future_periods):
-                    date = current_date + timedelta(days=30*(i+1))
-                    
-                    # Use the model to predict future values
-                    try:
-                        # Here we would use the model to predict future values
-                        # For now, generate synthetic but realistic-looking projections
-                        trend_factor = 1.0 + (i * 0.01)  # 1% growth per month
-                        seasonal_factor = 1.0 + 0.15 * math.sin(2 * math.pi * (date.month / 12))  # Seasonal pattern
-                        random_factor = 1.0 + 0.05 * (random.random() - 0.5)  # Random variation
-                        
-                        value = last_historical_value * trend_factor * seasonal_factor * random_factor
-                        confidence_width = value * (0.05 + (i * confidence_widening_factor))
-                        
-                        projected_data.append({
-                            "date": date.strftime('%Y-%m-%d'),
-                            "value": round(value, 2),
-                            "lower": round(max(0, value - confidence_width), 2),
-                            "upper": round(value + confidence_width, 2)
-                        })
-                    except Exception as e:
-                        logger.warning(f"Error generating projected data: {str(e)}")
-                        # Fallback to simple increasing values
-                        value = last_historical_value * (1 + (i * 0.02))
-                        projected_data.append({
-                            "date": date.strftime('%Y-%m-%d'),
-                            "value": round(value, 2),
-                            "lower": round(value * 0.9, 2),
-                            "upper": round(value * 1.1, 2)
-                        })
-                
-                # 2. Generate pure premium predictions by decile
-                decile_data = []
-                
-                for decile in range(1, 11):
-                    # Calculate predictions for each decile
-                    base_premium = 100 + (decile * 80)  # Baseline: higher deciles have higher premiums
-                    predicted_premium = base_premium * (1 + (0.02 * (decile-5)))  # Higher deciles grow faster
-                    
-                    # Add more variation for extreme deciles
-                    if decile <= 3:
-                        actual_premium = predicted_premium * (1 + random.uniform(0.1, 0.25))  # Underpricing low deciles
-                    elif decile >= 8:
-                        actual_premium = predicted_premium * (1 - random.uniform(0.05, 0.15))  # Overpricing high deciles
-                    else:
-                        actual_premium = predicted_premium * (1 + random.uniform(-0.08, 0.08))  # Better accuracy in middle
-                    
-                    decile_data.append({
-                        "decile": decile,
-                        "predicted": round(predicted_premium, 2),
-                        "actual": round(actual_premium, 2)
-                    })
-                
-                # Store data for this region and product
-                projections_data["historical_data"][region][product] = historical_data
-                projections_data["projected_data"][region][product] = projected_data
-                projections_data["decile_data"][region][product] = decile_data
-        
-        # Save projections to a JSON file
-        temp_dir = tempfile.mkdtemp()
-        json_path = os.path.join(temp_dir, f"projections_{timestamp}.json")
-        
-        with open(json_path, 'w') as f:
-            json.dump(projections_data, f)
-        
-        logger.info(f"Projections saved to {json_path}")
-        
-        # Upload to S3
-        bucket = DATA_BUCKET
-        s3_key = f"projections/model_projections_{timestamp}.json"
-        
-        logger.info(f"Uploading projections to S3: s3://{bucket}/{s3_key}")
-        
-        try:
-            s3_hook = S3Hook()
-            s3_hook.load_file(
-                filename=json_path,
-                key=s3_key,
-                bucket_name=bucket,
-                replace=True
-            )
-            
-            # Also store a copy at a consistent path for the dashboard to access
-            latest_key = "projections/latest_projections.json"
-            s3_hook.load_file(
-                filename=json_path,
-                key=latest_key,
-                bucket_name=bucket,
-                replace=True
-            )
-            
-            # Store projections in MLflow as well if run_id is available
-            if best_run_id:
-                try:
-                    with mlflow.start_run(run_id=best_run_id):
-                        mlflow.log_artifact(json_path, "projections")
-                        logger.info(f"Stored projections in MLflow for run_id {best_run_id}")
-                except Exception as mlflow_err:
-                    logger.warning(f"Error logging projections to MLflow: {str(mlflow_err)}")
-            
-            logger.info(f"Successfully uploaded projections to S3")
-            
-            # Store S3 path in XCom
-            prediction_results = {
-                "status": "success",
-                "message": "Projections generated and uploaded to S3",
-                "s3_bucket": bucket,
-                "s3_key": s3_key,
-                "latest_key": latest_key
-            }
-            context['ti'].xcom_push(key='prediction_results', value=prediction_results)
-            
-            # Clean up temp directory
-            shutil.rmtree(temp_dir)
-            
-            # Send notification
-            try:
-                slack.simple_post(f"✅ Future Projections Generated", channel="#data-pipeline")
-            except Exception as slack_error:
-                logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-            
-            return prediction_results
-        except Exception as e:
-            prediction_results = {
-                "status": "error",
-                "message": f"Error uploading projections to S3: {str(e)}",
-                "local_path": json_path
-            }
-            context['ti'].xcom_push(key='prediction_results', value=prediction_results)
-            
-            try:
-                slack.simple_post("❌ Failed to Upload Projections", channel="#data-pipeline")
-            except Exception as slack_error:
-                logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-            
-            return prediction_results
-    except Exception as e:
-        # Log prediction generation failure
-        logger.error(f"Prediction Generation Failed: Error generating predictions: {str(e)}")
-        prediction_results = {
-            "status": "error",
-            "message": f"Error in generate_predictions task: {str(e)}"
-        }
-        context['ti'].xcom_push(key='prediction_results', value=prediction_results)
-        
-        try:
-            slack.post(
-                channel="#data-pipeline",
-                title="❌ Prediction Generation Failed",
-                details=f"Error generating predictions: {str(e)}",
-                urgency="high"
-            )
-        except Exception as slack_error:
-            logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-        
-        return prediction_results
-
-    
-def archive_artifacts(**context):
-    """Archive model artifacts to S3"""
-    try:
-        # Get results from the training task
-        results = context['ti'].xcom_pull(task_ids='train_models_group.train_models_task')
-        
-        if not results:
-            logger.warning("No training results to archive")
-            return 0
-        
-        # Get bucket from environment variables
-        bucket = DATA_BUCKET
-        logger.info(f"Using S3 bucket: {bucket}")
-        
-        # Get current date for organizing artifacts
-        current_date = datetime.now().strftime('%Y-%m-%d')
-        
-        # Create a hook to interact with S3
-        try:
-            s3_hook = S3Hook()
-            logger.info("Successfully created S3Hook")
-        except Exception as e:
-            logger.error(f"Failed to create S3Hook: {str(e)}")
-            raise
-        
-        # Count of successful uploads
-        uploaded_count = 0
-        failed_uploads = 0
-        
-        # Iterate through results to find completed models
-        for model_id, model_result in results.items():
-            if model_result.get('status') == 'completed':
-                # Get the MLflow run ID
-                run_id = model_result.get('run_id')
-                if run_id:
-                    # Create a destination path in S3 for model artifacts
-                    s3_dest = f"artifacts/models/{current_date}/{model_id}/"
-                    
-                    # Upload MLflow artifacts to S3
-                    try:
-                        # This part depends on your MLflow setup and artifact paths
-                        # You may need to adjust based on your MLflow configuration
-                        mlflow_artifacts_path = f"/tmp/mlruns/0/{run_id}/artifacts"
-                        
-                        if not os.path.exists(mlflow_artifacts_path):
-                            logger.warning(f"MLflow artifacts path not found: {mlflow_artifacts_path}")
-                            continue
-                            
-                        logger.info(f"Archiving artifacts for {model_id} from {mlflow_artifacts_path}")
-                        
-                        # Count files for logging
-                        file_count = 0
-                        
-                        for root, _, files in os.walk(mlflow_artifacts_path):
-                            for file in files:
-                                local_path = os.path.join(root, file)
-                                relative_path = os.path.relpath(local_path, mlflow_artifacts_path)
-                                s3_key = f"{s3_dest}{relative_path}"
-                                
-                                try:
-                                    # Upload file to S3
-                                    s3_hook.load_file(
-                                        filename=local_path,
-                                        key=s3_key,
-                                        bucket_name=bucket,
-                                        replace=True
-                                    )
-                                    file_count += 1
-                                except Exception as e:
-                                    logger.warning(f"Failed to upload {local_path} to S3: {str(e)}")
-                        
-                        if file_count > 0:
-                            uploaded_count += 1
-                            logger.info(f"Archived {file_count} artifacts for {model_id} to S3")
-                        else:
-                            logger.warning(f"No artifacts found for {model_id}")
-                            
-                    except Exception as e:
-                        failed_uploads += 1
-                        logger.warning(f"Error archiving artifacts for {model_id}: {str(e)}")
-        
-        # Send notification with summary
-        try:
-            if uploaded_count > 0:
-                slack.simple_post(f":file_folder: Archived artifacts for {uploaded_count} models to S3", channel="#data-pipeline")
-            elif failed_uploads > 0:
-                slack.simple_post(f"⚠️ Failed to archive artifacts for {failed_uploads} models", channel="#data-pipeline")
-        except Exception as slack_error:
-            logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-            
-        # Log artifact archiving summary
-        if uploaded_count > 0:
-            logger.info(f"Archived artifacts for {uploaded_count} models to S3")
-        elif failed_uploads > 0:
-            logger.warning(f"Failed to archive artifacts for {failed_uploads} models")
-            
-        return uploaded_count
-        
-    except Exception as e:
-        logger.error(f"Error archiving artifacts: {str(e)}")
-        # Don't fail the DAG if archiving fails
-        return 0
-
-def cleanup_temp_files(**context):
-    """Clean up temporary files created during pipeline execution"""
-    logger.info("Starting cleanup_temp_files task")
-    
-    temp_files = [LOCAL_PROCESSED_PATH, REFERENCE_MEANS_PATH]
-    cleaned_count = 0
-    
-    for filepath in temp_files:
-        if os.path.exists(filepath):
-            try:
-                os.remove(filepath)
-                logger.info(f"Removed temporary file: {filepath}")
-                cleaned_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary file {filepath}: {str(e)}")
-                
-    # Clean up any temporary directories in /tmp that match our pattern
-    try:
-        for item in os.listdir('/tmp'):
-            if (item.startswith('airflow_') or item.startswith('raw_') or 
-                item.startswith('processed_') or item.startswith('backup_')) and os.path.isdir(os.path.join('/tmp', item)):
-                try:
-                    shutil.rmtree(os.path.join('/tmp', item))
-                    logger.info(f"Removed temporary directory: /tmp/{item}")
-                    cleaned_count += 1
-                except Exception as e:
-                    logger.warning(f"Failed to remove temporary directory /tmp/{item}: {str(e)}")
-    except Exception as e:
-        logger.warning(f"Failed to list /tmp directory: {str(e)}")
-        
-    logger.info(f"Cleanup completed, removed {cleaned_count} files/directories")
-    return {"status": "success", "message": f"Cleanup completed, removed {cleaned_count} files/directories"}
-
-def wait_for_data_validation(**context):
-    """
-    Wait for the data to be validated by a human reviewer
-    """
-    logger.info("Starting wait_for_data_validation task")
-    
-    # Get quality results from the data validation task
-    quality_results = context['ti'].xcom_pull(task_ids='validate_data_task', key='quality_results')
-    quality_passed = context['ti'].xcom_pull(task_ids='validate_data_task', key='quality_passed')
-    
-    # Auto-approve if quality threshold is met
-    if quality_results and quality_passed:
-        quality_score = quality_results.get('quality_score', 0)
-        if quality_score >= AUTO_APPROVE_QUALITY_THRESHOLD:
-            logger.info(f"Data quality score {quality_score} meets auto-approval threshold {AUTO_APPROVE_QUALITY_THRESHOLD}")
-            context['ti'].xcom_push(key='validation_status', value={
-                "status": "approved",
-                "approved_at": datetime.now().isoformat(),
-                "approved_by": "system",
-                "message": f"Data automatically approved with quality score {quality_score}",
-                "timeout_minutes": AUTO_APPROVE_TIMEOUT_MINUTES
-            })
-        return True
-    
-    # Always set to auto-approve since we're not doing manual validation here
-    logger.info("Auto-approving data validation")
-    
-    # Get the validation report path from XCom
-    validation_report_path = context['ti'].xcom_pull(task_ids='validate_data_task', key='validation_report_path')
-    
-    if not validation_report_path:
-        logger.warning("No validation report path provided by validate_data_task")
-        
-    # Record the approval in XCom
-    context['ti'].xcom_push(key='validation_status', value={
-        "status": "approved",
-        "approved_at": datetime.now().isoformat(),
-        "approved_by": "system",
-        "message": "Data automatically approved",
-        "timeout_minutes": AUTO_APPROVE_TIMEOUT_MINUTES
-    })
-    
-    return True
-
-def wait_for_model_approval(**context):
-    """
-    Wait for model approval before proceeding with deployment.
-    
-    Args:
-        context: Airflow task context
-        
-    Returns:
-        Dictionary with approval status
-    """
-    # Check if auto-approval is enabled
-    if AUTO_APPROVE_MODEL:
-        logger.info(f"Auto-approval is enabled. Automatically approving model after short delay.")
-        # Simulate a short delay before auto-approval
-        time.sleep(5)
-        
-        # Push approval status to XCom
-        approval_status = {
-            "status": "approved",
-            "approved_at": datetime.now().isoformat(),
-            "approved_by": "system",
-            "message": "Model automatically approved",
-            "timeout_minutes": MODEL_APPROVE_TIMEOUT_MINUTES
-        }
-        
-        context['ti'].xcom_push(key='model_approval', value=approval_status)
-        logger.info(f"Model approved for deployment: {approval_status}")
-        return approval_status
-    
-    # Get model comparison results
     ti = context['ti']
-    comparison_results = ti.xcom_pull(task_ids='model_comparison_task')
     
-    if not comparison_results:
-        logger.warning("No model comparison results found, proceeding with limited data")
-        # Auto-approve even without comparison results
-        approval_status = {
-            "status": "approved",
-            "approved_at": datetime.now().isoformat(), 
-            "approved_by": "system",
-            "message": "Model auto-approved without comparison results",
-            "timeout_minutes": MODEL_APPROVE_TIMEOUT_MINUTES
-        }
-        
-        ti.xcom_push(key='model_approval', value=approval_status)
-        logger.info(f"Model approved for deployment without comparison: {approval_status}")
-        return approval_status
+    # Get evaluation results
+    evaluation_results = ti.xcom_pull(task_ids='evaluate_models_task', key='evaluation_results')
     
-    # Log model comparison results
-    logger.info(f"Model comparison results: {comparison_results}")
+    if not evaluation_results:
+        raise AirflowException("No evaluation results found for model comparison")
     
-    # In a real scenario, this could trigger an approval workflow
-    # For now, we'll simulate automatic approval after a short delay
-    time.sleep(5)  # Simulate approval delay
-    
-    # Push approval status to XCom
-    approval_status = {
-        "status": "approved",
-        "approved_at": datetime.now().isoformat(),
-        "approved_by": "system", 
-        "message": "Model automatically approved",
-        "timeout_minutes": MODEL_APPROVE_TIMEOUT_MINUTES
-    }
-    
-    ti.xcom_push(key='model_approval', value=approval_status)
-    
-    logger.info(f"Model approved for deployment: {approval_status}")
-    return approval_status
-
-def train_models(**context):
-    """
-    Train machine learning models using processed data.
-    
-    Args:
-        context: Airflow task context
-        
-    Returns:
-        Dictionary with training results
-    """
-    # Get processed data path from XCom or from parameter
-    ti = context['ti']
-    processed_data_path = context.get('params', {}).get('processed_data_path')
-    
-    # If not passed as a parameter, try to get from XCom
-    if not processed_data_path:
-        process_data_results = ti.xcom_pull(task_ids='preprocess_data_task')
-        
-        # Try to get the processed data path from XCom
-        if process_data_results:
-            # Handle both string and dictionary return types from process_data
-            if isinstance(process_data_results, dict) and 'processed_data_path' in process_data_results:
-                processed_data_path = process_data_results['processed_data_path']
-                logger.info(f"Using processed data from XCom dictionary: {processed_data_path}")
-            elif isinstance(process_data_results, str):
-                processed_data_path = process_data_results
-                logger.info(f"Using processed data from XCom string: {processed_data_path}")
-        
-        if not processed_data_path:
-            logger.warning("No processed data path found in XCom, looking for alternatives")
-            
-            # Check for standardized path in XCom
-            standardized_path = None
-            if isinstance(process_data_results, dict) and 'standardized_processed_path' in process_data_results:
-                standardized_path = process_data_results['standardized_processed_path']
-                if os.path.exists(standardized_path):
-                    processed_data_path = standardized_path
-                    logger.info(f"Using standardized path from XCom: {processed_data_path}")
-            
-            # Look for standardized processed path
-            if not processed_data_path:
-                standard_path = LOCAL_PROCESSED_PATH
-                if os.path.exists(standard_path):
-                    processed_data_path = standard_path
-                    logger.info(f"Using standard processed data path: {processed_data_path}")
-                else:
-                    # Search common locations for processed data files
-                    potential_dirs = ["/tmp", "/tmp/airflow_data", "/usr/local/airflow/tmp"]
-                    for dir_path in potential_dirs:
-                        if os.path.exists(dir_path):
-                            parquet_files = [f for f in os.listdir(dir_path) 
-                                            if f.endswith('.parquet') and os.path.isfile(os.path.join(dir_path, f))]
-                            if parquet_files:
-                                # Use the most recently modified file
-                                latest_file = sorted(parquet_files, 
-                                                   key=lambda f: os.path.getmtime(os.path.join(dir_path, f)), 
-                                                   reverse=True)[0]
-                                processed_data_path = os.path.join(dir_path, latest_file)
-                                logger.info(f"Found alternative processed data: {processed_data_path}")
-                                break
-    
-    # If we still don't have a data path, we have to raise an exception
-    if not processed_data_path or not os.path.exists(processed_data_path):
-        error_msg = "No valid processed data path found after all fallback attempts"
-        logger.error(error_msg)
-        raise AirflowException(error_msg)
-    
-    logger.info(f"Training models using data from: {processed_data_path}")
-    
-    # Import the training module for model training
-    from tasks.training import train_multiple_models
-    
-    # Train the models
-    training_results = train_multiple_models(
-        processed_path=processed_data_path,
-        parallel=True,
-        max_workers=3
-    )
-    
-    # Log training results and warn if no successful models
-    if not training_results:
-        logger.warning("No training results returned")
-        # Return empty results rather than failing
-        return {}
-    
-    success_count = sum(1 for result in training_results.values() 
-                       if result.get('status') == 'completed')
-    
-    if success_count == 0:
-        logger.warning("No models were successfully trained")
+    # First check for data at the standardized location
+    if os.path.exists(LOCAL_PROCESSED_PATH):
+        processed_path = LOCAL_PROCESSED_PATH
+        logger.info(f"Using data from standardized location: {processed_path}")
     else:
-        logger.info(f"Training completed with {success_count} successful models")
+        # Get processed data path from XCom
+        processed_path = ti.xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        if not processed_path or not os.path.exists(processed_path):
+            raise AirflowException(f"Processed data path not found: {processed_path}")
     
-    # Push results to XCom
-    ti.xcom_push(key='training_results', value=training_results)
+    # Create comparator
+    comparator = model_comparison.ModelComparator()
     
-    return training_results
-
-def deploy_model(**context):
-    """
-    Deploy the best model based on evaluation metrics.
-    
-    Args:
-        context: Airflow task context
+    # Compare models
+    try:
+        comparison_results = comparator.compare_models(
+            evaluation_results=evaluation_results,
+            processed_data_path=processed_path
+        )
         
-    Returns:
-        Dictionary with deployment results
-    """
-    logger.info("Starting deploy_model task")
-    
-    # Get the best model run_id from XCom
-    ti = context['ti']
-    best_run_id = ti.xcom_pull(task_ids='train_models_group.train_models_task')
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    if not best_run_id:
-        raise AirflowException("No run_id provided by train_models_group.train_models_task")
-    
-    logger.info(f"Deploying model with run_id: {best_run_id}")
-    
-    # Get MLflow client
-    client = MlflowClient()
-    
-    # Get the model details
-    try:
-        run = client.get_run(best_run_id)
-        best_model_id = run.data.tags.get("model_id", "unknown_model")
-        logger.info(f"Deploying model_id: {best_model_id}")
-    except Exception as e:
-        logger.warning(f"Error getting run details: {str(e)}")
-        best_model_id = f"model_{timestamp}"
-    
-    # Create a temporary directory for model artifacts
-    temp_dir = tempfile.mkdtemp(prefix="model_deploy_")
-    logger.info(f"Created temp directory: {temp_dir}")
-    
-    # Download model artifacts
-    try:
-        local_path = mlflow.artifacts.download_artifacts(
-            run_id=best_run_id,
-            artifact_path="model",
-            dst_path=temp_dir
-        )
-        logger.info(f"Model artifacts downloaded to {local_path}")
-    except Exception as e:
-        logger.warning(f"Error downloading model artifacts: {str(e)}")
-        # Create dummy file to indicate error
-        dummy_path = os.path.join(temp_dir, "error.txt")
-        with open(dummy_path, "w") as f:
-            f.write(f"Error downloading model: {str(e)}")
-        local_path = dummy_path
-    
-    # Store model metadata in S3
-    s3_key = f"{config.MODEL_KEY_PREFIX}/deployed/{best_model_id}_{timestamp}"
-    logger.info(f"Creating deployment metadata at: {s3_key}")
-    
-    # Create deployment metadata
-    deployment_metadata = {
-        "model_id": best_model_id,
-        "run_id": best_run_id,
-        "deployed_at": datetime.now().isoformat(),
-        "deployed_by": "airflow",
-        "deployment_mode": "production"
-    }
-    
-    # Save metadata to file
-    metadata_path = os.path.join(temp_dir, "deployment_metadata.json")
-    with open(metadata_path, 'w') as f:
-        json.dump(deployment_metadata, f, indent=2)
-    
-    # Upload to S3
-    try:
-        s3_hook = S3Hook()
-        s3_hook.load_file(
-            filename=metadata_path,
-            key=f"{s3_key}/metadata.json",
-            bucket_name=S3_BUCKET,
-            replace=True
-        )
-        logger.info(f"Deployment metadata uploaded to S3")
-    except Exception as e:
-        logger.warning(f"Error uploading metadata to S3: {str(e)}")
-    
-    # Log deployment to MLflow
-    try:
-        with mlflow.start_run(run_id=best_run_id):
-            mlflow.log_param("deployed_at", datetime.now().isoformat())
-            mlflow.log_param("deployment_mode", "production")
-            mlflow.log_metric("deployment_success", 1.0)
+        # If we have a best model, record it
+        if comparison_results and comparison_results.get('best_model'):
+            best_model_id = comparison_results.get('best_model', {}).get('model_id')
+            logger.info(f"Selected best model: {best_model_id}")
             
-            # Set tag for easy filtering of deployed models
-            client.set_tag(best_run_id, "deployed", "true")
+            # Store the ID of the best model
+            ti.xcom_push(key='best_model_id', value=best_model_id)
+            
+            # Store full comparison results
+            ti.xcom_push(key='comparison_results', value=comparison_results)
+            
+            return comparison_results
+        else:
+            raise AirflowException("No best model identified during comparison")
+            
     except Exception as e:
-        logger.warning(f"Error logging deployment to MLflow: {str(e)}")
-    
-    # Clean up temporary directory
-    try:
-        shutil.rmtree(temp_dir)
-        logger.info(f"Cleaned up temp directory")
-    except Exception as e:
-        logger.warning(f"Error cleaning up temp directory: {str(e)}")
-    
-    # Return deployment results
-    deployment_results = {
-        "status": "success",
-        "message": "Model deployment process completed",
-        "model_id": best_model_id,
-        "run_id": best_run_id,
-        "s3_path": f"s3://{S3_BUCKET}/{s3_key}"
-    }
-    
-    ti.xcom_push(key='deployment_results', value=deployment_results)
-    return deployment_results
+        logger.error(f"Error during model comparison: {str(e)}")
+        raise AirflowException(f"Model comparison failed: {str(e)}")
 
 # Create the DAG
 dag = DAG(
