@@ -3,7 +3,7 @@
 import type { ParsedFilter } from "./nl-query-parser"
 
 // Entity type definitions for named entity recognition
-type EntityType =
+export type EntityType =
   | "date"
   | "model"
   | "status"
@@ -15,17 +15,20 @@ type EntityType =
   | "comparison"
   | "location"
 
-interface Entity {
-  text: string
-  type: EntityType
-  startPosition: number
-  endPosition: number
-  value: any
+export interface DomainKnowledge {
+tent {
+  type: IntentType
   confidence: number
+  entities: Entity[]
+}
+
+// Semantic vocabulary for understanding related terms
+export interface SemanticTerm {
+mber
 }
 
 // Intent definitions for understanding query purpose
-type IntentType =
+export type IntentType =
   | "filter"
   | "sort"
   | "show"
@@ -52,7 +55,7 @@ interface SemanticTerm {
 }
 
 // Result of NLP processing
-interface NLPResult {
+export interface NLPResult {
   query: string
   normalizedQuery: string
   intents: Intent[]
@@ -73,7 +76,7 @@ interface NLPResult {
 // Add these new types at the top of the file, after the existing type definitions
 
 // Context awareness for better query understanding
-interface QueryContext {
+export interface QueryContext {
   currentPage: string
   recentSearches: string[]
   userPreferences?: Record<string, any>
@@ -480,14 +483,14 @@ function extractEntities(query: string): Entity[] {
   })
 
   // Sort entities by position in the text
-  return entities.sort((a, b) => a.startPosition - b.startPosition)
-}
+  return explanation
+},
 
 /**
- * Identify the user's intent from the query
+ * Convert a search query to a full natural language query
+ * This helps transform simple keyword searches into proper natural language
  */
-function classifyIntent(query: string, entities: Entity[]): Intent[] {
-  const normalizedQuery = query.toLowerCase()
+expandKeywordQuery(query: string): string {
   const intents: Intent[] = []
 
   // Intent patterns with their regexes and confidence scores
@@ -707,12 +710,12 @@ function entitiesToFilters(entities: Entity[]): ParsedFilter[] {
   }
 
   return filters
-}
+},
 
 /**
- * Try to correct common typos and provide suggestions
+ * Generate a human-readable explanation of how the query was interpreted
  */
-function correctQuery(query: string): string | null {
+generateQueryExplanation(result: NLPResult): string {
   const corrections: { [key: string]: string } = {
     gradent: "gradient",
     boosting: "boosting",
@@ -763,18 +766,22 @@ function correctQuery(query: string): string | null {
 }
 
 /**
- * Process query using advanced NLP techniques
+ * Functions for NLP processing
  */
-export function processQueryWithNLP(query: string): NLPResult {
-  const normalizedQuery = query.toLowerCase().trim()
+const NLPService = {
+  /**
+   * Process feedback to improve NLP understanding
+   */
+  processUserFeedback(originalQuery: string, correctedQuery: string): void {
+    // In a production environment, this would send feedback to a learning system
+    console.log(`User feedback: "${originalQuery}" should be interpreted as "${correctedQuery}"`);
+    // Store feedback for future improvements
+  },
 
-  // Try to correct the query if it contains typos
-  const correctedQuery = correctQuery(query)
-
-  // Extract entities from the query (or corrected query if available)
-  const entities = extractEntities(correctedQuery || query)
-
-  // Classify the intent of the query
+  /**
+   * Convert NLP result to dashboard filters
+   */
+  convertNLPResultToFilters(result: NLPResult): Record<string, any> {
   const intents = classifyIntent(correctedQuery || query, entities)
 
   // Convert entities to filter parameters
@@ -1129,4 +1136,283 @@ export function expandKeywordQuery(query: string): string {
 
   // Default expansion
   return `Search for ${query}`
+},
+
+/**
+ * Process query using advanced NLP techniques
+ */
+processQueryWithNLP(query: string): NLPResult {
+  const normalizedQuery = query.toLowerCase().trim()
+
+  // Try to correct the query if it contains typos
+  const correctedQuery = correctQuery(query)
+
+  // Extract entities from the query (or corrected query if available)
+  const entities = extractEntities(correctedQuery || query)
+
+  // Classify the intent of the query
+  const intents = classifyIntent(correctedQuery || query, entities)
+
+  // Convert entities to filter parameters
+  const filters = entitiesToFilters(entities)
+
+  // Calculate overall confidence
+  const confidence = intents.length > 0 ? intents[0].confidence : 0.5
+
+  // Identify missing information
+  const missingInformation: { type: string; message: string }[] = []
+
+  // Check if we have temporal information for time-related queries
+  if (intents.some((i) => i.type === "trend") && !filters.some((f) => f.type === "date")) {
+    missingInformation.push({
+      type: "date",
+      message: "Time period not specified for trend analysis. Consider adding a date range.",
+    })
+  }
+
+  // Check if comparison operators have metric values
+  if (
+    entities.some((e) => e.type === "comparison") &&
+    !entities.some((e) => e.type === "metric" || (e.type === "comparison" && e.value.metric))
+  ) {
+    missingInformation.push({
+      type: "metric",
+      message: "Comparison operator found but no specific metric mentioned.",
+    })
+  }
+
+  return {
+    query,
+    normalizedQuery,
+    intents,
+    entities,
+    filters,
+    confidence,
+    missingInformation: missingInformation.length > 0 ? missingInformation : undefined,
+    correctedQuery: correctedQuery || undefined,
+  }
+},
+
+/**
+ * Generate more intelligent query suggestions based on partial query and context
+ */
+generateIntelligentSuggestions(
+  partialQuery: string,
+  recentQueries: string[] = [],
+  options: any,
+  currentPage: string
+): string[] {
+  const suggestions: string[] = []
+
+  // Process the partial query with NLP to understand its intent and entities
+  const nlpResult = this.processQueryWithNLP(partialQuery)
+
+  // If the query is very short, provide general suggestions based on dashboard context
+  if (partialQuery.length < 3) {
+    if (currentPage === "model-performance") {
+      return [
+        "Show models with accuracy above 0.9",
+        "Find failed model runs from last week",
+        "Compare XGBoost and Neural Network models",
+        "Show trend of model accuracy over last month",
+        "Find anomalies in model performance",
+      ]
+    } else if (currentPage === "data-quality") {
+      return [
+        "Show critical data quality issues",
+        "Find datasets with missing values",
+        "Show trend of data quality score",
+        "Compare data quality across sources",
+        "Show warnings from last 3 days",
+      ]
+    } else {
+      return [
+        "Show failed runs from last week",
+        "Find models with high accuracy",
+        "Show critical alerts",
+        "Show Neural Network models",
+        "Show trend of pipeline health",
+      ]
+    }
+  }
+
+  // Based on identified intent, suggest completions
+  if (nlpResult.intents.length > 0) {
+    const primaryIntent = nlpResult.intents[0].type
+
+    if (primaryIntent === "filter") {
+      if (nlpResult.entities.some((e) => e.type === "model")) {
+        suggestions.push(
+          "Show gradient boosting models with accuracy above 0.9",
+          "Show failed runs for neural network models",
+          "Show model performance for XGBoost models from last month",
+        )
+      } else if (nlpResult.entities.some((e) => e.type === "status")) {
+        suggestions.push(
+          "Show failed runs from last week",
+          "Show successful runs with high accuracy",
+          "Show warning alerts from neural network models",
+        )
+      } else if (nlpResult.entities.some((e) => e.type === "date")) {
+        suggestions.push(
+          "Show critical alerts from last week",
+          "Show model performance trend from last month",
+          "Show pipeline runs from yesterday with warnings",
+        )
+      } else {
+        suggestions.push(
+          "Show critical alerts",
+          "Show models with high accuracy",
+          "Show runs from last week",
+          "Show pipeline health trends",
+          "Show data quality issues",
+        )
+      }
+    }
+  }
+
+  // If we have entity information but no clear intent, suggest based on entities
+  if (nlpResult.intents[0].confidence < 0.7 && nlpResult.entities.length > 0) {
+    const entityTypes = new Set(nlpResult.entities.map((e) => e.type))
+
+    if (entityTypes.has("model")) {
+      suggestions.push(
+        "Show Neural Network models from last week",
+        "Compare Gradient Boosting and XGBoost models",
+        "Show accuracy for LightGBM models",
+      )
+    }
+
+    if (entityTypes.has("status")) {
+      suggestions.push(
+        "Show failed runs from last week",
+        "Count successful vs failed runs",
+        "Show trends for warning status alerts",
+      )
+    }
+  }
+
+  // Add suggestions based on recent queries if relevant
+  if (recentQueries.length > 0) {
+    // Find recent queries that might be relevant to the current partial query
+    const relevantRecentQueries = recentQueries
+      .filter((q) => q.toLowerCase().includes(partialQuery.toLowerCase()))
+      .slice(0, 2)
+
+    suggestions.push(...relevantRecentQueries)
+  }
+
+  // If we still don't have enough suggestions, add some generic ones
+  if (suggestions.length < 5) {
+    suggestions.push(
+      "Show critical alerts from last week",
+      "Find models with accuracy above 0.9",
+      "Show failed pipeline runs",
+      "Compare model performance",
+      "Show data quality trends",
+    )
+  }
+
+  // Return a maximum of 5 suggestions without duplicates
+  return [...new Set(suggestions)].slice(0, 5)
 }
+};
+
+// Move the previously exported functions to be internal helper functions
+/**
+ * Finds semantically related terms in the query
+ */
+function findSemanticTerms(query: string): Map<string, Entity[]> {
+  const normalizedQuery = query.toLowerCase()
+  const result = new Map<string, Entity[]>()
+
+  // For each term in our vocabulary
+  Object.entries(semanticVocabulary).forEach(([key, termData]) => {
+    const allTerms = [termData.term, ...termData.synonyms]
+    const foundEntities: Entity[] = []
+
+    // Check if any of the terms or synonyms are in the query
+    allTerms.forEach((term) => {
+      const regex = new RegExp(`\\b${term}\\b`, "gi")
+      let match
+      while ((match = regex.exec(normalizedQuery)) !== null) {
+        foundEntities.push({
+          text: match[0],
+          type: termData.category as EntityType,
+          startPosition: match.index,
+          endPosition: match.index + match[0].length,
+          value: key, // Use the canonical term as the value
+          confidence: term === termData.term ? 0.95 : 0.85, // Higher confidence for exact matches
+        })
+      }
+    })
+
+    // Add the found entities if any
+    if (foundEntities.length > 0) {
+      result.set(key, foundEntities)
+    }
+  })
+
+  return result
+}
+
+/**
+ * Identify named entities in the query
+ */
+function extractEntities(query: string): Entity[] {
+  const entities: Entity[] = []
+  const normalizedQuery = query.toLowerCase()
+
+  // Extract semantic terms first
+  const semanticTerms = findSemanticTerms(query)
+  semanticTerms.forEach((termEntities) => {
+    entities.push(...termEntities)
+  })
+
+  // Extract dates with regex patterns
+  const datePatterns = [
+    {
+      regex: /\b(?:from|since|after)\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b/i,
+      type: "date" as EntityType,
+      valueExtractor: (match: RegExpExecArray) => {
+        const dateStr = match[1]
+        try {
+          return { from: new Date(dateStr), to: null }
+        } catch (e) {
+          return { text: dateStr }
+        }
+      },
+    },
+    {
+      regex: /\b(?:to|until|before)\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b/i,
+      type: "date" as EntityType,
+      valueExtractor: (match: RegExpExecArray) => {
+        const dateStr = match[1]
+        try {
+          return { from: null, to: new Date(dateStr) }
+        } catch (e) {
+          return { text: dateStr }
+        }
+      },
+    },
+    {
+      regex: /\b(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s+to\s+(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b/i,
+      type: "date" as EntityType,
+      valueExtractor: (match: RegExpExecArray) => {
+        try {
+          return { from: new Date(match[1]), to: new Date(match[2]) }
+        } catch (e) {
+          return { text: `${match[1]} to ${match[2]}` }
+        }
+      },
+    },
+    {
+      regex: /\blast\s+(\d+)Ñ+(day|days|week|weeks|month|months|year|years)\b/i,
+      type: "date" as EntityType,
+      valueExtractor: (match: RegExpExecArray) => {
+        const num = Number.parseInt(match[1], 10)
+        const unit = match[2].toLowerCase()
+        const to = new Date()
+        const from = new Date()
+
+        

@@ -2495,9 +2495,13 @@ with dag:
     )
     
     # Compare models task
-    compare_models_task = PythonOperator(
-        task_id='compare_models_task',
-        python_callable=model_comparison.compare_models,
+    model_comparison_task = PythonOperator(
+        task_id='model_comparison',
+        python_callable=model_comparison.compare_model_results,
+        op_kwargs={
+            'model_results': "{{ ti.xcom_pull(task_ids=['model_training_1', 'model_training_4']) }}",
+            'task_type': 'regression',
+        },
         provide_context=True,
         trigger_rule='all_success',  # Only run if training was successful
     )
@@ -2519,4 +2523,4 @@ with dag:
     )
     
     # Define task dependencies
-    import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> compare_models_task >> wait_for_model_approval_task >> deploy_model_task
+    import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> model_comparison_task >> wait_for_model_approval_task >> deploy_model_task

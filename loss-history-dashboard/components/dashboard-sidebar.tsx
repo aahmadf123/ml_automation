@@ -36,7 +36,7 @@ interface NavGroup {
   items: NavItem[]
 }
 
-export default function DashboardSidebar() {
+export function DashboardSidebar() {
   const pathname = usePathname()
   const [expandedGroups, setExpandedGroups] = useState<string[]>(["monitoring", "models", "analytics"])
 
