@@ -252,14 +252,15 @@ def find_best_hyperparams(X_train, y_train, max_evals=50, sample_weight=None):
     
     # Define the search space - use more conservative ranges to avoid extreme values
     space = {
-        'max_depth': hp.choice('max_depth', [3, 4, 5, 6]),
-        'learning_rate': hp.loguniform('learning_rate', np.log(0.01), np.log(0.3)),
-        'min_child_weight': hp.choice('min_child_weight', [1, 2, 3, 4]),
-        'subsample': hp.uniform('subsample', 0.6, 0.95),
-        'colsample_bytree': hp.uniform('colsample_bytree', 0.6, 0.95),
-        'gamma': hp.uniform('gamma', 0, 1),
-        'reg_alpha': hp.loguniform('reg_alpha', np.log(1e-5), np.log(1.0)),
-        'reg_lambda': hp.loguniform('reg_lambda', np.log(1e-5), np.log(1.0))
+        'max_depth': hp.choice('max_depth', [3, 4, 5, 6, 7, 8, 9, 10]),
+        'learning_rate': hp.loguniform('learning_rate', np.log(0.005), np.log(0.5)),
+        'min_child_weight': hp.choice('min_child_weight', [1, 2, 3, 4, 5, 6]),
+        'subsample': hp.uniform('subsample', 0.5, 1.0),
+        'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1.0),
+        'gamma': hp.loguniform('gamma', np.log(1e-3), np.log(5.0)),
+        'reg_alpha': hp.loguniform('reg_alpha', np.log(1e-6), np.log(10.0)),
+        'reg_lambda': hp.loguniform('reg_lambda', np.log(1e-6), np.log(10.0)),
+        'n_estimators': hp.choice('n_estimators', [50, 100, 200, 300, 500])
     }
     
     # Create validation set for early stopping
@@ -1304,6 +1305,7 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
             logger.warning(f"Error during cleanup: {str(cleanup_err)}")
             
         return {"status": "failed", "error": error_msg, "model_id": model_id}
+
 def train_multiple_models(
     processed_path: str,
     parallel: bool = True,

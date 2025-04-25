@@ -1,7 +1,7 @@
 "use client"
 
-import DashboardHeader from "@/components/dashboard-header"
-import DashboardSidebar from "@/components/dashboard-sidebar"
+import { DashboardHeader } from "@/components/dashboard-header"
+import { DashboardSidebar } from "@/components/dashboard-sidebar"
 import BusinessInsights from "@/components/business-insights"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowDown, ArrowUp, DollarSign, PieChart, TrendingUp, Users } from "lucide-react"
