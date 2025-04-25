@@ -61,6 +61,9 @@ def compare_model_results(
         logger.warning("No model results provided for comparison")
         raise AirflowSkipException("No model results to compare")
     
+    # Filter model results to include only Model1 and Model4
+    model_results = {k: v for k, v in model_results.items() if k in ["Model1", "Model4"]}
+    
     # Count number of models with complete results
     complete_models = sum(1 for result in model_results.values() 
                          if result.get("status") == "completed")

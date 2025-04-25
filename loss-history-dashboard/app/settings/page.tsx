@@ -23,6 +23,8 @@ export default function SettingsPage() {
             <TabsTrigger value="notifications">Notifications</TabsTrigger>
             <TabsTrigger value="api">API Keys</TabsTrigger>
             <TabsTrigger value="advanced">Advanced</TabsTrigger>
+            <TabsTrigger value="documentation">Documentation</TabsTrigger>
+            <TabsTrigger value="tutorials">Tutorials</TabsTrigger>
           </TabsList>
 
           <TabsContent value="general" className="space-y-4">
@@ -122,6 +124,38 @@ export default function SettingsPage() {
                   <Switch id="debug-mode" />
                 </div>
                 <Button variant="destructive">Reset All Settings</Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="documentation" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Documentation</CardTitle>
+                <CardDescription>Comprehensive documentation to help you understand and navigate the system</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="documentation-link">Documentation Link</Label>
+                  <Input id="documentation-link" value="https://example.com/documentation" readOnly />
+                  <Button variant="outline">Open Documentation</Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="tutorials" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Tutorials</CardTitle>
+                <CardDescription>Step-by-step tutorials to help you get started and make the most of the system</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="tutorials-link">Tutorials Link</Label>
+                  <Input id="tutorials-link" value="https://example.com/tutorials" readOnly />
+                  <Button variant="outline">Open Tutorials</Button>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

@@ -121,3 +121,35 @@ class ModelEvaluation:
             'metrics': metrics,
             'timestamp': timestamp
         } 
+
+    def compare_models(self, model1: object, model4: object, new_model: object, X_test: pd.DataFrame, y_test: pd.Series) -> Dict:
+        """
+        Compare new model with Model1 and Model4 concurrently.
+        
+        Args:
+            model1: Model1 object
+            model4: Model4 object
+            new_model: New model object
+            X_test: Test feature data
+            y_test: Test target data
+            
+        Returns:
+            Dict of comparison results
+        """
+        # Evaluate Model1
+        model1_results = self.evaluate_model(model1, X_test, y_test)
+        
+        # Evaluate Model4
+        model4_results = self.evaluate_model(model4, X_test, y_test)
+        
+        # Evaluate new model
+        new_model_results = self.evaluate_model(new_model, X_test, y_test)
+        
+        # Compare metrics
+        comparison_results = {
+            'model1': model1_results,
+            'model4': model4_results,
+            'new_model': new_model_results
+        }
+        
+        return comparison_results
