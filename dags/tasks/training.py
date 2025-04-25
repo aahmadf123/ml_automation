@@ -1349,7 +1349,10 @@ def train_multiple_models(
                     error_msg = f"Cannot create target column '{actual_target_col}': Missing required source columns 'il_total' or 'eey'. Available: {available_cols[:20]}..."
                     logger.error(error_msg)
                     # Return error status for all models if target cannot be created
-                    for model_id in MODEL_CONFIG:
+                    results = {}
+                    from utils.config import MODEL_CONFIG
+                    model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+                    for model_id in model_ids:
                         results[model_id] = {"status": "error", "message": error_msg}
                     return results # Early exit
             else:
@@ -1359,7 +1362,10 @@ def train_multiple_models(
             if actual_target_col not in df.columns:
                  error_msg = f"Target column '{actual_target_col}' still not available after attempting calculation."
                  logger.error(error_msg)
-                 for model_id in MODEL_CONFIG:
+                 results = {}
+                 from utils.config import MODEL_CONFIG
+                 model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+                 for model_id in model_ids:
                      results[model_id] = {"status": "error", "message": error_msg}
                  return results
 
@@ -1468,12 +1474,16 @@ def train_multiple_models(
             completed = sum(1 for r in results.values() if r.get('status') == 'completed')
             if completed == 0:
                 logger.error("No models were successfully loaded and evaluated")
-                # Return results with error status
-                return {
-                    "status": "error",
-                    "message": "No models were successfully loaded and evaluated",
-                    "results": results
-                }
+                # Instead of returning a dict with status, message, results - just return results with error statuses
+                if not results:
+                    # Make sure we at least have entries for expected models
+                    for model_id in model_ids:
+                        results[model_id] = {
+                            "status": "error", 
+                            "message": "Model loading failed",
+                            "model_id": model_id
+                        }
+                return results  # Return the results dictionary directly
             
             logger.info(f"Successfully loaded and evaluated {completed} models")
             return results
@@ -1482,19 +1492,33 @@ def train_multiple_models(
             error_msg = f"Error in train_multiple_models: {str(e)}"
             logger.error(error_msg)
             logger.exception("Full exception details:")
-            return {
-                "status": "error",
-                "message": error_msg
-            }
+            # Create a proper results dictionary with model entries instead of a status dictionary
+            results = {}
+            from utils.config import MODEL_CONFIG
+            model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+            for model_id in model_ids:
+                results[model_id] = {
+                    "status": "error",
+                    "message": error_msg,
+                    "model_id": model_id
+                }
+            return results
         
     except Exception as e:
         error_msg = f"Error in train_multiple_models: {str(e)}"
         logger.error(error_msg)
         logger.exception("Full exception details:")
-        return {
-            "status": "error",
-            "message": error_msg
-        }
+        # Create a proper results dictionary with model entries instead of a status dictionary
+        results = {}
+        from utils.config import MODEL_CONFIG
+        model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+        for model_id in model_ids:
+            results[model_id] = {
+                "status": "error",
+                "message": error_msg,
+                "model_id": model_id
+            }
+        return results
 
 def evaluate_pretrained_model(model_id: str, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, Any]:
     """

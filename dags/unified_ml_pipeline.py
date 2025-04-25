@@ -1041,7 +1041,7 @@ def train_models(**context):
             if not isinstance(training_results, dict):
                 logger.error(f"Training script returned an unexpected format: {type(training_results)}. Value: {training_results}")
                 # Convert unexpected result into a standard error dictionary
-                error_msg = f"Invalid result format from training: {type(training_results)}"
+                error_msg = f"Invalid result format ({type(training_results)})"
                 training_results = {
                      "model1": {"status": "error", "message": error_msg},
                      "model4": {"status": "error", "message": error_msg}
@@ -1179,7 +1179,11 @@ def train_models(**context):
             logger.error(error_msg)
             logger.exception("Full exception details:")
             # Store error in XCom but still raise exception
-            results = {"status": "error", "message": error_msg}
+            from utils.config import MODEL_CONFIG
+            model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+            results = {}
+            for model_id in model_ids:
+                results[model_id] = {"status": "error", "message": error_msg, "model_id": model_id}
             context['ti'].xcom_push(key='training_results', value=results)
             try:
                 slack.simple_post(f"❌ Model loading failed: {str(e)}", channel="#data-pipeline")
@@ -1193,7 +1197,11 @@ def train_models(**context):
         logger.exception("Full exception details:")
         
         # Store error information in XCom but still raise exception
-        results = {"status": "error", "message": error_msg}
+        from utils.config import MODEL_CONFIG
+        model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+        results = {}
+        for model_id in model_ids:
+            results[model_id] = {"status": "error", "message": error_msg, "model_id": model_id}
         context['ti'].xcom_push(key='training_results', value=results)
         
         try:
@@ -1268,11 +1276,15 @@ def run_model_explainability(**context):
             context['ti'].xcom_push(key='explainability_results', value=explainability_results)
             return explainability_results
             
-        if 'status' in training_results and training_results.get('status') == 'error':
-            logger.warning(f"Training had errors: {training_results.get('message')}")
+        # Check if any models completed successfully
+        completed_models = [model_id for model_id, result in training_results.items() 
+                          if isinstance(result, dict) and result.get('status') == 'completed']
+        
+        if not completed_models:
+            logger.warning("No successfully trained models found")
             explainability_results = {
                 "status": "warning", 
-                "message": f"Training had errors: {training_results.get('message')}"
+                "message": "No successfully trained models found"
             }
             context['ti'].xcom_push(key='explainability_results', value=explainability_results)
             return explainability_results
@@ -1457,11 +1469,11 @@ def generate_predictions(**context):
             return prediction_results
             
         # Check if we have valid training results
-        if not training_results or not isinstance(training_results, dict):
-            logger.warning("No valid training results found")
+        if not training_results:
+            logger.warning("No training results found")
             prediction_results = {
                 "status": "warning", 
-                "message": "No valid training results found"
+                "message": "No training results found"
             }
             context['ti'].xcom_push(key='prediction_results', value=prediction_results)
             return prediction_results

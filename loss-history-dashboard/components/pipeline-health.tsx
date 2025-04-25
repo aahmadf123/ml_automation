@@ -62,13 +62,17 @@ export function PipelineHealth() {
       // Simulated data
       setTimeout(() => {
         const mockData: PipelineRun[] = [
-                      <TableHeadCell>Task ID</TableHeadCell>
-                      <TableHeadCell>Status</TableHeadCell>
-                      <TableHeadCell>Start Time</TableHeadCell>
-                      <TableHeadCell>End Time</TableHeadCell>
-                      <TableHeadCell>Duration</TableHeadCell>
-                      <TableHeadCell>Tries</TableHeadCell>
-           {
+          {
+            dagId: "loss_history_etl",
+            runId: "scheduled__2023-04-15T01:00:00+00:00",
+            status: "success",
+            startDate: "2023-04-15T01:00:00+00:00",
+            endDate: "2023-04-15T01:45:23+00:00",
+            duration: 2723,
+            sla: 3600,
+            nextRun: "2023-04-16T01:00:00+00:00",
+            tasks: [
+              {
                 taskId: "extract_data",
                 status: "success",
                 startDate: "2023-04-15T01:00:05+00:00",
@@ -94,7 +98,7 @@ export function PipelineHealth() {
                 duration: 563,
                 tries: 1,
                 maxTries: 3,
-              },
+              }
             ],
             logs: "INFO - Starting DAG run loss_history_etl\nINFO - Task extract_data started\nINFO - Extracting data from source systems\nINFO - Extracted 24,532 records\nINFO - Task extract_data completed successfully\nINFO - Task transform_data started\nINFO - Applying transformations to data\nINFO - Cleaned 152 records with missing values\nINFO - Normalized 24,532 records\nINFO - Task transform_data completed successfully\nINFO - Task load_data started\nINFO - Loading data to data warehouse\nINFO - Loaded 24,532 records successfully\nINFO - Task load_data completed successfully\nINFO - DAG run completed successfully",
           },

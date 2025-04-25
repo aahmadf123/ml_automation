@@ -59,12 +59,22 @@ export function RecentMLflowRuns() {
       // Simulated data
       setTimeout(() => {
         const mockData: MLflowRun[] = [
-                        <TableHeadCell>Name</TableHeadCell>
-                        <TableHeadCell>Type</TableHeadCell>
-                        <TableHeadCell>Size</TableHeadCell>
-                        <TableHeadCell>Last Modified</TableHeadCell>
-                        <TableHeadCell className="text-right">Actions</TableHeadCell>
-632,
+          {
+            runId: "run_123456",
+            modelId: "model1",
+            rmse: 0.0632,
+            timestamp: "2023-04-15T08:15:33",
+            status: "FINISHED",
+            duration: 3245,
+            parameters: {
+              learning_rate: 0.05,
+              max_depth: 7,
+              n_estimators: 300,
+              subsample: 0.9,
+              colsample_bytree: 0.9,
+            },
+            metrics: {
+              rmse: 0.0632,
               mse: 0.004,
               mae: 0.0487,
               r2: 0.9512,
@@ -80,7 +90,14 @@ export function RecentMLflowRuns() {
               { name: "feature_importance.png", type: "Image", size: "178 KB", lastModified: "2023-04-15T08:15:33" },
               { name: "metrics.json", type: "JSON", size: "4.8 KB", lastModified: "2023-04-15T08:15:33" },
             ],
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training model with parameters: learning_rate=0.05, max_depth=7, n_estimators=300\nINFO - Training completed in 3245 seconds\nINFO - Model evaluation: RMSE=0.0632, MSE=0.004, MAE=0.0487, R2=0.9512\nINFO - Saving model artifacts\nINFO - Run completed successfully",
+            logs: `INFO - Starting model training
+INFO - Loading data
+INFO - Preprocessing data
+INFO - Training model with parameters: learning_rate=0.05, max_depth=7, n_estimators=300
+INFO - Training completed in 3245 seconds
+INFO - Model evaluation: RMSE=0.0632, MSE=0.004, MAE=0.0487, R2=0.9512
+INFO - Saving model artifacts
+INFO - Run completed successfully`,
           },
           {
             runId: "run_123455",
@@ -113,10 +130,15 @@ export function RecentMLflowRuns() {
               { name: "feature_importance.png", type: "Image", size: "156 KB", lastModified: "2023-04-15T07:45:12" },
               { name: "metrics.json", type: "JSON", size: "4.5 KB", lastModified: "2023-04-15T07:45:12" },
             ],
-            logs: "INFO - Starting model training\nINFO - Load              experiment: "xgboost_optimization",
-              version: "7",
-            },
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training model with parameters: learning_rate=0.1, max_depth=6, n_estimators=200\nINFO - Training completed in 2876 seconds\nINFO - Model evaluation: RMSE=0.0842, MSE=0.0071, MAE=0.0623, R2=0.9231\nINFO - Saving model artifacts\nINFO - Run completed successfully",
+            logs: `INFO - Starting model training
+INFO - Load experiment: "xgboost_optimization", version: "7"
+INFO - Loading data
+INFO - Preprocessing data
+INFO - Training model with parameters: learning_rate=0.1, max_depth=6, n_estimators=200
+INFO - Training completed in 2876 seconds
+INFO - Model evaluation: RMSE=0.0842, MSE=0.0071, MAE=0.0623, R2=0.9231
+INFO - Saving model artifacts
+INFO - Run completed successfully`,
           },
           {
             runId: "run_123454",
@@ -149,7 +171,14 @@ export function RecentMLflowRuns() {
               { name: "feature_importance.png", type: "Image", size: "162 KB", lastModified: "2023-04-14T22:30:45" },
               { name: "metrics.json", type: "JSON", size: "4.6 KB", lastModified: "2023-04-14T22:30:45" },
             ],
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training XGBoost model with parameters: max_depth=6, learning_rate=0.1, n_estimators=200\nINFO - Training completed in 895 seconds\nINFO - Model evaluation: RMSE=0.1532, MSE=0.0235, MAE=0.1124, R2=0.8321\nINFO - Saving model artifacts\nINFO - Run completed successfully",
+            logs: `INFO - Starting model training
+INFO - Loading data
+INFO - Preprocessing data
+INFO - Training XGBoost model with parameters: max_depth=6, learning_rate=0.1, n_estimators=200
+INFO - Training completed in 895 seconds
+INFO - Model evaluation: RMSE=0.1532, MSE=0.0235, MAE=0.1124, R2=0.8321
+INFO - Saving model artifacts
+INFO - Run completed successfully`,
           },
           {
             runId: "run_123453",
@@ -172,7 +201,12 @@ export function RecentMLflowRuns() {
               version: "3",
             },
             artifacts: [{ name: "error_log.txt", type: "Text", size: "8.5 KB", lastModified: "2023-04-14T18:12:33" }],
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training model with parameters: n_estimators=150, max_depth=8\nERROR - Out of memory error during training\nERROR - Run failed with error: MemoryError",
+            logs: `INFO - Starting model training
+INFO - Loading data
+INFO - Preprocessing data
+INFO - Training model with parameters: n_estimators=150, max_depth=8
+ERROR - Out of memory error during training
+ERROR - Run failed with error: MemoryError`,
           },
           {
             runId: "run_123452",
@@ -205,7 +239,14 @@ export function RecentMLflowRuns() {
               { name: "training_history.png", type: "Image", size: "185 KB", lastModified: "2023-04-14T15:05:21" },
               { name: "metrics.json", type: "JSON", size: "5.2 KB", lastModified: "2023-04-14T15:05:21" },
             ],
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training XGBoost model with parameters: max_depth=6, learning_rate=0.1, n_estimators=200\nINFO - Training completed in 895 seconds\nINFO - Model evaluation: RMSE=0.1532, MSE=0.0235, MAE=0.1124, R2=0.8321\nINFO - Saving model artifacts\nINFO - Run completed successfully",
+            logs: `INFO - Starting model training
+INFO - Loading data
+INFO - Preprocessing data
+INFO - Training XGBoost model with parameters: max_depth=6, learning_rate=0.1, n_estimators=200
+INFO - Training completed in 895 seconds
+INFO - Model evaluation: RMSE=0.1532, MSE=0.0235, MAE=0.1124, R2=0.8321
+INFO - Saving model artifacts
+INFO - Run completed successfully`,
           },
           {
             runId: "run_123451",
@@ -213,7 +254,7 @@ export function RecentMLflowRuns() {
             rmse: 0.0712,
             timestamp: "2023-04-14T12:30:15",
             status: "RUNNING",
-            duration: 1800, // Current duration
+            duration: 1800, /* Current duration */
             parameters: {
               learning_rate: 0.05,
               max_depth: 7,
@@ -228,7 +269,11 @@ export function RecentMLflowRuns() {
               version: "6",
             },
             artifacts: [],
-            logs: "INFO - Starting model training\nINFO - Loading data\nINFO - Preprocessing data\nINFO - Training model with parameters: learning_rate=0.05, max_depth=7, n_estimators=300\nINFO - Training in progress...",
+            logs: `INFO - Starting model training
+INFO - Loading data
+INFO - Preprocessing data
+INFO - Training model with parameters: learning_rate=0.05, max_depth=7, n_estimators=300
+INFO - Training in progress...`,
           },
         ]
 
@@ -394,9 +439,9 @@ export function RecentMLflowRuns() {
                 <Button variant="outline" className="w-full sm:w-[180px] justify-between">
                   <span>
                     {modelFilter.length > 0
-                      ? `${modelFilter.length} model${modelFilter.length > 1 ? "s" : ""            </CardHeader>
-              </span>
-                  <Filter className="h-4 w-4 ml-2" />
+                      ? `${modelFilter.length} model${modelFilter.length > 1 ? "s" : ""}`
+                      : "Filter by model"}
+                  </span>
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-[200px] p-0" align="end">
@@ -559,8 +604,7 @@ export function RecentMLflowRuns() {
               </DialogDescription>
             </DialogHeader>
 
-            <Tabs defaultValue="overview" value={activeTab}        </CardHeader>
-veTab}>
+            <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="parameters">Parameters</TabsTrigger>
