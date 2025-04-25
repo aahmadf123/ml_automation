@@ -550,10 +550,10 @@ def process_data(**context):
             
             # Log completion
             logger.info(f"Data processing complete. Output at {processed_path}")
-            try:
-                slack.simple_post(f"✅ Data processing completed: {processed_path}", channel="#data-pipeline")
-            except Exception as e:
-                logger.warning(f"Error sending Slack notification: {str(e)}")
+            # try:
+            #     slack.simple_post(f"✅ Data processing completed: {processed_path}", channel="#data-pipeline")
+            # except Exception as e:
+            #     logger.warning(f"Error sending Slack notification: {str(e)}")
                 
             return processed_path
             
@@ -564,10 +564,10 @@ def process_data(**context):
     except Exception as e:
         logger.error(f"Error in process_data task: {str(e)}")
         
-        try:
-            slack.simple_post(f"❌ Data processing failed: {str(e)}", channel="#data-pipeline")
-        except:
-            pass
+        # try:
+        #     slack.simple_post(f"❌ Data processing failed: {str(e)}", channel="#data-pipeline")
+        # except:
+        #     pass
             
         raise
 
@@ -702,20 +702,8 @@ def run_schema_validation(**context):
             
             if validation_passed:
                 logger.info("Schema validation passed")
-                try:
-                    slack.simple_post("✅ Schema validation passed", channel="#data-pipeline")
-                except Exception as e:
-                    logger.warning(f"Error sending Slack notification: {str(e)}")
             else:
                 logger.warning(f"Schema validation failed: {validation_results.get('message', 'Unknown issue')}")
-                try:
-                    details = validation_results.get('details', {})
-                    message = f"⚠️ Schema validation had issues: {validation_results.get('message', 'Unknown issue')}"
-                    if details.get('target_info'):
-                        message += f"\n{details.get('target_info')}"
-                    slack.simple_post(message, channel="#data-pipeline")
-                except Exception as e:
-                    logger.warning(f"Error sending Slack notification: {str(e)}")
                     
             return validation_results
             
@@ -726,10 +714,10 @@ def run_schema_validation(**context):
     except Exception as e:
         logger.error(f"Error in schema_validation task: {str(e)}")
         
-        try:
-            slack.simple_post(f"❌ Schema validation failed: {str(e)}", channel="#data-pipeline")
-        except:
-            pass
+        # try:
+        #     slack.simple_post(f"❌ Schema validation failed: {str(e)}", channel="#data-pipeline")
+        # except:
+        #     pass
             
         raise
 
@@ -1056,6 +1044,25 @@ def train_models(**context):
                 raise ValueError(error_msg)
                 
             logger.info(f"Loading completed with results for {len(results) if isinstance(results, dict) else 0} models")
+            
+            # Check results - use .get() for safer access
+            completed = sum(1 for r in results.values() if isinstance(r, dict) and r.get('status') == 'completed')
+            total_runs = len(results)
+            failed = total_runs - completed
+            
+            logger.info(f"Training completed with {completed} successful models out of {total_runs}. Failed: {failed}")
+            
+            if completed == 0:
+                logger.error("No models completed training successfully.")
+                # Collect error messages
+                error_messages = []
+                for model_id, result in results.items():
+                    if isinstance(result, dict):
+                         error_messages.append(f"{model_id}: {result.get('error', 'Unknown error')}")
+                    else:
+                         error_messages.append(f"{model_id}: Invalid result format ({type(result)})")
+                combined_error = "; ".join(error_messages)
+                raise ValueError(f"Model training failed for all models. Errors: {combined_error}")
             
             # Store results in XCom
             context['ti'].xcom_push(key='training_results', value=results)

@@ -1314,156 +1314,178 @@ def train_multiple_models(
             logger.error(error_msg)
             raise FileNotFoundError(error_msg)
         
-        # Load data for evaluation
-        logger.info(f"Loading data from {processed_path}")
-        
-        # Check cache first
-        df_hash = os.path.basename(processed_path).replace('.parquet', '')
-        df_name = f"training_df_{df_hash}"
-        
-        cached_df = GLOBAL_CACHE.get_transformed(df_name)
-        if cached_df is not None:
-            logger.info("Using cached DataFrame")
-            df = cached_df
-        else:
-            # Add error handling for data loading
-            try:
-                df = pd.read_parquet(processed_path)
-                logger.info(f"Successfully loaded parquet file with shape {df.shape}")
-                GLOBAL_CACHE.store_transformed(df, df_name)
-            except Exception as load_error:
-                error_msg = f"Error loading parquet file: {str(load_error)}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-        
-        # Get target column (improved logic)
-        target_col = None
-        target_candidates = [target_column] if target_column else []
-        target_candidates.extend(['trgt', 'pure_premium', 'target', 'claim_amount'])
-        
-        # Try each candidate
-        for col in target_candidates:
-            if col in df.columns:
-                target_col = col
-                logger.info(f"Using '{target_col}' as target column")
-                break
-                
-        if target_col is None:
-            error_msg = f"Target column not found. Candidates: {target_candidates}, Available: {df.columns.tolist()}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-            
-        # Extract features and target
-        y = df[target_col]
-        X = df.drop(columns=[target_col])
-        
-        # Get weight column if specified
-        sample_weight = None
-        if weight_column and weight_column in df.columns:
-            sample_weight = df[weight_column]
-            logger.info(f"Using '{weight_column}' as sample weight")
-            
-        # Create train-test split with additional validation
+        # Pre-load and prepare data once
         try:
-            # Create train-test split
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
-            )
+            logger.info(f"Pre-loading and preparing data from {processed_path}")
+            df = pd.read_parquet(processed_path)
             
-            # Validate split data
-            if len(X_train) < 30 or len(X_test) < 10:  # Reduced minimum for small datasets
-                error_msg = f"Train/test split resulted in too few samples (train: {len(X_train)}, test: {len(X_test)})"
+            if df.empty:
+                raise ValueError("Input DataFrame is empty.")
+            
+            available_cols = df.columns.tolist()
+            actual_target_col = 'pure_premium' # Explicitly set target name
+
+            # Check if target needs to be calculated
+            if actual_target_col not in available_cols:
+                logger.info(f"Target column '{actual_target_col}' not found, attempting to calculate from 'il_total' / 'eey'.")
+                if 'il_total' in available_cols and 'eey' in available_cols:
+                    # Avoid division by zero or near-zero, replace with NaN
+                    original_rows = len(df)
+                    df['eey'] = df['eey'].replace(0, np.nan)
+                    df = df.dropna(subset=['eey'])
+                    removed_rows = original_rows - len(df)
+                    if removed_rows > 0:
+                         logger.warning(f"Removed {removed_rows} rows with zero or NaN exposure ('eey') before calculating target.")
+                    
+                    if df.empty:
+                         error_msg = "DataFrame became empty after removing rows with zero/NaN exposure ('eey'). Cannot calculate target."
+                         logger.error(error_msg)
+                         raise ValueError(error_msg)
+                    
+                    df[actual_target_col] = df['il_total'] / df['eey']
+                    logger.info(f"Successfully created target column: '{actual_target_col}'")
+                    available_cols = df.columns.tolist() # Update available columns
+                else:
+                    error_msg = f"Cannot create target column '{actual_target_col}': Missing required source columns 'il_total' or 'eey'. Available: {available_cols[:20]}..."
+                    logger.error(error_msg)
+                    # Return error status for all models if target cannot be created
+                    for model_id in MODEL_CONFIG:
+                        results[model_id] = {"status": "error", "message": error_msg}
+                    return results # Early exit
+            else:
+                 logger.info(f"Found existing target column: '{actual_target_col}'")
+
+            # Verify target column exists after potential calculation
+            if actual_target_col not in df.columns:
+                 error_msg = f"Target column '{actual_target_col}' still not available after attempting calculation."
+                 logger.error(error_msg)
+                 for model_id in MODEL_CONFIG:
+                     results[model_id] = {"status": "error", "message": error_msg}
+                 return results
+
+            # Prepare features and target
+            y = df[actual_target_col]
+            # Drop the target and other potential (now unused) target candidates if they exist
+            other_candidates = ['trgt', 'target', 'claim_amount']
+            cols_to_drop = [actual_target_col] + [col for col in other_candidates if col in df.columns]
+            X = df.drop(columns=cols_to_drop)
+            
+            # Handle sample weights
+            sample_weight = None
+            if weight_column and weight_column in df.columns:
+                sample_weight = df[weight_column]
+                logger.info(f"Using '{weight_column}' as sample weight")
+            
+            # Create train-test split with additional validation
+            try:
+                # Create train-test split
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42
+                )
+                
+                # Validate split data
+                if len(X_train) < 30 or len(X_test) < 10:  # Reduced minimum for small datasets
+                    error_msg = f"Train/test split resulted in too few samples (train: {len(X_train)}, test: {len(X_test)})"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                    
+                logger.info(f"Created train-test split with {len(X_train)} training samples and {len(X_test)} test samples")
+            except Exception as split_error:
+                logger.error(f"Error creating train-test split: {str(split_error)}")
+                raise
+            
+            # Get model IDs from MODEL_CONFIG - only use Model1 and Model4
+            from utils.config import MODEL_CONFIG
+            model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
+            logger.info(f"Loading pretrained models: {model_ids}")
+            
+            if not model_ids:
+                error_msg = "No valid model configurations found in MODEL_CONFIG"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-                
-            logger.info(f"Created train-test split with {len(X_train)} training samples and {len(X_test)} test samples")
-        except Exception as split_error:
-            logger.error(f"Error creating train-test split: {str(split_error)}")
-            raise
             
-        # Get model IDs from MODEL_CONFIG - only use Model1 and Model4
-        from utils.config import MODEL_CONFIG
-        model_ids = [key for key in MODEL_CONFIG.keys() if key in ['model1', 'model4']]
-        logger.info(f"Loading pretrained models: {model_ids}")
-        
-        if not model_ids:
-            error_msg = "No valid model configurations found in MODEL_CONFIG"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            # Load and evaluate models
+            results = {}
             
-        # Load and evaluate models
-        results = {}
-        
-        # First attempt: Parallel loading/evaluation
-        if parallel and len(model_ids) > 1:
-            try:
-                logger.info(f"Attempting parallel loading/evaluation with {max_workers} workers")
-                with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                    futures = []
-                    for model_id in model_ids:
-                        futures.append(
-                            executor.submit(
-                                evaluate_pretrained_model,
-                                model_id=model_id,
-                                X_test=X_test,
-                                y_test=y_test
-                            )
-                        )
-                        
-                    # Collect results as they complete
-                    for future in as_completed(futures):
-                        try:
-                            result = future.result()
-                            if result and 'model_id' in result:
-                                results[result['model_id']] = result
-                                logger.info(f"Completed evaluation for model {result['model_id']} with status: {result.get('status', 'unknown')}")
-                        except Exception as future_error:
-                            logger.error(f"Error in parallel model evaluation: {str(future_error)}")
-                
-                # Check if any models completed successfully
-                completed = sum(1 for r in results.values() if r.get('status') == 'completed')
-                logger.info(f"Parallel evaluation completed with {completed} successful models")
-                
-            except Exception as parallel_error:
-                logger.error(f"Error in parallel evaluation setup: {str(parallel_error)}")
-                # Fall back to sequential evaluation
-                parallel = False
-                results = {}  # Clear any partial results
-        
-        # Second attempt: Sequential loading/evaluation (if parallel failed or wasn't requested)
-        if not parallel or not results or not any(r.get('status') == 'completed' for r in results.values()):
-            logger.info("Using sequential loading/evaluation approach")
-            for model_id in model_ids:
+            # First attempt: Parallel loading/evaluation
+            if parallel and len(model_ids) > 1:
                 try:
-                    result = evaluate_pretrained_model(
-                        model_id=model_id,
-                        X_test=X_test,
-                        y_test=y_test
-                    )
-                    if result:
-                        results[model_id] = result
-                        logger.info(f"Sequential evaluation completed for model {model_id} with status: {result.get('status', 'unknown')}")
-                except Exception as model_error:
-                    logger.error(f"Error evaluating model {model_id}: {str(model_error)}")
-                    results[model_id] = {
-                        "status": "failed",
-                        "error": str(model_error),
-                        "model_id": model_id
-                    }
+                    logger.info(f"Attempting parallel loading/evaluation with {max_workers} workers")
+                    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                        futures = []
+                        for model_id in model_ids:
+                            futures.append(
+                                executor.submit(
+                                    evaluate_pretrained_model,
+                                    model_id=model_id,
+                                    X_test=X_test,
+                                    y_test=y_test
+                                )
+                            )
+                            
+                        # Collect results as they complete
+                        for future in as_completed(futures):
+                            try:
+                                result = future.result()
+                                if result and 'model_id' in result:
+                                    results[result['model_id']] = result
+                                    logger.info(f"Completed evaluation for model {result['model_id']} with status: {result.get('status', 'unknown')}")
+                            except Exception as future_error:
+                                logger.error(f"Error in parallel model evaluation: {str(future_error)}")
+                
+                    # Check if any models completed successfully
+                    completed = sum(1 for r in results.values() if r.get('status') == 'completed')
+                    logger.info(f"Parallel evaluation completed with {completed} successful models")
                     
-        # Check results
-        completed = sum(1 for r in results.values() if r.get('status') == 'completed')
-        if completed == 0:
-            logger.error("No models were successfully loaded and evaluated")
-            # Return results with error status
+                except Exception as parallel_error:
+                    logger.error(f"Error in parallel evaluation setup: {str(parallel_error)}")
+                    # Fall back to sequential evaluation
+                    parallel = False
+                    results = {}  # Clear any partial results
+            
+            # Second attempt: Sequential loading/evaluation (if parallel failed or wasn't requested)
+            if not parallel or not results or not any(r.get('status') == 'completed' for r in results.values()):
+                logger.info("Using sequential loading/evaluation approach")
+                for model_id in model_ids:
+                    try:
+                        result = evaluate_pretrained_model(
+                            model_id=model_id,
+                            X_test=X_test,
+                            y_test=y_test
+                        )
+                        if result:
+                            results[model_id] = result
+                            logger.info(f"Sequential evaluation completed for model {model_id} with status: {result.get('status', 'unknown')}")
+                    except Exception as model_error:
+                        logger.error(f"Error evaluating model {model_id}: {str(model_error)}")
+                        results[model_id] = {
+                            "status": "failed",
+                            "error": str(model_error),
+                            "model_id": model_id
+                        }
+                    
+            # Check results
+            completed = sum(1 for r in results.values() if r.get('status') == 'completed')
+            if completed == 0:
+                logger.error("No models were successfully loaded and evaluated")
+                # Return results with error status
+                return {
+                    "status": "error",
+                    "message": "No models were successfully loaded and evaluated",
+                    "results": results
+                }
+            
+            logger.info(f"Successfully loaded and evaluated {completed} models")
+            return results
+            
+        except Exception as e:
+            error_msg = f"Error in train_multiple_models: {str(e)}"
+            logger.error(error_msg)
+            logger.exception("Full exception details:")
             return {
                 "status": "error",
-                "message": "No models were successfully loaded and evaluated",
-                "results": results
+                "message": error_msg
             }
-            
-        logger.info(f"Successfully loaded and evaluated {completed} models")
-        return results
         
     except Exception as e:
         error_msg = f"Error in train_multiple_models: {str(e)}"

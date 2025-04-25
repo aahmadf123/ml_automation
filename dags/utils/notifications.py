@@ -36,40 +36,42 @@ def send_slack_notification(
     Returns:
         Boolean indicating success or failure
     """
-    try:
-        # Prepare payload
-        payload = {
-            "text": message,
-            "username": username,
-            "icon_emoji": icon_emoji
-        }
+    # try:
+    #     # Prepare payload
+    #     payload = {
+    #         "text": message,
+    #         "username": username,
+    #         "icon_emoji": icon_emoji
+    #     }
         
-        # Add channel if specified
-        if channel:
-            payload["channel"] = channel
+    #     # Add channel if specified
+    #     if channel:
+    #         payload["channel"] = channel
             
-        # Add attachments if specified
-        if attachments:
-            payload["attachments"] = attachments
+    #     # Add attachments if specified
+    #     if attachments:
+    #         payload["attachments"] = attachments
             
-        # Send request to webhook
-        response = requests.post(
-            webhook_url,
-            data=json.dumps(payload),
-            headers={"Content-Type": "application/json"}
-        )
+    #     # Send request to webhook
+    #     response = requests.post(
+    #         webhook_url,
+    #         data=json.dumps(payload),
+    #         headers={"Content-Type": "application/json"}
+    #     )
         
-        # Check response
-        if response.status_code == 200 and response.text == "ok":
-            logger.info(f"Slack notification sent successfully")
-            return True
-        else:
-            logger.error(f"Failed to send Slack notification: {response.status_code} - {response.text}")
-            return False
+    #     # Check response
+    #     if response.status_code == 200 and response.text == "ok":
+    #         logger.info(f"Slack notification sent successfully")
+    #         return True
+    #     else:
+    #         logger.error(f"Failed to send Slack notification: {response.status_code} - {response.text}")
+    #         return False
             
-    except Exception as e:
-        logger.error(f"Error sending Slack notification: {e}")
-        return False
+    # except Exception as e:
+    #     logger.error(f"Error sending Slack notification: {e}")
+    #     return False
+    logger.debug(f"Slack notification '{message}' suppressed.")
+    return True # Return True to avoid breaking calling code that checks the return value
 
 
 def send_email_notification(

@@ -166,25 +166,7 @@ def compare_model_results(
     
     # Send notification if configured
     if notify_slack and best_model:
-        try:
-            webhook_url = Variable.get("slack_webhook_url", default_var=None)
-            if webhook_url:
-                message = f"Model Comparison Results\n"
-                message += f"Best overall model: {best_model}\n"
-                message += f"Models compared: {complete_models}\n"
-                
-                if "baseline_comparison" in summary:
-                    improvements = summary["baseline_comparison"]["improvements"]
-                    imp_text = ", ".join([f"{m}: {v:.2f}%" for m, v in improvements.items()])
-                    message += f"Improvement over baseline: {imp_text}\n"
-                
-                if s3_locations:
-                    message += f"Full report: {s3_locations.get('summary')}"
-                
-                notifications.send_slack_notification(webhook_url, message)
-                logger.info("Slack notification sent with comparison results")
-        except Exception as e:
-            logger.error(f"Failed to send Slack notification: {str(e)}")
+        logger.debug("Slack notification suppressed for model comparison results.")
     
     # Return results
     return {
@@ -596,20 +578,7 @@ def compare_with_production_models(
     
     # Send notification if configured
     if notify_slack and best_model:
-        try:
-            webhook_url = Variable.get("slack_webhook_url", default_var=None)
-            if webhook_url:
-                message = f"Model Comparison Results\n"
-                message += f"Best overall model: {best_model}\n"
-                message += f"Models compared: {len(combined_results)}\n"
-                
-                if s3_locations:
-                    message += f"Full report: {s3_locations.get('summary')}"
-                
-                notifications.send_slack_notification(webhook_url, message)
-                logger.info("Slack notification sent with comparison results")
-        except Exception as e:
-            logger.error(f"Failed to send Slack notification: {str(e)}")
+        logger.debug("Slack notification suppressed for production model comparison results.")
     
     # Raise a question if the new model performs better than the production models
     if best_model in new_model_results:
