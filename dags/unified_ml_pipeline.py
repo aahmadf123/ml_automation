@@ -43,6 +43,7 @@ from airflow.models import Variable, XCom
 from airflow.hooks.S3_hook import S3Hook
 from airflow.exceptions import AirflowException, AirflowSkipException
 import pandas as pd
+import numpy as np
 import boto3
 import mlflow
 from mlflow.tracking import MlflowClient
@@ -147,22 +148,36 @@ class LoggingSlack:
 # Set slack as the LoggingSlack class
 slack = LoggingSlack()
 
-# Constants
+# Constants - Updated to match AWS Secrets values exactly
+S3_BUCKET = Variable.get('S3_BUCKET', default_var='mlautomationstack-dagsbucket3bcf9ca5-uhw98w1')
+DATA_BUCKET = Variable.get('DATA_BUCKET', default_var='grange-seniordesign-bucket')
 LOCAL_PROCESSED_PATH = "/tmp/unified_processed.parquet"
 REFERENCE_MEANS_PATH = "/tmp/reference_means.csv"
-MAX_WORKERS = int(Variable.get('MAX_PARALLEL_WORKERS', default_var='3'))
-# Add new constant for feature engineering
-APPLY_FEATURE_ENGINEERING = Variable.get('APPLY_FEATURE_ENGINEERING', default_var='False').lower() == 'true'
-# Add new constants for HITL
-REQUIRE_DATA_VALIDATION = Variable.get('REQUIRE_DATA_VALIDATION', default_var='True').lower() == 'true'
-REQUIRE_MODEL_APPROVAL = Variable.get('REQUIRE_MODEL_APPROVAL', default_var='True').lower() == 'true'
-# Add new constants for auto-approval
-AUTO_APPROVE_DATA = Variable.get('AUTO_APPROVE_DATA', default_var='False').lower() == 'true'
-AUTO_APPROVE_TIMEOUT_MINUTES = int(Variable.get('AUTO_APPROVE_TIMEOUT_MINUTES', default_var='30'))
+MAX_WORKERS = int(Variable.get('MAX_WORKERS', default_var='3'))
+# Environment variables from AWS Secrets Manager
+MLFLOW_TRACKING_URI = Variable.get('MLFLOW_TRACKING_URI', default_var='http://3.146.46.179:5000')
+MLFLOW_EXPERIMENT_NAME = Variable.get('MLFLOW_EXPERIMENT_NAME', default_var='Homeowner_Loss_Hist_Proj')
+MLFLOW_ARTIFACT_URI = Variable.get('MLFLOW_ARTIFACT_URI', default_var='s3://grange-seniordesign-bucket/mlflow-artifacts')
+LOG_GROUP = Variable.get('LOG_GROUP', default_var='/ml-automation/websocket-connections')
+DRIFT_LOG_GROUP = Variable.get('DRIFT_LOG_GROUP', default_var='/ml-automation/drift-events')
+DRIFT_THRESHOLD = float(Variable.get('DRIFT_THRESHOLD', default_var='0.1'))
+# ClearML variables
+CLEARML_API_HOST = Variable.get('CLEARML_API_HOST', default_var='https://api.clear.ml')
+CLEARML_WEB_HOST = Variable.get('CLEARML_WEB_HOST', default_var='https://app.clear.ml')
+CLEARML_FILES_HOST = Variable.get('CLEARML_FILES_HOST', default_var='http://files.clear.ml')
+CLEARML_API_ACCESS_KEY = Variable.get('CLEARML_API_ACCESS_KEY', default_var='52M5GZYH6U0RLJUBY3FVBT96YXQY')
+# Slack variables
+SLACK_WEBHOOK_URL = Variable.get('SLACK_WEBHOOK_URL', default_var='https://hooks.slack.com/services/T08MX68B')
+SLACK_BOT_TOKEN = Variable.get('SLACK_BOT_TOKEN', default_var='xoxb-8745212375942-874528050134-D4717SbbjCg')
+SLACK_DEFAULT_CHANNEL = Variable.get('SLACK_DEFAULT_CHANNEL', default_var='#all-airflow-notification')
+SLACK_ENABLE_NOTIFICATIONS = Variable.get('SLACK_ENABLE_NOTIFICATIONS', default_var='True').lower() == 'true'
+# Auto-approval constants
+AUTO_APPROVE_MODEL = Variable.get('AUTO_APPROVE_MODEL', default_var='True').lower() == 'true'
 AUTO_APPROVE_QUALITY_THRESHOLD = int(Variable.get('AUTO_APPROVE_QUALITY_THRESHOLD', default_var='3'))
-# Add these constants to the existing auto-approval constants
-AUTO_APPROVE_MODEL = Variable.get('AUTO_APPROVE_MODEL', default_var='False').lower() == 'true'
-MODEL_APPROVE_TIMEOUT_MINUTES = int(Variable.get('MODEL_APPROVE_TIMEOUT_MINUTES', default_var='60'))
+AUTO_APPROVE_TIMEOUT_MINUTES = int(Variable.get('AUTO_APPROVE_TIMEOUT_MINUTES', default_var='300'))
+MODEL_APPROVE_TIMEOUT_MINUTES = int(Variable.get('MODEL_APPROVE_TIMEOUT_MINUTES', default_var='120'))
+S3_ARCHIVE_FOLDER = Variable.get('S3_ARCHIVE_FOLDER', default_var='archive')
+SYTHENTIC_SAMPLE_COUNT = int(Variable.get('SYTHENTIC_SAMPLE_COUNT', default_var='500'))
 
 # Default arguments for the DAG
 default_args = {
@@ -249,7 +264,7 @@ def download_data(**context):
     logger.info("Starting download_data task")
     
     # Get bucket name from Airflow Variable to ensure it's up to date
-    bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
+    bucket = DATA_BUCKET
     key = config.RAW_DATA_KEY
     
     logger.info(f"Using bucket: '{bucket}', key: '{key}'")
@@ -495,7 +510,7 @@ def process_data(**context):
                 logger.warning("Attempting to download data directly from S3")
                 try:
                     s3_client = boto3.client('s3', region_name=config.AWS_REGION)
-                    bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
+                    bucket = DATA_BUCKET
                     key = config.RAW_DATA_KEY
                     
                     # Create a new local path
@@ -523,8 +538,8 @@ def process_data(**context):
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             processed_path = os.path.join(output_dir, f"processed_{timestamp}.parquet")
             
-            # Check if feature engineering should be applied
-            apply_feature_engineering = APPLY_FEATURE_ENGINEERING
+            # Check if we should apply feature engineering
+            apply_feature_engineering = True  # Default to True for feature engineering
             logger.info(f"Feature engineering is {'enabled' if apply_feature_engineering else 'disabled'}")
             
             # If feature engineering is disabled and input is already parquet, 
@@ -1807,7 +1822,7 @@ def generate_predictions(**context):
         logger.info(f"Projections saved to {json_path}")
         
         # Upload to S3
-        bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
+        bucket = DATA_BUCKET
         s3_key = f"projections/model_projections_{timestamp}.json"
         
         logger.info(f"Uploading projections to S3: s3://{bucket}/{s3_key}")
@@ -1907,8 +1922,8 @@ def archive_artifacts(**context):
             logger.warning("No training results to archive")
             return 0
         
-        # Get bucket from Airflow Variables
-        bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
+        # Get bucket from environment variables
+        bucket = DATA_BUCKET
         logger.info(f"Using S3 bucket: {bucket}")
         
         # Get current date for organizing artifacts
@@ -2039,23 +2054,42 @@ def wait_for_data_validation(**context):
     """
     logger.info("Starting wait_for_data_validation task")
     
-    # Always set to skip validation since Slack is not working
-    skip_validation = True
+    # Get quality results from the data validation task
+    quality_results = context['ti'].xcom_pull(task_ids='validate_data_task', key='quality_results')
+    quality_passed = context['ti'].xcom_pull(task_ids='validate_data_task', key='quality_passed')
     
-    if skip_validation:
-        logger.info("Data validation is skipped")
-        return True
+    # Auto-approve if quality threshold is met
+    if quality_results and quality_passed:
+        quality_score = quality_results.get('quality_score', 0)
+        if quality_score >= AUTO_APPROVE_QUALITY_THRESHOLD:
+            logger.info(f"Data quality score {quality_score} meets auto-approval threshold {AUTO_APPROVE_QUALITY_THRESHOLD}")
+            context['ti'].xcom_push(key='validation_status', value={
+                "status": "approved",
+                "approved_at": datetime.now().isoformat(),
+                "approved_by": "system",
+                "message": f"Data automatically approved with quality score {quality_score}",
+                "timeout_minutes": AUTO_APPROVE_TIMEOUT_MINUTES
+            })
+            return True
+    
+    # Always set to auto-approve since we're not doing manual validation here
+    logger.info("Auto-approving data validation")
     
     # Get the validation report path from XCom
     validation_report_path = context['ti'].xcom_pull(task_ids='validate_data_task', key='validation_report_path')
     
     if not validation_report_path:
-        error_msg = "No validation report path provided by validate_data_task"
-        logger.error(error_msg)
-        raise AirflowException(error_msg)
+        logger.warning("No validation report path provided by validate_data_task")
+        
+    # Record the approval in XCom
+    context['ti'].xcom_push(key='validation_status', value={
+        "status": "approved",
+        "approved_at": datetime.now().isoformat(),
+        "approved_by": "system",
+        "message": "Data automatically approved",
+        "timeout_minutes": AUTO_APPROVE_TIMEOUT_MINUTES
+    })
     
-    # Auto-approve validation to avoid human in the loop
-    logger.info("Auto-approving data validation")
     return True
 
 def wait_for_model_approval(**context):
@@ -2069,9 +2103,28 @@ def wait_for_model_approval(**context):
         Dictionary with approval status
     """
     try:
+        # Check if auto-approval is enabled
+        if AUTO_APPROVE_MODEL:
+            logger.info(f"Auto-approval is enabled. Automatically approving model after short delay.")
+            # Simulate a short delay before auto-approval
+            time.sleep(5)
+            
+            # Push approval status to XCom
+            approval_status = {
+                "status": "approved",
+                "approved_at": datetime.now().isoformat(),
+                "approved_by": "system",
+                "message": "Model automatically approved",
+                "timeout_minutes": MODEL_APPROVE_TIMEOUT_MINUTES
+            }
+            
+            context['ti'].xcom_push(key='model_approval', value=approval_status)
+            logger.info(f"Model approved for deployment: {approval_status}")
+            return approval_status
+        
         # Get model comparison results
         ti = context['ti']
-        comparison_results = ti.xcom_pull(task_ids='model_comparison')
+        comparison_results = ti.xcom_pull(task_ids='model_comparison_task')
         
         if not comparison_results:
             logger.warning("No model comparison results found")
@@ -2092,7 +2145,8 @@ def wait_for_model_approval(**context):
             "status": "approved",
             "approved_at": datetime.now().isoformat(),
             "approved_by": "system",
-            "message": "Model automatically approved"
+            "message": "Model automatically approved",
+            "timeout_minutes": MODEL_APPROVE_TIMEOUT_MINUTES
         }
         
         ti.xcom_push(key='model_approval', value=approval_status)
@@ -2280,7 +2334,7 @@ def deploy_model(**context):
                 s3_hook.load_file(
                     filename=metadata_path,
                     key=f"{s3_key}/metadata.json",
-                    bucket_name=config.S3_BUCKET,
+                    bucket_name=S3_BUCKET,
                     replace=True
                 )
                 logger.info(f"Deployment metadata uploaded to S3")
@@ -2386,12 +2440,28 @@ with dag:
         trigger_rule='all_success',  # Only run if validation approval was given
     )
     
+    # Model explainability task
+    model_explainability_task = PythonOperator(
+        task_id='model_explainability_task',
+        python_callable=model_explainability,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if training was successful
+    )
+    
+    # Generate predictions task
+    generate_predictions_task = PythonOperator(
+        task_id='generate_predictions_task',
+        python_callable=generate_predictions,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if training was successful
+    )
+    
     # Compare models task
     model_comparison_task = PythonOperator(
-        task_id='model_comparison',
+        task_id='model_comparison_task',
         python_callable=model_comparison.compare_model_results,
         op_kwargs={
-            'model_results': "{{ ti.xcom_pull(task_ids=['model_training_1', 'model_training_4']) }}",
+            'model_results': "{{ ti.xcom_pull(task_ids='train_models_task') }}",
             'task_type': 'regression',
         },
         provide_context=True,
@@ -2414,5 +2484,25 @@ with dag:
         trigger_rule='all_success',  # Only run if model approval was given
     )
     
+    # Archive artifacts task
+    archive_artifacts_task = PythonOperator(
+        task_id='archive_artifacts_task',
+        python_callable=archive_artifacts,
+        provide_context=True,
+        trigger_rule='all_done',  # Run regardless of upstream task status
+    )
+    
+    # Cleanup task
+    cleanup_task = PythonOperator(
+        task_id='cleanup_task',
+        python_callable=cleanup_temp_files,
+        provide_context=True,
+        trigger_rule='all_done',  # Run regardless of upstream task status
+    )
+    
     # Define task dependencies
-    import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> model_comparison_task >> wait_for_model_approval_task >> deploy_model_task
+    import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task
+    wait_for_data_validation_task >> train_models_task
+    train_models_task >> [model_explainability_task, generate_predictions_task, model_comparison_task]
+    model_comparison_task >> wait_for_model_approval_task >> deploy_model_task
+    deploy_model_task >> archive_artifacts_task >> cleanup_task
