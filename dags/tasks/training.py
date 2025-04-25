@@ -402,12 +402,65 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
             GLOBAL_CACHE.store_transformed(df, df_name)
         
         # Get target column
-        target_col = "claim_amount"
-        
+        if target_column and target_column in df.columns:
+            target_col = target_column
+            logger.info(f"Using specified target column: {target_col}")
+        else:
+            # Try different common target column names in order of preference
+            potential_targets = ['trgt', 'pure_premium', 'target', 'claim_amount']
+            found = False
+            
+            for col in potential_targets:
+                if col in df.columns:
+                    target_col = col
+                    logger.info(f"Using target column: {target_col}")
+                    found = True
+                    break
+            
+            if not found:
+                # Look for columns that could be used to create a target
+                logger.info("Target column not found, looking for components to create it")
+                cols = df.columns.tolist()
+                
+                losses_cols = [col for col in cols if 'loss' in col.lower()]
+                premium_cols = [col for col in cols if 'premium' in col.lower()]
+                exposure_cols = [col for col in cols if any(word in col.lower() for word in ['exposure', 'eey', 'earned'])]
+                
+                logger.info(f"Potential loss columns: {losses_cols}")
+                logger.info(f"Potential premium columns: {premium_cols}")
+                logger.info(f"Potential exposure columns: {exposure_cols}")
+                
+                # Try to create target column from components
+                if 'il_total' in df.columns and 'eey' in df.columns:
+                    logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
+                    df['trgt'] = df['il_total'] / df['eey']
+                    target_col = 'trgt'
+                    found = True
+                elif losses_cols and exposure_cols:
+                    loss_col = losses_cols[0]
+                    exposure_col = exposure_cols[0]
+                    logger.info(f"Creating 'trgt' column from {loss_col} / {exposure_col}")
+                    df['trgt'] = df[loss_col] / df[exposure_col]
+                    target_col = 'trgt'
+                    found = True
+                else:
+                    target_col = "claim_amount"  # default that likely won't be found
+                    
         if target_col not in df.columns:
-            error_msg = f"Target column '{target_col}' not found in the data"
+            error_msg = f"Target column '{target_col}' not found in the data and could not be created"
+            logger.error(error_msg)
+            logger.info(f"Available columns: {df.columns.tolist()}")
+            raise ValueError(error_msg)
+            
+        # Validate target column - critical for insurance modeling
+        target_values = df[target_col].dropna()
+        if len(target_values) < 100:  # Minimum sample size for meaningful modeling
+            error_msg = f"Insufficient non-null values in target column ({len(target_values)} found)"
             logger.error(error_msg)
             raise ValueError(error_msg)
+            
+        if target_values.min() < 0:
+            logger.warning(f"Negative values found in target column {target_col}. This may be problematic for insurance modeling.")
             
         # Split features and target
         X = df.drop(columns=[target_col])
@@ -1021,14 +1074,50 @@ def train_multiple_models(
             target_col = target_column
             logger.info(f"Using specified target column: {target_col}")
         else:
-            # Default target column
-            target_col = "claim_amount"
-            if target_column and target_column not in df.columns:
-                logger.warning(f"Specified target column '{target_column}' not found, using default '{target_col}'")
-        
+            # Try different common target column names in order of preference
+            potential_targets = ['trgt', 'pure_premium', 'target', 'claim_amount']
+            found = False
+            
+            for col in potential_targets:
+                if col in df.columns:
+                    target_col = col
+                    logger.info(f"Using target column: {target_col}")
+                    found = True
+                    break
+            
+            if not found:
+                # Look for columns that could be used to create a target
+                logger.info("Target column not found, looking for components to create it")
+                cols = df.columns.tolist()
+                
+                losses_cols = [col for col in cols if 'loss' in col.lower()]
+                premium_cols = [col for col in cols if 'premium' in col.lower()]
+                exposure_cols = [col for col in cols if any(word in col.lower() for word in ['exposure', 'eey', 'earned'])]
+                
+                logger.info(f"Potential loss columns: {losses_cols}")
+                logger.info(f"Potential premium columns: {premium_cols}")
+                logger.info(f"Potential exposure columns: {exposure_cols}")
+                
+                # Try to create target column from components
+                if 'il_total' in df.columns and 'eey' in df.columns:
+                    logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
+                    df['trgt'] = df['il_total'] / df['eey']
+                    target_col = 'trgt'
+                    found = True
+                elif losses_cols and exposure_cols:
+                    loss_col = losses_cols[0]
+                    exposure_col = exposure_cols[0]
+                    logger.info(f"Creating 'trgt' column from {loss_col} / {exposure_col}")
+                    df['trgt'] = df[loss_col] / df[exposure_col]
+                    target_col = 'trgt'
+                    found = True
+                else:
+                    target_col = "claim_amount"  # default that likely won't be found
+                    
         if target_col not in df.columns:
-            error_msg = f"Target column '{target_col}' not found in the data"
+            error_msg = f"Target column '{target_col}' not found in the data and could not be created"
             logger.error(error_msg)
+            logger.info(f"Available columns: {df.columns.tolist()}")
             raise ValueError(error_msg)
             
         # Validate target column - critical for insurance modeling
