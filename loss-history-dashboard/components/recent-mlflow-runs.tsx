@@ -490,13 +490,13 @@ export function RecentMLflowRuns() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Run ID</TableHead>
-                  <TableHead>Model</TableHead>
-                  <TableHead>RMSE</TableHead>
-                  <TableHead>Timestamp</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHeadCell>Run ID</TableHeadCell>
+                  <TableHeadCell>Model</TableHeadCell>
+                  <TableHeadCell>RMSE</TableHeadCell>
+                  <TableHeadCell>Timestamp</TableHeadCell>
+                  <TableHeadCell>Duration</TableHeadCell>
+                  <TableHeadCell>Status</TableHeadCell>
+                  <TableHeadCell className="text-right">Actions</TableHeadCell>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -636,8 +636,8 @@ veTab}>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Parameter</TableHead>
-                        <TableHead>Value</TableHead>
+                        <TableHeadCell>Parameter</TableHeadCell>
+                        <TableHeadCell>Value</TableHeadCell>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -665,11 +665,11 @@ veTab}>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Size</TableHead>
-                        <TableHead>Last Modified</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                        <TableHeadCell>Name</TableHeadCell>
+                        <TableHeadCell>Type</TableHeadCell>
+                        <TableHeadCell>Size</TableHeadCell>
+                        <TableHeadCell>Last Modified</TableHeadCell>
+                        <TableHeadCell className="text-right">Actions</TableHeadCell>
                       </TableRow>
                     </TableHeader>
                     <TableBody>

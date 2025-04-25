@@ -563,12 +563,12 @@ export function PipelineHealth() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Task ID</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Start Time</TableHead>
-                      <TableHead>End Time</TableHead>
-                      <TableHead>Duration</TableHead>
-                      <TableHead>Tries</TableHead>
+                      <TableHeadCell>Task ID</TableHeadCell>
+                      <TableHeadCell>Status</TableHeadCell>
+                      <TableHeadCell>Start Time</TableHeadCell>
+                      <TableHeadCell>End Time</TableHeadCell>
+                      <TableHeadCell>Duration</TableHeadCell>
+                      <TableHeadCell>Tries</TableHeadCell>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
