@@ -123,17 +123,10 @@ DRIFT_THRESHOLD = float(get_ssm_parameter('DRIFT_THRESHOLD', '0.1'))
 validate_numeric_parameter('DRIFT_THRESHOLD', DRIFT_THRESHOLD, 0, 1)
 
 # ─── MLFLOW CONFIG ────────────────────────────────────────────────────────────
-# Get MLflow tracking URI with fallback to local storage
-try:
-    MLFLOW_URI = get_ssm_parameter('MLFLOW_TRACKING_URI')
-    # Test if the URI is valid
-    if not MLFLOW_URI or not MLFLOW_URI.strip():
-        logger.warning("MLflow tracking URI is empty, using local storage")
-        MLFLOW_URI = "file:/tmp/mlruns"
-except Exception as e:
-    logger.warning(f"Failed to get MLflow tracking URI: {str(e)}, using local storage")
-    MLFLOW_URI = "file:/tmp/mlruns"
-
+# ─── MLFLOW CONFIG ────────────────────────────────────────────────────────────
+# Set MLflow tracking URI to point to the EC2 instance
+MLFLOW_URI = os.getenv('MLFLOW_URI', 'http://3.146.46.179:5000')
+logger.info(f"Using MLflow tracking URI: {MLFLOW_URI}")
 # Get artifact store URI with fallback to S3 bucket path
 MLFLOW_ARTIFACT_URI = get_ssm_parameter(
     'MLFLOW_ARTIFACT_URI', 
@@ -164,9 +157,10 @@ AIRFLOW_DAG_BASE_CONF= {}
 AUTO_APPROVE_MODEL = Variable.get("AUTO_APPROVE_MODEL", default_var="False").lower() == "true"
 REQUIRE_MODEL_APPROVAL = not AUTO_APPROVE_MODEL  # Inverse of auto approve
 
-# ─── SLACK CONFIG ────────────────────────────────────────────────────────────
-SLACK_WEBHOOK_URL    = get_ssm_parameter('SLACK_WEBHOOK_URL')
-SLACK_CHANNEL_DEFAULT= get_ssm_parameter('SLACK_CHANNEL_DEFAULT', '#alerts')
+# ─── SLACK CONFIG (DISABLED) ─────────────────────────────────────────────────
+# Slack notifications disabled - MLflow hosted on EC2 at http://3.146.46.179:5000
+# SLACK_WEBHOOK_URL    = get_ssm_parameter('SLACK_WEBHOOK_URL')
+# SLACK_CHANNEL_DEFAULT= get_ssm_parameter('SLACK_CHANNEL_DEFAULT', '#alerts')
 
 # ─── HYPEROPT CONFIG ─────────────────────────────────────────────────────────
 MAX_EVALS           = int(get_ssm_parameter('HYPEROPT_MAX_EVALS', '20'))
@@ -207,25 +201,28 @@ UI_COMPONENTS = {
 
 # ─── MODEL CONFIG ────────────────────────────────────────────────────────────
 MODEL_CONFIG = {
-    "model1": {
-        "name": "XGBoost Baseline (48 Old Attributes)",
-        "description": "XGBoost regressor with default parameters using raw loss history features (48 old attributes)",
-        "features": ["num_loss_3yr_", "num_loss_yrs45_", "num_loss_free_yrs_"],
-        "hyperparameters": {
-            "learning_rate": 0.1,
-            "max_depth": 6,
-            "n_estimators": 100
-        }
+    # Model for loss history with weight classes - single dimension (counts only)
+    'model1': {
+        'name': 'Loss History - Counts',
+        'description': 'Model based on loss history counts only',
+        'features': ['num_loss_'],  # Prefix for feature columns
+        'hyperparameters': {
+            'learning_rate': 0.1,
+            'max_depth': 6,
+            'n_estimators': 100
+        },
+        'file_name': 'Model1.joblib'  # Case-sensitive filename in S3
     },
-    "model4": {
-        "name": "XGBoost Fast Decay (Best Performing Model)",
-        "description": "XGBoost regressor with fast decay weighting of loss history features, providing best performance",
-        "features": ["lhdwc_5y_3d_"],
-        "hyperparameters": {
-            "learning_rate": 0.1,
-            "max_depth": 6,
-            "n_estimators": 100
-        }
+    'model4': {
+        'name': 'XGBoost Fast Decay (Best Performing Model)',
+        'description': 'XGBoost regressor with fast decay weighting of loss history features, providing best performance',
+        'features': ['lhdwc_5y_3d_'],
+        'hyperparameters': {
+            'learning_rate': 0.1,
+            'max_depth': 6,
+            'n_estimators': 100
+        },
+        'file_name': 'Model4.joblib'  # Case-sensitive filename in S3
     }
 }
 

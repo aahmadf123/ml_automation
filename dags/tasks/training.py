@@ -433,8 +433,8 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
     start_time = time.time()
     logger.info(f"Starting training for model {model_id}")
     
-    # Initialize MLflow
-    mlflow.set_tracking_uri(MLFLOW_URI)
+    # Initialize MLflow with EC2 URL
+    mlflow.set_tracking_uri("http://3.146.46.179:5000")
     mlflow.set_experiment(MLFLOW_EXPERIMENT)
     
     # Start ClearML task
@@ -590,14 +590,10 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
         if skip_training:
             logger.info(f"Skipping training for {model_id} as existing model performance is sufficient")
             
-            # Send Slack notification
-            from utils.slack import post as send_message
-            send_message(
-                channel="#ml-training",
-                title="⏭️ Training Skipped",
-                details=f"Training skipped for model '{model_id}' as existing performance is sufficient.\n" +
-                        f"Baseline RMSE: {baseline_rmse:.4f}",
-                urgency="low"
+            # Log skip notification
+            logger.info(
+                f"⏭️ Training Skipped: Training skipped for model '{model_id}' as existing performance is sufficient.\n" +
+                f"Baseline RMSE: {baseline_rmse:.4f}"
             )
             
             # Update dashboard via WebSocket
@@ -784,16 +780,12 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
                 except Exception as e:
                     logger.error(f"Error logging model to ClearML: {e}")
                     
-            # Send notification
-            from utils.slack import post as send_message
-            send_message(
-                channel="#ml-training",
-                title="✅ Training Complete",
-                details=f"Model '{model_id}' trained successfully.\n" +
-                        f"RMSE: {metrics['rmse']:.4f} (baseline: {metrics['baseline_rmse']:.4f})\n" +
-                        f"Improvement: {metrics['improvement']:.2f}%\n" +
-                        f"MLflow Run: {run_id}",
-                urgency="high" if metrics["improvement"] > 10 else "normal"
+            # Log success notification
+            logger.info(
+                f"Training Complete: Model '{model_id}' trained successfully.\n" +
+                f"RMSE: {metrics['rmse']:.4f} (baseline: {metrics['baseline_rmse']:.4f})\n" +
+                f"Improvement: {metrics['improvement']:.2f}%\n" +
+                f"MLflow Run: {run_id}"
             )
             
             # Update dashboard via WebSocket
@@ -808,14 +800,8 @@ def train_and_compare_fn(model_id: str, processed_path: str) -> None:
     except Exception as e:
         logger.error(f"Error in training: {str(e)}")
         
-        # Send notification
-        from utils.slack import post as send_message
-        send_message(
-            channel="#alerts",
-            title="❌ Training Failed",
-            details=f"Error training model '{model_id}':\n{str(e)}",
-            urgency="high"
-        )
+        # Log error notification
+        logger.error(f"❌ Training Failed: Error training model '{model_id}':\n{str(e)}")
         
         # Update dashboard via WebSocket
         send_websocket_update_sync(
@@ -1149,7 +1135,7 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
     import tempfile
     import joblib
     from utils.storage import download
-    from utils.config import DATA_BUCKET, MODEL_KEY_PREFIX
+    from utils.config import DATA_BUCKET, MODEL_KEY_PREFIX, MODEL_CONFIG
     
     logger.info(f"Loading pretrained model {model_id} from S3")
     
@@ -1162,13 +1148,22 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
     # Create a temporary directory if model_dir is not provided
     if model_dir is None:
         model_dir = tempfile.mkdtemp()
+        logger.info(f"Created temporary directory for model: {model_dir}")
     
     # Ensure the directory exists
     os.makedirs(model_dir, exist_ok=True)
     
-    # Define model S3 key and local path
-    model_key = f"{MODEL_KEY_PREFIX}/{model_id}.joblib"
-    local_model_path = os.path.join(model_dir, f"{model_id}.joblib")
+    # Get the correct case-sensitive filename from MODEL_CONFIG
+    model_config = MODEL_CONFIG.get(model_id, {})
+    s3_filename = model_config.get("file_name")
+    
+    # If filename not in config, use default pattern with capitalized first letter
+    if not s3_filename:
+        s3_filename = f"Model{model_id[5:]}.joblib" if model_id.startswith("model") else f"{model_id}.joblib"
+        logger.warning(f"Model filename not found in MODEL_CONFIG, using default: {s3_filename}")
+    
+    model_key = f"{MODEL_KEY_PREFIX}/{s3_filename}"
+    local_model_path = os.path.join(model_dir, f"{model_id}.joblib")  # Keep local path consistent
     
     # Try to download the model from S3
     try:
@@ -1180,6 +1175,14 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
             error_msg = f"Failed to download model file: {local_model_path}"
             logger.error(error_msg)
             return {"status": "failed", "error": error_msg, "model_id": model_id}
+        
+        file_size = os.path.getsize(local_model_path)
+        if file_size == 0:
+            error_msg = f"Downloaded model file is empty: {local_model_path}"
+            logger.error(error_msg)
+            return {"status": "failed", "error": error_msg, "model_id": model_id}
+            
+        logger.info(f"Successfully downloaded model file ({file_size} bytes)")
         
         # Load the model
         logger.info(f"Loading model from {local_model_path}")
@@ -1194,57 +1197,62 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
         # Create a run ID in MLflow to track this loaded model
         run_id = None
         try:
-            # Initialize MLflow properly with fallback options
-            if not MLFLOW_URI:
-                logger.warning("MLFLOW_URI is not set, using default local URI")
-                mlflow.set_tracking_uri("file:/tmp/mlruns")
-            else:
-                mlflow.set_tracking_uri(MLFLOW_URI)
+            # Initialize MLflow with EC2 endpoint
+            mlflow.set_tracking_uri("http://3.146.46.179:5000")
+            logger.info("Set MLflow tracking URI to http://3.146.46.179:5000")
                 
             client = MlflowClient(tracking_uri=mlflow.get_tracking_uri())
             experiment_name = f"model_{model_id}"
             
-            # First try to get the experiment by name
-            experiment = client.get_experiment_by_name(experiment_name)
-            if experiment:
-                experiment_id = experiment.experiment_id
-                logger.info(f"Found existing MLflow experiment: {experiment_name} (ID: {experiment_id})")
-            else:
-                # Create a new experiment
-                experiment_id = client.create_experiment(experiment_name)
-                logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id})")
-                
-            # Create a new run in the experiment
-            mlflow_run = client.create_run(experiment_id)
-            run_id = mlflow_run.info.run_id
-            logger.info(f"Created new MLflow run: {run_id}")
-            
-            # Log model info
-            client.log_param(run_id, "model_source", "pretrained")
-            client.log_param(run_id, "model_path", f"s3://{DATA_BUCKET}/{model_key}")
-            client.log_param(run_id, "model_id", model_id)
-            client.log_param(run_id, "load_time", datetime.now().isoformat())
-            
-            # Get model metadata from MODEL_CONFIG for additional params
-            from utils.config import MODEL_CONFIG
-            model_config = MODEL_CONFIG.get(model_id, {})
-            for param_key, param_value in model_config.get('hyperparameters', {}).items():
-                try:
-                    client.log_param(run_id, param_key, param_value)
-                except Exception as param_error:
-                    logger.warning(f"Error logging parameter {param_key}: {str(param_error)}")
-            
-            # Log model to MLflow with proper error handling
+            # Get or create the experiment
+            experiment_id = None
             try:
-                with mlflow.start_run(run_id=run_id):
-                    # Use appropriate MLflow flavor based on model type
-                    if 'xgboost' in str(type(model)).lower():
-                        mlflow.xgboost.log_model(model, f"{model_id}_model")
-                    else:
-                        mlflow.sklearn.log_model(model, f"{model_id}_model")
-                    logger.info(f"Successfully logged model to MLflow")
-            except Exception as model_log_error:
-                logger.warning(f"Error logging model artifact to MLflow: {str(model_log_error)}")
+                experiment = client.get_experiment_by_name(experiment_name)
+                if experiment:
+                    experiment_id = experiment.experiment_id
+                    logger.info(f"Found existing MLflow experiment: {experiment_name} (ID: {experiment_id})")
+                else:
+                    # Create a new experiment
+                    experiment_id = client.create_experiment(experiment_name)
+                    logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id})")
+            except Exception as exp_err:
+                logger.warning(f"Error getting/creating MLflow experiment: {str(exp_err)}")
+                experiment_id = "0"  # Use default experiment as fallback
+            
+            # Create a new run in the experiment
+            try:
+                mlflow_run = client.create_run(experiment_id)
+                run_id = mlflow_run.info.run_id
+                logger.info(f"Created new MLflow run: {run_id}")
+                
+                # Log model info
+                client.log_param(run_id, "model_source", "pretrained")
+                client.log_param(run_id, "model_path", f"s3://{DATA_BUCKET}/{model_key}")
+                client.log_param(run_id, "s3_filename", s3_filename)
+                client.log_param(run_id, "model_id", model_id)
+                client.log_param(run_id, "load_time", datetime.now().isoformat())
+            
+                # Get model metadata from MODEL_CONFIG for additional params
+                model_config = MODEL_CONFIG.get(model_id, {})
+                for param_key, param_value in model_config.get('hyperparameters', {}).items():
+                    try:
+                        client.log_param(run_id, param_key, param_value)
+                    except Exception as param_error:
+                        logger.warning(f"Error logging parameter {param_key}: {str(param_error)}")
+                
+                # Log model to MLflow with proper error handling
+                try:
+                    with mlflow.start_run(run_id=run_id):
+                        # Use appropriate MLflow flavor based on model type
+                        if 'xgboost' in str(type(model)).lower():
+                            mlflow.xgboost.log_model(model, f"{model_id}_model")
+                        else:
+                            mlflow.sklearn.log_model(model, f"{model_id}_model")
+                        logger.info(f"Successfully logged model to MLflow")
+                except Exception as model_log_error:
+                    logger.warning(f"Error logging model artifact to MLflow: {str(model_log_error)}")
+            except Exception as run_err:
+                logger.warning(f"Error logging run data to MLflow: {str(run_err)}")
                 
         except Exception as e:
             logger.warning(f"Error setting up MLflow tracking for pretrained model: {str(e)}")
@@ -1252,14 +1260,17 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
                 # Try to clean up the partially created run
                 try:
                     client.set_terminated(run_id, "FAILED")
-                except:
-                    pass
+                    logger.info(f"Terminated incomplete MLflow run: {run_id}")
+                except Exception as term_error:
+                    logger.warning(f"Failed to terminate MLflow run: {str(term_error)}")
             run_id = None
         
+        # Log successful model loading
         logger.info(f"Successfully loaded pretrained model {model_id}")
-        
-        # Get model metadata from MODEL_CONFIG
-        from utils.config import MODEL_CONFIG
+        if hasattr(model, 'n_estimators') and hasattr(model, 'max_depth'):
+            logger.info(f"Model details: n_estimators={model.n_estimators}, max_depth={model.max_depth}")
+            
+        # Get additional model metadata from MODEL_CONFIG
         model_config = MODEL_CONFIG.get(model_id, {})
         
         # Return success result
@@ -1268,7 +1279,6 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
             "model": model,
             "model_id": model_id,
             "run_id": run_id,
-            "is_pretrained": True,
             "name": model_config.get("name", model_id),
             "description": model_config.get("description", "Pretrained model loaded from S3"),
             "metrics": {
@@ -1282,8 +1292,18 @@ def load_pretrained_model(model_id: str, model_dir: str = None) -> Dict[str, Any
     except Exception as e:
         error_msg = f"Error loading pretrained model {model_id}: {str(e)}"
         logger.error(error_msg)
+        logger.exception("Full stack trace:")
+        
+        # Clean up any temporary files
+        try:
+            if model_dir is not None and os.path.exists(model_dir) and tempfile.gettempdir() in model_dir:
+                import shutil
+                shutil.rmtree(model_dir, ignore_errors=True)
+                logger.info(f"Cleaned up temporary directory: {model_dir}")
+        except Exception as cleanup_err:
+            logger.warning(f"Error during cleanup: {str(cleanup_err)}")
+            
         return {"status": "failed", "error": error_msg, "model_id": model_id}
-
 def train_multiple_models(
     processed_path: str,
     parallel: bool = True,
@@ -1592,11 +1612,9 @@ def evaluate_pretrained_model(model_id: str, X_test: pd.DataFrame, y_test: pd.Se
             if run_id is not None:
                 try:
                     # Initialize MLflow client with proper error handling
-                    if not MLFLOW_URI:
-                        logger.warning("MLFLOW_URI is not set, using default local URI")
-                        mlflow.set_tracking_uri("file:/tmp/mlruns")
-                    else:
-                        mlflow.set_tracking_uri(MLFLOW_URI)
+                    # Always use the EC2 MLflow URI
+                    logger.info("Using EC2 MLflow URI")
+                    mlflow.set_tracking_uri("http://3.146.46.179:5000")
                     
                     client = MlflowClient(tracking_uri=mlflow.get_tracking_uri())
                     

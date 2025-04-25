@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -96,26 +97,98 @@ export default function PredictionsPage() {
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
-          <Button size="sm">
-            <TrendingUp className="mr-2 h-4 w-4" />
-            Run Prediction
-          </Button>
+          <Link href="/model-metrics">
+            <Button size="sm">
+              <TrendingUp className="mr-2 h-4 w-4" />
+              Run Prediction
+            </Button>
+          </Link>
         </div>
       </div>
       
       {/* Main forecast chart */}
-      <Card className="relative">
-        <CardHeader className="pb-2">
-          <div className="flex justify-between items-center">
-            <div>
-              <CardTitle className="text-lg">Loss Forecasting</CardTitle>
-              <CardDescription>
-                Historical and predicted losses with {confidenceInterval}% confidence interval
-              </CardDescription>
+      <Link href="/model-explainability">
+        <Card className="relative hover:shadow-md transition-shadow cursor-pointer">
+          <CardHeader className="pb-2">
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle className="text-lg">Loss Forecasting</CardTitle>
+                <CardDescription>
+                  Historical and predicted losses with {confidenceInterval}% confidence interval
+                </CardDescription>
+              </div>
+              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                Model: {modelSelection === 'model4' ? 'Fast Decay (17.9% more accurate)' : 'Traditional'}
+              </Badge>
             </div>
-            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-              Model: {modelSelection === 'model4' ? 'Fast Decay (17.9% more accurate)' : 'Traditional'}
-                    <Card>
+          </CardHeader>
+          <CardContent className="p-0 h-[350px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={lossHistoryData} margin={{ top: 10, right: 30, left: 20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorUpper" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#8884d8" stopOpacity={0.15}/>
+                    <stop offset="95%" stopColor="#8884d8" stopOpacity={0.05}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
+                <Legend />
+                <Area type="monotone" dataKey="upperBound" stroke="none" fillOpacity={1} fill="url(#colorUpper)" name="Confidence Interval" />
+                <Area type="monotone" dataKey="lowerBound" stroke="none" fillOpacity={0} fill="url(#colorUpper)" name="Confidence Interval" />
+                <Line type="monotone" dataKey="actual" stroke="#4f46e5" strokeWidth={2} dot={{ r: 4 }} name="Actual Losses" activeDot={{ r: 6 }} />
+                <Line type="monotone" dataKey="predicted" stroke="#fb923c" strokeWidth={2} dot={{ r: 4 }} name="Predicted Losses" activeDot={{ r: 6 }} />
+                <ReferenceLine x="Dec 2023" stroke="#666" strokeDasharray="3 3" label={{ value: 'Forecast Start', position: 'top' }} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+          <CardFooter className="border-t p-4 flex justify-between">
+            <div className="flex items-center gap-3">
+              <div>
+                <Select value={modelSelection} onValueChange={setModelSelection}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="Model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="model1">Traditional</SelectItem>
+                    <SelectItem value="model4">Fast Decay</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Select value={forecastPeriod} onValueChange={setForecastPeriod}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="Forecast Period" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="3">3 Months</SelectItem>
+                    <SelectItem value="6">6 Months</SelectItem>
+                    <SelectItem value="12">12 Months</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Select value={confidenceInterval} onValueChange={setConfidenceInterval}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="Confidence" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="80">80% Confidence</SelectItem>
+                    <SelectItem value="95">95% Confidence</SelectItem>
+                    <SelectItem value="99">99% Confidence</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardFooter>
+        </Card>
+      </Link>
+      
+      {/* Model Comparison */}
+      <Link href="/model-comparison">
+        <Card className="hover:shadow-md transition-shadow cursor-pointer">
           <CardHeader>
             <CardTitle className="text-lg">Model Comparison</CardTitle>
             <CardDescription>
@@ -138,15 +211,6 @@ export default function PredictionsPage() {
                   <p className="text-3xl font-bold">95%</p>
                 </div>
               </div>
-              
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span>Model4 (Fast Decay)</span>
-                    <span>94.8% accuracy</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2.5">
-                    <div className="bg-green-600 h-2.5 rounded-full" style={{ width
               
               <div className="space-y-3">
                 <div>
@@ -182,7 +246,7 @@ export default function PredictionsPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </Link>
       
       {/* Business Impact Summary */}
       <Card>
@@ -220,143 +284,56 @@ export default function PredictionsPage() {
             <div className="col-span-2 bg-gray-50 p-4 rounded-lg border border-gray-200 dark:bg-gray-800 dark:border-gray-700">
               <h3 className="font-medium mb-2">Recommended Actions</h3>
               <ul className="text-sm space-y-2">
-                <li className="flex items-start">
-                  <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                  </div>
-                  <div>
-                    <strong>Adjust reserve capital</strong>: Optimize capital allocation based on the {formatCurrency(potentialSavings)} potential savings identified
-                  </div>
-                </li>
-                <li className="flex items-start">
-                  <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                  </div>
-                  <div>
-                    <strong>Focus on high-impact risk categories</strong>: Prioritize mitigation for Fire (+8.5%) and Water (+12.3%) damage losses
-                  </div>
-                </li>
-                <li className="flex items-start">
-                  <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                  </div>
-                  <div>
-                    <strong>Adjust premium structure</strong>: Use Model4's enhanced accuracy to refine risk-based pricing
-                  </div>
-                </li>
+                <Link href="/threshold-management">
+                  <li className="flex items-start cursor-pointer hover:bg-gray-100 p-1 rounded-md">
+                    <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    </div>
+                    <div>
+                      <strong>Adjust reserve capital</strong>: Optimize capital allocation based on the {formatCurrency(potentialSavings)} potential savings identified
+                    </div>
+                  </li>
+                </Link>
+                <Link href="/risk-categories">
+                  <li className="flex items-start cursor-pointer hover:bg-gray-100 p-1 rounded-md">
+                    <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    </div>
+                    <div>
+                      <strong>Focus on high-impact risk categories</strong>: Prioritize mitigation for Fire (+8.5%) and Water (+12.3%) damage losses
+                    </div>
+                  </li>
+                </Link>
+                <Link href="/settings">
+                  <li className="flex items-start cursor-pointer hover:bg-gray-100 p-1 rounded-md">
+                    <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    </div>
+                    <div>
+                      <strong>Adjust premium structure</strong>: Use Model4's enhanced accuracy to refine risk-based pricing
+                    </div>
+                  </li>
+                </Link>
               </ul>
             </div>
           </div>
         </CardContent>
         <CardFooter className="border-t p-4 flex justify-end">
-          <Button variant="outline" size="sm" className="mr-2">
-            <BarChart className="mr-2 h-4 w-4" />
-            View Full Report
-          </Button>
-          <Button
-odel" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="model1">Traditional</SelectItem>
-                  <SelectItem value="model4">Fast Decay</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Select value={forecastPeriod} onValueChange={setForecastPeriod}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Forecast Period" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="3">3 Months</SelectItem>
-                  <SelectItem value="6">6 Months</SelectItem>
-                  <SelectItem value="12">12 Months</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Select value={confidenceInterval} onValueChange={setConfidenceInterval}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Confidence" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="80">80% Confidence</SelectItem>
-                  <SelectItem value="95">95% Confidence</SelectItem>
-                  <SelectItem value="99">99% Confidence</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Select value={seasonalAdjustment} onValueChange={setSeasonalAdjustment}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Seasonal Adjustment" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="true">Seasonal Adjusted</SelectItem>
-                  <SelectItem value="false">Raw Data</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={lossHistoryData} margin={{ top: 10, right: 30, left: 20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorUpper" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#8884d8" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#8884d8" stopOpacity={0.05}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis tickFormatter={(value) => formatCurrency(value)} />
-                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-                <Legend />
-                <Area type="monotone" dataKey="upperBound" stroke="none" fillOpacity={1} fill="url(#colorUpper)" name="Confidence Interval" />
-                <Area type="monotone" dataKey="lowerBound" stroke="none" fillOpacity={0} fill="url(#colorUpper)" name="Confidence Interval" />
-                <Line type="monotone" dataKey="actual" stroke="#4f46e5" strokeWidth={2} dot={{ r: 4 }} name="Actual Losses" activeDot={{ r: 6 }} />
-                <Line type="monotone" dataKey="predicted" stroke="#fb923c" strokeWidth={2} dot={{ r: 4 }} name="Predicted Losses" activeDot={{ r: 6 }} />
-                <ReferenceLine x="Dec 2023" stroke="#666" strokeDasharray="3 3" label={{ value: 'Forecast Start', position: 'top' }} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-        <CardFooter className="border-t p-4 flex justify-between">
-          <div className="flex space-x-4">
-            <div>
-              <Select value={modelSelection} onValueChange={setModelSelection}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Model" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="model1">Traditional</SelectItem>
-                  <SelectItem value="model4">Fast Decay</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Select value={forecastPeriod} onValueChange={setForecastPeriod}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Forecast Period" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="3">3 Months</SelectItem>
-                  <SelectItem value="6">6 Months</SelectItem>
-                  <SelectItem value="12">12 Months</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Select value={confidenceInterval} onValueChange={setConfidenceInterval}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Confidence" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="80">80% Confidence</SelectItem>
-                  <SelectItem value="95">95% Confidence</SelectItem>
-                  <SelectItem value="99">99% Confidence</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          <Link href="/business-insights">
+            <Button variant="outline" size="sm" className="mr-2">
+              <BarChart className="mr-2 h-4 w-4" />
+              View Full Report
+            </Button>
+          </Link>
+          <Link href="/model-metrics">
+            <Button size="sm">
+              <DollarSign className="mr-2 h-4 w-4" />
+              Impact Analysis
+            </Button>
+          </Link>
+        </CardFooter>
+      </Card>
+    </div>
+  )
+}
 

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { formatDistanceToNow } from "date-fns"
 import { ChevronRight, Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import Link from "next/link"
 
 interface Claim {
   id: string
@@ -80,7 +81,12 @@ export function RecentClaims() {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-lg flex items-center justify-between">Recent Claims</CardTitle>
+        <CardTitle className="text-lg flex items-center justify-between">
+          Recent Claims
+          <Link href="/claims/new">
+            <Badge className="cursor-pointer hover:bg-primary/80">+ New Claim</Badge>
+          </Link>
+        </CardTitle>
         <div className="relative mt-2">
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
@@ -95,35 +101,37 @@ export function RecentClaims() {
         <div className="h-[300px] overflow-y-auto scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-gray-300">
           <div className="divide-y">
             {filteredClaims.map((claim) => (
-              <div key={claim.id} className="flex items-center justify-between p-4 hover:bg-muted/50 transition-colors">
-                <div className="flex items-center space-x-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center">
-                      <p className="font-medium">{claim.customer}</p>
-                      <span className="text-xs text-muted-foreground ml-2">({claim.id})</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Badge variant="outline">{claim.type}</Badge>
-                      <p className="text-sm text-muted-foreground">
-                        {formatDistanceToNow(new Date(claim.date), { addSuffix: true })}
-                      </p>
+              <Link href={`/claims/${claim.id}`} key={claim.id}>
+                <div className="flex items-center justify-between p-4 hover:bg-muted/50 transition-colors cursor-pointer">
+                  <div className="flex items-center space-x-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center">
+                        <p className="font-medium">{claim.customer}</p>
+                        <span className="text-xs text-muted-foreground ml-2">({claim.id})</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Badge variant="outline">{claim.type}</Badge>
+                        <p className="text-sm text-muted-foreground">
+                          {formatDistanceToNow(new Date(claim.date), { addSuffix: true })}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="flex items-center space-x-4">
-                  <div className="text-right">
-                    <p className="font-medium">${claim.amount.toLocaleString()}</p>
-                    <Badge
-                      variant={
-                        claim.status === "approved" ? "success" : claim.status === "denied" ? "destructive" : "outline"
-                      }
-                    >
-                      {claim.status}
-                    </Badge>
+                  <div className="flex items-center space-x-4">
+                    <div className="text-right">
+                      <p className="font-medium">${claim.amount.toLocaleString()}</p>
+                      <Badge
+                        variant={
+                          claim.status === "approved" ? "success" : claim.status === "denied" ? "destructive" : "outline"
+                        }
+                      >
+                        {claim.status}
+                      </Badge>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

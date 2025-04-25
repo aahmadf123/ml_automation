@@ -48,11 +48,9 @@ class StorageManager:
             return
             
         try:
-            # Import security module only when needed
-            from .security import SecurityManager
-            security = SecurityManager()
-            credentials = security.get_aws_credentials()
-            self._s3_client = boto3.client('s3', **credentials)
+            # Use boto3 with default credentials directly
+            self._s3_client = boto3.client('s3')
+            log.info("Initialized S3 client with default credentials")
         except Exception as e:
             log.warning(f"Failed to initialize S3 client: {str(e)}. Operations will fail.")
             
@@ -313,30 +311,55 @@ def download(
             response = _manager._s3_client.head_object(Bucket=bucket, Key=key)
             file_size = response['ContentLength']
         except Exception as e:
+            # We don't need the case-changing logic now that we use correct case in MODEL_CONFIG
             log.warning(f"Could not get file size, proceeding without progress tracking: {str(e)}")
         
         # Download with progress tracking if size is available
         if file_size:
-            with tqdm(total=file_size, unit='B', unit_scale=True, desc=f"Downloading {key}") as pbar:
-                def download_progress(chunk):
-                    pbar.update(chunk)
+            try:
+                with tqdm(total=file_size, unit='B', unit_scale=True, desc=f"Downloading {key}") as pbar:
+                    def download_progress(chunk):
+                        pbar.update(chunk)
+                    
+                    # Download file with progress tracking
+                    _manager._s3_client.download_file(
+                        Bucket=bucket,
+                        Key=key,
+                        Filename=local_path,
+                        Callback=download_progress,
+                        ExtraArgs={'Metadata': metadata or {}} if metadata else {}
+                    )
+            except ClientError as e:
+                # Handle specific S3 error cases
+                error_code = getattr(e, 'response', {}).get('Error', {}).get('Code')
+                error_msg = getattr(e, 'response', {}).get('Error', {}).get('Message', str(e))
                 
+                if error_code == '404' or 'Not Found' in str(e):
+                    log.error(f"File not found in S3: {key} in bucket {bucket}. Error: {error_msg}")
+                elif error_code == '403':
+                    log.error(f"Permission denied accessing: {key} in bucket {bucket}. Error: {error_msg}")
+                else:
+                    log.error(f"Error downloading from S3: {error_msg}")
+                
+                # Re-raise to trigger retry
+                raise
+            except Exception as e:
+                log.error(f"Unexpected error downloading {key}: {str(e)}")
+                # Re-raise to trigger retry
+                raise
+        else:
+            try:
+                # Download without progress tracking
                 _manager._s3_client.download_file(
                     Bucket=bucket,
                     Key=key,
                     Filename=local_path,
-                    Callback=download_progress,
                     ExtraArgs={'Metadata': metadata or {}} if metadata else {}
                 )
-        else:
-            # Download without progress tracking
-            _manager._s3_client.download_file(
-                Bucket=bucket,
-                Key=key,
-                Filename=local_path,
-                ExtraArgs={'Metadata': metadata or {}} if metadata else {}
-            )
-        
+            except Exception as e:
+                log.error(f"Error downloading {key}: {str(e)}")
+                raise
+                
         # Verify the download completed successfully
         if not os.path.exists(local_path):
             raise FileNotFoundError(f"Download seemed to succeed, but file not found at {local_path}")
