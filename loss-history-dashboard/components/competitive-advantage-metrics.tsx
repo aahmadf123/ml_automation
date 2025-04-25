@@ -363,4 +363,210 @@ export function CompetitiveAdvantageMetrics() {
                       <ul className="space-y-1 text-sm">
                         <li className="flex items-start">
                           <span className="text-green-500 mr-2">✓</span>
+                          <span>31.3% reduction in false positives compared to industry standard</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-green-500 mr-2">✓</span>
+                          <span>42.7% reduction in false negatives for high-risk cases</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-green-500 mr-2">✓</span>
+                          <span>67.8% higher consistency across different risk categories</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-green-500 mr-2">✓</span>
+                          <span>Maintains 95%+ accuracy even with sparse historical data</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                <div className="md:w-2/3">{renderGaugeChart()}</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Improvement vs Traditional</div>
+                  <div className="text-2xl font-bold text-green-600">+23.6%</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">False Positive Reduction</div>
+                  <div className="text-2xl font-bold text-green-600">-31.3%</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">False Negative Reduction</div>
+                  <div className="text-2xl font-bold text-green-600">-42.7%</div>
+                </div>
+              </div>
+            </TabsContent>
 
+            <TabsContent value="detection" className="space-y-4">
+              <div className="flex flex-col md:flex-row gap-6">
+                <div className="md:w-1/3">
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
+                      <h3 className="font-semibold text-lg text-blue-800 dark:text-blue-300">84% Faster Detection</h3>
+                      <p className="text-blue-700 dark:text-blue-400 text-sm mt-1">
+                        Our ML-powered risk detection identifies high-risk cases 6.25x faster than traditional methods, reducing exposure time dramatically.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Key Benefits:</h4>
+                      <ul className="space-y-1 text-sm">
+                        <li className="flex items-start">
+                          <span className="text-blue-500 mr-2">✓</span>
+                          <span>Days instead of months to identify emerging risks</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-blue-500 mr-2">✓</span>
+                          <span>Proactive interventions before claims escalate</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-blue-500 mr-2">✓</span>
+                          <span>Automated alerting system for immediate action</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-blue-500 mr-2">✓</span>
+                          <span>Annual detection improvement rate of 25%</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                <div className="md:w-2/3">{renderTimelineChart()}</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Average Days to Detect</div>
+                  <div className="text-2xl font-bold text-blue-600">8 days</div>
+                  <div className="text-xs text-gray-500">vs. 50 days (traditional)</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Annual Improvement</div>
+                  <div className="text-2xl font-bold text-blue-600">25%</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Detection Cost Savings</div>
+                  <div className="text-2xl font-bold text-blue-600">$1.8M</div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="precision" className="space-y-4">
+              <div className="flex flex-col md:flex-row gap-6">
+                <div className="md:w-1/3">
+                  <div className="space-y-4">
+                    <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-lg">
+                      <h3 className="font-semibold text-lg text-amber-800 dark:text-amber-300">62.4% More Precise</h3>
+                      <p className="text-amber-700 dark:text-amber-400 text-sm mt-1">
+                        Our pricing models are 62.4% more precise than industry averages, particularly for high-risk segments.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Pricing Advantages:</h4>
+                      <ul className="space-y-1 text-sm">
+                        <li className="flex items-start">
+                          <span className="text-amber-500 mr-2">✓</span>
+                          <span>Granular pricing based on 150+ risk factors</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-amber-500 mr-2">✓</span>
+                          <span>Dynamic adjustment based on real-time data</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-amber-500 mr-2">✓</span>
+                          <span>Reduced pricing error in all risk segments</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-amber-500 mr-2">✓</span>
+                          <span>Higher margin retention in competitive markets</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                <div className="md:w-2/3">{renderPricingPrecisionChart()}</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Average Error Reduction</div>
+                  <div className="text-2xl font-bold text-amber-600">62.4%</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Revenue Impact</div>
+                  <div className="text-2xl font-bold text-amber-600">+$4.2M</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Retention Impact</div>
+                  <div className="text-2xl font-bold text-amber-600">+2.8%</div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="speed" className="space-y-4">
+              <div className="flex flex-col md:flex-row gap-6">
+                <div className="md:w-1/3">
+                  <div className="space-y-4">
+                    <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
+                      <h3 className="font-semibold text-lg text-purple-800 dark:text-purple-300">95th Percentile Speed</h3>
+                      <p className="text-purple-700 dark:text-purple-400 text-sm mt-1">
+                        Our assessment speed ranks in the 95th percentile across the industry, enabling real-time risk evaluation and pricing.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Speed Benefits:</h4>
+                      <ul className="space-y-1 text-sm">
+                        <li className="flex items-start">
+                          <span className="text-purple-500 mr-2">✓</span>
+                          <span>Risk assessment in milliseconds vs. minutes</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-purple-500 mr-2">✓</span>
+                          <span>Real-time quote adjustments during customer interactions</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-purple-500 mr-2">✓</span>
+                          <span>Enables dynamic pricing at point-of-sale</span>
+                        </li>
+                        <li className="flex items-start">
+                          <span className="text-purple-500 mr-2">✓</span>
+                          <span>3.2x faster than top competitors</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                <div className="md:w-2/3">{renderSpeedometerChart()}</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Average Response Time</div>
+                  <div className="text-2xl font-bold text-purple-600">14ms</div>
+                  <div className="text-xs text-gray-500">vs. 2830ms (industry)</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">Quote Conversion Lift</div>
+                  <div className="text-2xl font-bold text-purple-600">+12.3%</div>
+                </div>
+                <div className="border p-4 rounded-lg">
+                  <div className="text-sm text-muted-foreground">API Capacity</div>
+                  <div className="text-2xl font-bold text-purple-600">5.2M/day</div>
+                </div>
+              </div>
+            </TabsContent>
+          </div>
+        </Tabs>
+      </CardContent>
+      <CardFooter className="flex justify-between border-t pt-4">
+        <div>
+          <p className="text-sm text-muted-foreground">
+            Data as of {format(new Date(), "MMMM d, yyyy")}
+          </p>
+        </div>
+        <div className="flex items-center text-sm text-muted-foreground">
+          <HelpCircle className="h-4 w-4 mr-1" />
+          <span>Independent benchmarks by Insurance Analytics Quarterly</span>
+        </div>
+      </CardFooter>
+    </Card>
+  );
+}

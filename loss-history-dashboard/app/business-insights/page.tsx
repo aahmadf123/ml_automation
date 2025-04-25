@@ -6,7 +6,7 @@ import BusinessInsights from "@/components/business-insights"
 import { DollarSign, PieChart, TrendingUp, Users } from "lucide-react"
 import { SummaryCard } from "@/components/ui/summary-card"
 import { ROIVisualization } from "@/components/roi-visualization"
-
+import { CompetitiveAdvantageMetrics } from "@/components/competitive-advantage-metrics"
 export default function BusinessInsightsPage() {
   return (
     <div className="flex min-h-screen flex-col">
@@ -54,8 +54,6 @@ export default function BusinessInsightsPage() {
             />
           </div>
           
-          <div className="mb-8">
-            <ROIVisualization />
           </div>
           
           <BusinessInsights />
