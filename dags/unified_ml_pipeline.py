@@ -201,40 +201,49 @@ def download_data(**context):
     bucket = Variable.get("DATA_BUCKET", default_var="grange-seniordesign-bucket")
     key = config.RAW_DATA_KEY
     
-    logger.info(f"Using bucket from Airflow Variables: {bucket}")
-    logger.info(f"Attempting to access data at s3://{bucket}/{key}")
+    # Enhanced debugging
+    logger.info(f"S3 DEBUGGING - Using bucket: '{bucket}', key: '{key}'")
+    logger.info(f"S3 DEBUGGING - AWS region: {config.AWS_REGION}")
+    logger.info(f"S3 DEBUGGING - RAW_DATA_KEY in config: {config.RAW_DATA_KEY}")
     
     # Add debugging to list objects in the bucket
     try:
         s3_client = boto3.client('s3', region_name=config.AWS_REGION)
-        logger.info("Listing objects in the bucket for debugging:")
+        logger.info("S3 DEBUGGING - Listing objects in the bucket for debugging:")
         
         # List objects in the raw_data directory
         raw_data_prefix = "raw-data/"
-        logger.info(f"Objects with prefix '{raw_data_prefix}':")
+        logger.info(f"S3 DEBUGGING - Objects with prefix '{raw_data_prefix}':")
         response = s3_client.list_objects_v2(Bucket=bucket, Prefix=raw_data_prefix)
         if 'Contents' in response:
             for obj in response['Contents']:
-                logger.info(f"  - {obj['Key']} ({obj['Size']} bytes)")
+                logger.info(f"S3 DEBUGGING -   - {obj['Key']} ({obj['Size']} bytes)")
         else:
-            logger.warning(f"No objects found with prefix '{raw_data_prefix}'")
+            logger.warning(f"S3 DEBUGGING - No objects found with prefix '{raw_data_prefix}'")
             
         # Try also with raw-data (hyphenated) just in case
         alt_prefix = "raw_data/"
-        logger.info(f"Objects with alternate prefix '{alt_prefix}':")
+        logger.info(f"S3 DEBUGGING - Objects with alternate prefix '{alt_prefix}':")
         response = s3_client.list_objects_v2(Bucket=bucket, Prefix=alt_prefix)
         if 'Contents' in response:
             for obj in response['Contents']:
-                logger.info(f"  - {obj['Key']} ({obj['Size']} bytes)")
+                logger.info(f"S3 DEBUGGING -   - {obj['Key']} ({obj['Size']} bytes)")
                 # If the file is found here, update the key to use this path
                 if obj['Key'].endswith('ut_loss_history_1.csv'):
                     key = obj['Key']
-                    logger.info(f"Found target file at alternate path, updating key to: {key}")
+                    logger.info(f"S3 DEBUGGING - Found target file at alternate path, updating key to: {key}")
         else:
-            logger.warning(f"No objects found with alternate prefix '{alt_prefix}'")
+            logger.warning(f"S3 DEBUGGING - No objects found with alternate prefix '{alt_prefix}'")
+            
+        # Check if the file exists at the exact key
+        try:
+            s3_client.head_object(Bucket=bucket, Key=key)
+            logger.info(f"S3 DEBUGGING - File exists at exact path: s3://{bucket}/{key}")
+        except Exception as e:
+            logger.warning(f"S3 DEBUGGING - File does NOT exist at exact path: s3://{bucket}/{key}. Error: {str(e)}")
             
     except Exception as e:
-        logger.warning(f"Error listing objects in bucket: {str(e)}")
+        logger.warning(f"S3 DEBUGGING - Error listing objects in bucket: {str(e)}")
     
     try:
         # Create a list of potential data directories, in order of preference
@@ -602,8 +611,8 @@ def run_data_quality_checks(**context):
     
     try:
         # Get processed data path
-        processed_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
-        standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
+        processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
         # Fix: Check if standardized_path is None before checking if it exists
@@ -678,8 +687,8 @@ def run_schema_validation(**context):
     
     try:
         # Get processed data path
-        processed_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
-        standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
+        processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
         # Fix: Check if standardized_path is None before checking if it exists
@@ -810,8 +819,8 @@ def check_for_drift(**context):
     
     try:
         # Get processed data path
-        processed_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
-        standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
+        processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
@@ -985,8 +994,8 @@ def train_models(**context):
                     logger.warning(f"Error pulling XCom from {task_id}: {str(e)}")
         
         # Get processed data path
-        processed_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
-        standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
+        processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
@@ -1203,8 +1212,8 @@ def run_model_explainability(**context):
         logger.info(f"Training results: {str(training_results)[:500]}...")  # Log first 500 chars
         
         # Get processed data path
-        processed_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
-        standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
+        processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
@@ -1401,8 +1410,8 @@ def generate_predictions(**context):
         explainability_results = context['ti'].xcom_pull(task_ids='model_explainability', key='explainability_results') or {}
         
         # Get processed data path
-        processed_path = context['ti'].xcom_pull(task_ids='process_data', key='processed_data_path')
-        standardized_path = context['ti'].xcom_pull(task_ids='process_data', key='standardized_processed_path')
+        processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+        standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
         
         # Use standardized path if available, otherwise use processed path
         data_path = None
