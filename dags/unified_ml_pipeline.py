@@ -446,7 +446,7 @@ def download_data(**context):
         # Log successful data access
         logger.info(f"✓ Data successfully accessed from s3://{bucket}/{key}")
         return data_path
-            
+        
     except Exception as e:
         # Log data access failure
         logger.error(f"Failed to access data: {str(e)}")
@@ -460,310 +460,83 @@ def process_data(**context):
     """Process raw data"""
     logger.info("Starting process_data task")
     
+    # Define output directory
+    output_dir = "/tmp/airflow_data"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get raw data path from previous task - fail if not found
+    ti = context['ti']
+    raw_data_path = ti.xcom_pull(task_ids='import_data_task', key='data_path')
+    logger.info(f"Raw data path from XCom: {raw_data_path}")
+    
+    if not raw_data_path:
+        raise AirflowException("No data_path provided by import_data_task")
+        
+    # Verify the file exists
+    if not os.path.exists(raw_data_path):
+        raise AirflowException(f"Data file does not exist at: {raw_data_path}")
+    
+    # Generate the output path for the processed data
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    processed_path = os.path.join(output_dir, f"processed_{timestamp}.parquet")
+    
+    # Process the data
+    logger.info(f"Processing data from {raw_data_path} to {processed_path}")
+    
+    # Load the data based on file type
+    file_ext = os.path.splitext(raw_data_path)[1].lower()
+    
+    if file_ext == '.parquet':
+        df = pd.read_parquet(raw_data_path)
+    elif file_ext == '.xlsx':
+        df = pd.read_excel(raw_data_path)
+    else:  # Default to CSV
+        df = pd.read_csv(raw_data_path, encoding='utf-8', on_bad_lines='skip')
+        
+    logger.info(f"Loaded data with shape: {df.shape}")
+    
+    # Ensure target column exists
+    if 'trgt' not in df.columns and 'il_total' in df.columns and 'eey' in df.columns:
+        logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
+        df['trgt'] = df['il_total'] / df['eey']
+        
+    # Save processed data
+    df.to_parquet(processed_path, index=False)
+    logger.info(f"Data processed successfully to {processed_path}")
+    
+    # Create standardized version at LOCAL_PROCESSED_PATH
+    os.makedirs(os.path.dirname(LOCAL_PROCESSED_PATH), exist_ok=True)
+    shutil.copy2(processed_path, LOCAL_PROCESSED_PATH)
+    logger.info(f"Created standardized copy at {LOCAL_PROCESSED_PATH}")
+    
+    # Log to MLflow explicitly
     try:
-        # Define potential data directories
-        potential_dirs = [
-            "/tmp/airflow_data",
-            "/usr/local/airflow/tmp",
-            "/tmp",
-            "/usr/local/airflow/dags/data",
-            os.path.join(os.getcwd(), "data")
-        ]
+        # Initialize MLflow
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
         
-        # Find a writable directory for output
-        output_dir = None
-        for dir_path in potential_dirs:
-            try:
-                logger.info(f"Testing directory for output: {dir_path}")
-                if not os.path.exists(dir_path):
-                    os.makedirs(dir_path, exist_ok=True)
-                # Test if we can write to this directory
-                test_file = os.path.join(dir_path, "test_write.tmp")
-                with open(test_file, 'w') as f:
-                    f.write("test")
-                os.remove(test_file)
-                output_dir = dir_path
-                logger.info(f"Using directory for output: {output_dir}")
-                break
-            except (PermissionError, OSError) as e:
-                logger.warning(f"Cannot use directory {dir_path} for output: {str(e)}")
-        
-        if not output_dir:
-            logger.error("Could not find a writable directory for output")
-            raise PermissionError("No writable directory found for storing processed data")
-        
-        # Get raw data path from previous task
-        raw_data_path = context['ti'].xcom_pull(task_ids='import_data_task', key='data_path')
-        logger.info(f"Raw data path from XCom: {raw_data_path}")
-        
-        if not raw_data_path:
-            logger.warning("Failed to get data_path from previous tasks")
+        with mlflow.start_run(run_name="data_processing") as run:
+            # Log the artifact
+            mlflow.log_artifact(processed_path, artifact_path="processed_data")
+            mlflow.log_param("raw_data_path", raw_data_path)
+            mlflow.log_param("processed_shape", str(df.shape))
+            mlflow.log_metric("num_rows", df.shape[0])
+            mlflow.log_metric("num_columns", df.shape[1])
             
-            # Try alternate XCom keys
-            alt_keys = ['raw_data_path', 'file_path', 'download_path']
-            for key in alt_keys:
-                raw_data_path = context['ti'].xcom_pull(task_ids='import_data_task', key=key)
-                if raw_data_path:
-                    logger.info(f"Found data path using alternate key '{key}': {raw_data_path}")
-                    break
-            
-            if not raw_data_path:
-                logger.warning("No data path found in any XCom keys, searching for CSV files")
-                
-                # Search for any CSV files in common locations
-                for location in potential_dirs:
-                    if os.path.exists(location):
-                        logger.info(f"Searching for CSV files in {location}")
-                        csv_files = []
-                        for root, dirs, files in os.walk(location):
-                            for file in files:
-                                if file.endswith('.csv') and 'loss_history' in file.lower():
-                                    csv_files.append(os.path.join(root, file))
-                        
-                        if csv_files:
-                            # Sort by modification time to get the newest
-                            raw_data_path = sorted(csv_files, key=os.path.getmtime, reverse=True)[0]
-                            logger.info(f"Found CSV file to use: {raw_data_path}")
-                            break
-        
-        # Verify the file exists and has content
-        if not raw_data_path or not os.path.exists(raw_data_path):
-            logger.warning(f"Data file does not exist at path: {raw_data_path}")
-            
-            # Try backup paths
-            backup_paths = context['ti'].xcom_pull(task_ids='import_data_task', key='backup_paths') or []
-            for backup_path in backup_paths:
-                if os.path.exists(backup_path):
-                    raw_data_path = backup_path
-                    logger.info(f"Using backup path: {raw_data_path}")
-                    break
-            
-            # If still not found, try to download directly from S3
-            if not raw_data_path or not os.path.exists(raw_data_path):
-                logger.warning("Attempting to download data directly from S3")
-                try:
-                    s3_client = boto3.client('s3', region_name=config.AWS_REGION)
-                    bucket = DATA_BUCKET
-                    key = config.RAW_DATA_KEY
-                    
-                    # Create a new local path
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    filename = os.path.basename(key)
-                    local_path = os.path.join(output_dir, f"recovery_{timestamp}_{filename}")
-                    
-                    # Download the file
-                    logger.info(f"Downloading from s3://{bucket}/{key} to {local_path}")
-                    os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                    s3_client.download_file(bucket, key, local_path)
-                    raw_data_path = local_path
-                    logger.info(f"Successfully downloaded recovery file to {local_path}")
-                except Exception as e:
-                    logger.error(f"Recovery download failed: {str(e)}")
-        
-        # If still not found, check for test data in the repo
-        if not raw_data_path or not os.path.exists(raw_data_path):
-            logger.warning("Checking for test data in the repository")
-            test_data_locations = [
-                "dags/data/ut_loss_history_1.csv",
-                "tests/data/ut_loss_history_1.csv",
-                "data/ut_loss_history_1.csv"
-            ]
-            
-            for test_path in test_data_locations:
-                full_path = os.path.abspath(test_path)
-                if os.path.exists(full_path):
-                    raw_data_path = full_path
-                    logger.info(f"Using test data from repository: {raw_data_path}")
-                    break
-        
-        # If still not found, raise error
-        if not raw_data_path or not os.path.exists(raw_data_path):
-            logger.error("Could not find or recover data file")
-            
-            # List all files in current directory for debugging
-            cwd = os.getcwd()
-            logger.info(f"Current working directory: {cwd}")
-            logger.info(f"Files in current directory: {os.listdir(cwd)}")
-            
-            # Create a minimal dummy dataset as last resort
-            logger.warning("Creating a minimal dummy dataset as last resort")
-            dummy_path = os.path.join(output_dir, "dummy_data.csv")
-            try:
-                with open(dummy_path, 'w') as f:
-                    f.write("il_total,eey,pure_premium\n")
-                    f.write("1000,10,100\n")
-                    f.write("2000,20,100\n")
-                    f.write("3000,30,100\n")
-                    f.write("4000,40,100\n")
-                    f.write("5000,50,100\n")
-                raw_data_path = dummy_path
-                logger.info(f"Created dummy dataset at {dummy_path}")
-            except Exception as e:
-                logger.error(f"Failed to create dummy dataset: {str(e)}")
-                raise FileNotFoundError("Data file not found and all recovery attempts failed")
-        
-        # Verify file size to ensure it's not empty
-        file_size = os.path.getsize(raw_data_path)
-        if file_size == 0:
-            logger.error(f"Data file exists but is empty: {raw_data_path}")
-            raise ValueError("Data file exists but is empty")
-        
-        logger.info(f"Using raw data file: {raw_data_path} ({file_size} bytes)")
-        
-        # Process the data
-        try:
-            # Generate the output path for the processed data
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            processed_path = os.path.join(output_dir, f"processed_{timestamp}.parquet")
-            
-            # Check if we should apply feature engineering
-            apply_feature_engineering = True  # Default to True for feature engineering
-            logger.info(f"Feature engineering is {'enabled' if apply_feature_engineering else 'disabled'}")
-            
-            # If feature engineering is disabled and input is already parquet, 
-            # we can potentially just copy the file
-            input_is_parquet = raw_data_path.lower().endswith('.parquet')
-            
-            if not apply_feature_engineering and input_is_parquet:
-                # Simple copy for already clean parquet data
-                logger.info(f"Dataset is already clean, copying file with minimal processing")
-                
-                try:
-                    # Load and save to ensure format compatibility
-                    df = pd.read_parquet(raw_data_path)
-                    
-                    # Ensure target column exists
-                    if 'trgt' not in df.columns and 'il_total' in df.columns and 'eey' in df.columns:
-                        logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
-                        df['trgt'] = df['il_total'] / df['eey']
-                        
-                    df.to_parquet(processed_path, index=False)
-                    logger.info(f"File copied with minimal processing to {processed_path}")
-                except Exception as e:
-                    logger.warning(f"Error in simple copy: {str(e)}, falling back to processing")
-                    # If copy fails, continue to regular processing
-                    apply_feature_engineering = True
-            
-            # Standard processing path
-            if apply_feature_engineering or not input_is_parquet:
-                logger.info(f"Processing data from {raw_data_path} to {processed_path}")
-                
-                # Use preprocessing module for data processing
-                try:
-                    # Load preprocessing module
-                    import importlib
-                    try:
-                        preprocessing = importlib.import_module('tasks.preprocessing')
-                        logger.info("Successfully imported preprocessing module")
-                    except ImportError:
-                        logger.warning("Could not import tasks.preprocessing, attempting direct load of file")
-                        import sys
-                        # Don't re-import os - it's already imported at the top level
-                        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                        preprocessing = importlib.import_module('preprocessing')
-                    
-                    # Call the preprocess_data function without the apply_feature_engineering parameter
-                    processed_data = preprocessing.preprocess_data(
-                        data_path=raw_data_path,
-                        output_path=processed_path,
-                        force_reprocess=True
-                    )
-                    logger.info(f"Data processed successfully to {processed_path}")
-                except Exception as e:
-                    logger.error(f"Error in data preprocessing: {str(e)}")
-                    # Try with simpler processing as fallback
-                    try:
-                        logger.info("Trying simplified processing as fallback")
-                        # Load the data directly
-                        file_ext = os.path.splitext(raw_data_path)[1].lower()
-                        
-                        if file_ext == '.parquet':
-                            df = pd.read_parquet(raw_data_path)
-                        elif file_ext == '.xlsx':
-                            df = pd.read_excel(raw_data_path)
-                        else:  # Default to CSV
-                            # Try different encodings
-                            encodings = ['utf-8', 'latin-1', 'ISO-8859-1']
-                            for encoding in encodings:
-                                try:
-                                    df = pd.read_csv(raw_data_path, encoding=encoding, on_bad_lines='skip')
-                                    logger.info(f"Successfully loaded CSV with encoding: {encoding}")
-                                    break
-                                except Exception as encoding_err:
-                                    logger.warning(f"Failed with encoding {encoding}: {str(encoding_err)}")
-                            else:
-                                # If all encodings fail, use a more permissive approach
-                                df = pd.read_csv(raw_data_path, encoding='latin-1', on_bad_lines='skip', engine='python')
-                                
-                        logger.info(f"Loaded data with shape: {df.shape}")
-                        
-                        # Ensure target column exists
-                        if 'trgt' not in df.columns and 'il_total' in df.columns and 'eey' in df.columns:
-                            df['trgt'] = df['il_total'] / df['eey']
-                            
-                        # Save directly to output
-                        df.to_parquet(processed_path, index=False)
-                        logger.info(f"Fallback processing completed to {processed_path}")
-                    except Exception as fallback_err:
-                        logger.error(f"Fallback processing also failed: {str(fallback_err)}")
-                        
-                        # Create minimal dataset as absolute last resort
-                        try:
-                            logger.warning("Creating a minimal processed dataset as last resort")
-                            minimal_df = pd.DataFrame({
-                                'il_total': [1000, 2000, 3000, 4000, 5000],
-                                'eey': [10, 20, 30, 40, 50],
-                                'trgt': [100, 100, 100, 100, 100]
-                            })
-                            minimal_df.to_parquet(processed_path, index=False)
-                            logger.info(f"Created minimal processed dataset at {processed_path}")
-                        except Exception as minimal_err:
-                            logger.error(f"Failed to create minimal dataset: {str(minimal_err)}")
-                            raise e  # Raise the original error
-            
-            # Ensure we have a valid processed path
-            if not processed_path or not os.path.exists(processed_path):
-                logger.error("Processed data file not created")
-                raise FileNotFoundError("Processed data file not created")
-            
-            # Log the processed file size
-            processed_size = os.path.getsize(processed_path)
-            logger.info(f"Processed file size: {processed_size} bytes")
-            
-            if processed_size == 0:
-                logger.error("Processed file exists but is empty")
-                raise ValueError("Processed file exists but is empty")
-            
-            # Create a standardized version at the expected location
-            try:
-                logger.info(f"Creating standardized version at {LOCAL_PROCESSED_PATH}")
-                os.makedirs(os.path.dirname(LOCAL_PROCESSED_PATH), exist_ok=True)
-                shutil.copy2(processed_path, LOCAL_PROCESSED_PATH)
-                logger.info(f"Standardized version created at {LOCAL_PROCESSED_PATH}")
-            except Exception as e:
-                logger.warning(f"Failed to create standardized version: {str(e)}")
-                # Continue using the original processed path
-                
-            # Store processed data path in XCom
-            context['ti'].xcom_push(key='processed_data_path', value=processed_path)
-            context['ti'].xcom_push(key='standardized_processed_path', value=LOCAL_PROCESSED_PATH)
-            
-            # Log completion
-            logger.info(f"Data processing complete. Output at {processed_path}")
-            return {
-                'processed_data_path': processed_path,
-                'standardized_processed_path': LOCAL_PROCESSED_PATH,
-                'raw_data_path': raw_data_path,
-                'status': 'success'
-            }
-        except Exception as e:
-            logger.error(f"Error in processing data: {str(e)}")
-            raise e
-            
-    except Exception as e:
-        logger.error(f"Error in process_data task: {str(e)}")
-        logger.error(f"Data processing failed: {str(e)}")
-        raise
+            # Log the run ID for downstream tasks
+            run_id = run.info.run_id
+            logger.info(f"MLflow run ID: {run_id}")
+            ti.xcom_push(key='mlflow_run_id', value=run_id)
+    except Exception as mlflow_err:
+        logger.warning(f"Failed to log to MLflow: {str(mlflow_err)}")
+        # Continue even if MLflow logging fails - we still have the file
+    
+    # Push paths to XCom - these must be valid paths that actually exist
+    ti.xcom_push(key='processed_data_path', value=processed_path)
+    ti.xcom_push(key='standardized_processed_path', value=LOCAL_PROCESSED_PATH)
+    
+    # Return the processed path (will be automatically pushed to XCom as return_value)
+    return processed_path
 
 def run_data_quality_checks(**context):
     """Run data quality checks on processed data"""
@@ -934,7 +707,7 @@ def check_for_drift(**context):
         else:
             logger.info("No data drift detected")
             decision = "train_models"
-        
+                
         # Store the decision in XCom
         context['ti'].xcom_push(key='drift_decision', value=decision)
         return decision
@@ -1006,56 +779,16 @@ def model_explainability(**context):
     logger.info("Starting model_explainability task")
     
     # Get training results
-    training_results = context['ti'].xcom_pull(task_ids='train_models_group.train_models_task')
+    ti = context['ti']
+    training_results = ti.xcom_pull(task_ids='train_models_group.train_models_task')
     
     if not training_results:
-        logger.warning("No training results found, model explainability will be limited")
-        # Return limited results instead of failing
-        limited_results = {
-            "status": "limited",
-            "message": "No training results found, explainability limited",
-            "feature_importance": {},
-            "model_id": "unknown"
-        }
-        context['ti'].xcom_push(key='explainability_results', value=limited_results)
-        return limited_results
+        raise AirflowException("No training results found for model explainability")
     
     # Get processed data path
-    processed_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
-    standardized_path = context['ti'].xcom_pull(task_ids='preprocess_data_task', key='standardized_processed_path')
-    
-    # Use standardized path if available, otherwise use processed path
-    data_path = None
-    if standardized_path is not None and os.path.exists(standardized_path):
-        data_path = standardized_path
-    elif processed_path is not None and os.path.exists(processed_path):
-        data_path = processed_path
-    
-    if not data_path:
-        logger.warning("No valid processed data path found, searching for alternatives")
-        # Search for parquet files in common locations
-        for directory in ["/tmp", "/tmp/airflow_data", "/usr/local/airflow/tmp"]:
-            if os.path.exists(directory):
-                parquet_files = [f for f in os.listdir(directory) 
-                                if f.endswith('.parquet') and os.path.isfile(os.path.join(directory, f))]
-                if parquet_files:
-                    # Use the most recent file
-                    latest_file = sorted(parquet_files, 
-                                        key=lambda f: os.path.getmtime(os.path.join(directory, f)), 
-                                        reverse=True)[0]
-                    data_path = os.path.join(directory, latest_file)
-                    logger.info(f"Found alternative data path: {data_path}")
-                    break
-    
-    if not data_path:
-        logger.warning("No valid processed data path found, explainability will be limited")
-        limited_results = {
-            "status": "limited",
-            "message": "No valid data path found, explainability limited",
-            "model_details": training_results
-        }
-        context['ti'].xcom_push(key='explainability_results', value=limited_results)
-        return limited_results
+    processed_path = ti.xcom_pull(task_ids='preprocess_data_task', key='processed_data_path')
+    if not processed_path or not os.path.exists(processed_path):
+        raise AirflowException(f"Processed data path not found: {processed_path}")
         
     # Get the best model from training results
     best_model = None
@@ -1074,55 +807,35 @@ def model_explainability(**context):
                 break
     
     if not best_model:
-        logger.warning("No completed model found in training results, explainability will be limited")
-        limited_results = {
-            "status": "limited",
-            "message": "No completed model found, explainability limited",
-            "training_summary": {k: v.get('status', 'unknown') for k, v in training_results.items() if isinstance(v, dict)}
-        }
-        context['ti'].xcom_push(key='explainability_results', value=limited_results)
-        return limited_results
+        raise AirflowException("No completed model found in training results")
     
     # Load features and target
-    try:
-        X = pd.read_parquet(data_path)
-        logger.info(f"Loaded dataframe with shape {X.shape}")
-        
-        # Extract target column if it exists
-        y = None
-        target_column = 'trgt'  # Use 'trgt' as the primary target column
-        
-        if target_column in X.columns:
-            y = X.pop(target_column)
-        elif 'pure_premium' in X.columns:
-            y = X.pop('pure_premium')
-        elif 'il_total' in X.columns and 'eey' in X.columns:
-            y = X['il_total'] / X['eey']
-            X = X.drop(['il_total', 'eey'], axis=1)
-        
-        if y is None:
-            logger.warning("Target column not found, explainability will be limited")
-        
-        # Run the explainability tracking
-        tracker = model_explainability.ModelExplainabilityTracker(best_model_id)
-        explainability_results = tracker.track_model_and_data(model=best_model, X=X, y=y, run_id=best_run_id)
-        
-        # Store results in XCom
-        context['ti'].xcom_push(key='explainability_results', value=explainability_results)
-        
-        return explainability_results
-        
-    except Exception as e:
-        logger.warning(f"Error in explainability analysis: {str(e)}")
-        # Return partial results instead of failing
-        limited_results = {
-            "status": "partial",
-            "message": f"Error during explainability analysis: {str(e)}",
-            "model_id": best_model_id,
-            "run_id": best_run_id
-        }
-        context['ti'].xcom_push(key='explainability_results', value=limited_results)
-        return limited_results
+    X = pd.read_parquet(processed_path)
+    logger.info(f"Loaded dataframe with shape {X.shape}")
+    
+    # Extract target column if it exists
+    y = None
+    target_column = 'trgt'  # Use 'trgt' as the primary target column
+    
+    if target_column in X.columns:
+        y = X.pop(target_column)
+    elif 'pure_premium' in X.columns:
+        y = X.pop('pure_premium')
+    elif 'il_total' in X.columns and 'eey' in X.columns:
+        y = X['il_total'] / X['eey']
+        X = X.drop(['il_total', 'eey'], axis=1)
+    
+    if y is None:
+        logger.warning("Target column not found, explainability will be limited")
+    
+    # Run the explainability tracking
+    tracker = model_explainability.ModelExplainabilityTracker(best_model_id)
+    explainability_results = tracker.track_model_and_data(model=best_model, X=X, y=y, run_id=best_run_id)
+    
+    # Store results in XCom
+    ti.xcom_push(key='explainability_results', value=explainability_results)
+    
+    return explainability_results
 
 def generate_predictions(**context):
     """Generate predictions using the trained model"""
@@ -1903,10 +1616,10 @@ def generate_predictions(**context):
             )
         except Exception as slack_error:
             logger.warning(f"Error sending Slack notification: {str(slack_error)}")
-            
+        
         return prediction_results
 
-
+    
 def archive_artifacts(**context):
     """Archive model artifacts to S3"""
     try:
@@ -2004,7 +1717,7 @@ def archive_artifacts(**context):
             logger.warning(f"Failed to archive artifacts for {failed_uploads} models")
             
         return uploaded_count
-            
+        
     except Exception as e:
         logger.error(f"Error archiving artifacts: {str(e)}")
         # Don't fail the DAG if archiving fails
@@ -2065,7 +1778,7 @@ def wait_for_data_validation(**context):
                 "message": f"Data automatically approved with quality score {quality_score}",
                 "timeout_minutes": AUTO_APPROVE_TIMEOUT_MINUTES
             })
-            return True
+        return True
     
     # Always set to auto-approve since we're not doing manual validation here
     logger.info("Auto-approving data validation")
@@ -2267,24 +1980,13 @@ def deploy_model(**context):
     logger.info("Starting deploy_model task")
     
     # Get the best model run_id from XCom
-    best_run_id = context['ti'].xcom_pull(task_ids='train_models_group.train_models_task')
+    ti = context['ti']
+    best_run_id = ti.xcom_pull(task_ids='train_models_group.train_models_task')
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     if not best_run_id:
-        logger.warning("No run_id provided by train_models_group.train_models_task, proceeding with limited deployment")
-        
-        # Create a placeholder deployment record
-        deployment_results = {
-            "status": "limited",
-            "message": "No model run_id available, created placeholder deployment",
-            "model_id": f"placeholder_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            "created_at": datetime.now().isoformat(),
-            "deployment_mode": "placeholder"
-        }
-        
-        # Store results in XCom for downstream tasks
-        context['ti'].xcom_push(key='deployment_results', value=deployment_results)
-        return deployment_results
-        
+        raise AirflowException("No run_id provided by train_models_group.train_models_task")
+    
     logger.info(f"Deploying model with run_id: {best_run_id}")
     
     # Get MLflow client
@@ -2297,108 +1999,77 @@ def deploy_model(**context):
         logger.info(f"Deploying model_id: {best_model_id}")
     except Exception as e:
         logger.warning(f"Error getting run details: {str(e)}")
-        best_model_id = f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-    # Determine deployment mode based on the model's stage
-    deployment_mode = "first_deployment"
-    try:
-        # Find model versions for this run_id
-        filter_string = f"run_id='{best_run_id}'"
-        versions = client.search_model_versions(filter_string)
-        
-        if versions:
-            version = versions[0]  # Take the first matching version
-            
-            # If the model is already in production, this is a replacement
-            if (version.current_stage == "Production" and 
-                (version.name == "Model1" or version.name == "Model4")):
-                deployment_mode = "production_replacement"
-            elif version.current_stage == "Staging":
-                deployment_mode = "staging_to_production"
-            else:
-                deployment_mode = "new_deployment"
-                
-            logger.info(f"Deployment mode determined: {deployment_mode}")
-        else:
-            logger.warning(f"Could not find model version for run_id {best_run_id}")
-    except Exception as e:
-        logger.warning(f"Error checking model versions: {str(e)}")
-        deployment_mode = "error_checking_versions"
+        best_model_id = f"model_{timestamp}"
+    
+    # Create a temporary directory for model artifacts
+    temp_dir = tempfile.mkdtemp(prefix="model_deploy_")
+    logger.info(f"Created temp directory: {temp_dir}")
     
     # Download model artifacts
     try:
-        # Create a temporary directory for model artifacts
-        temp_dir = tempfile.mkdtemp(prefix="model_deploy_")
-        logger.info(f"Downloading model artifacts to {temp_dir}")
-        
-        try:
-            # Download the model
-            local_path = mlflow.artifacts.download_artifacts(
-                run_id=best_run_id,
-                artifact_path="model",
-                dst_path=temp_dir
-            )
-            logger.info(f"Model artifacts downloaded to {local_path}")
-        except Exception as download_err:
-            logger.warning(f"Could not download model artifacts: {str(download_err)}")
-            local_path = temp_dir
-            # Create a dummy file to simulate artifacts
-            with open(os.path.join(temp_dir, "dummy_model.txt"), "w") as f:
-                f.write(f"Placeholder for model {best_model_id} with run_id {best_run_id}")
-        
-        # Store model path in S3 for reference
-        s3_key = f"{config.MODEL_KEY_PREFIX}/deployed/{best_model_id}_{timestamp}"
-        
-        logger.info(f"Uploading deployment reference to S3: {s3_key}")
-        
-        # Create deployment metadata
-        deployment_metadata = {
-            "model_id": best_model_id,
-            "run_id": best_run_id,
-            "deployed_at": datetime.now().isoformat(),
-            "deployed_by": "airflow",
-            "deployment_mode": deployment_mode
-        }
-        
-        # Save metadata to a file
-        metadata_path = os.path.join(temp_dir, "deployment_metadata.json")
-        with open(metadata_path, 'w') as f:
-            json.dump(deployment_metadata, f, indent=2)
-        
-        # Upload to S3
-        try:
-            s3_hook = S3Hook()
-            s3_hook.load_file(
-                filename=metadata_path,
-                key=f"{s3_key}/metadata.json",
-                bucket_name=S3_BUCKET,
-                replace=True
-            )
-            logger.info(f"Deployment metadata uploaded to S3")
-        except Exception as s3_err:
-            logger.warning(f"Error uploading to S3: {str(s3_err)}")
-        
-        # Clean up temporary directory
-        shutil.rmtree(temp_dir)
+        local_path = mlflow.artifacts.download_artifacts(
+            run_id=best_run_id,
+            artifact_path="model",
+            dst_path=temp_dir
+        )
+        logger.info(f"Model artifacts downloaded to {local_path}")
     except Exception as e:
-        logger.warning(f"Error handling model artifacts: {str(e)}")
-        # Continue with limited deployment instead of failing
+        logger.warning(f"Error downloading model artifacts: {str(e)}")
+        # Create dummy file to indicate error
+        dummy_path = os.path.join(temp_dir, "error.txt")
+        with open(dummy_path, "w") as f:
+            f.write(f"Error downloading model: {str(e)}")
+        local_path = dummy_path
+    
+    # Store model metadata in S3
+    s3_key = f"{config.MODEL_KEY_PREFIX}/deployed/{best_model_id}_{timestamp}"
+    logger.info(f"Creating deployment metadata at: {s3_key}")
+    
+    # Create deployment metadata
+    deployment_metadata = {
+        "model_id": best_model_id,
+        "run_id": best_run_id,
+        "deployed_at": datetime.now().isoformat(),
+        "deployed_by": "airflow",
+        "deployment_mode": "production"
+    }
+    
+    # Save metadata to file
+    metadata_path = os.path.join(temp_dir, "deployment_metadata.json")
+    with open(metadata_path, 'w') as f:
+        json.dump(deployment_metadata, f, indent=2)
+    
+    # Upload to S3
+    try:
+        s3_hook = S3Hook()
+        s3_hook.load_file(
+            filename=metadata_path,
+            key=f"{s3_key}/metadata.json",
+            bucket_name=S3_BUCKET,
+            replace=True
+        )
+        logger.info(f"Deployment metadata uploaded to S3")
+    except Exception as e:
+        logger.warning(f"Error uploading metadata to S3: {str(e)}")
     
     # Log deployment to MLflow
     try:
         with mlflow.start_run(run_id=best_run_id):
             mlflow.log_param("deployed_at", datetime.now().isoformat())
-            mlflow.log_param("deployment_mode", deployment_mode)
+            mlflow.log_param("deployment_mode", "production")
             mlflow.log_metric("deployment_success", 1.0)
             
             # Set tag for easy filtering of deployed models
             client.set_tag(best_run_id, "deployed", "true")
-            
-        logger.info(f"Deployment logged to MLflow for run_id {best_run_id}")
     except Exception as e:
         logger.warning(f"Error logging deployment to MLflow: {str(e)}")
     
-    logger.info(f"Model {best_model_id} deployment process completed")
+    # Clean up temporary directory
+    try:
+        shutil.rmtree(temp_dir)
+        logger.info(f"Cleaned up temp directory")
+    except Exception as e:
+        logger.warning(f"Error cleaning up temp directory: {str(e)}")
     
     # Return deployment results
     deployment_results = {
@@ -2406,10 +2077,10 @@ def deploy_model(**context):
         "message": "Model deployment process completed",
         "model_id": best_model_id,
         "run_id": best_run_id,
-        "deployment_mode": deployment_mode
+        "s3_path": f"s3://{S3_BUCKET}/{s3_key}"
     }
     
-    context['ti'].xcom_push(key='deployment_results', value=deployment_results)
+    ti.xcom_push(key='deployment_results', value=deployment_results)
     return deployment_results
 
 # Create the DAG

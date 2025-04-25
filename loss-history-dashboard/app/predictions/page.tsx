@@ -98,10 +98,10 @@ export default function PredictionsPage() {
             Export
           </Button>
           <Link href="/model-metrics">
-            <Button size="sm">
-              <TrendingUp className="mr-2 h-4 w-4" />
-              Run Prediction
-            </Button>
+          <Button size="sm">
+            <TrendingUp className="mr-2 h-4 w-4" />
+            Run Prediction
+          </Button>
           </Link>
         </div>
       </div>
@@ -109,16 +109,16 @@ export default function PredictionsPage() {
       {/* Main forecast chart */}
       <Link href="/model-explainability">
         <Card className="relative hover:shadow-md transition-shadow cursor-pointer">
-          <CardHeader className="pb-2">
-            <div className="flex justify-between items-center">
-              <div>
-                <CardTitle className="text-lg">Loss Forecasting</CardTitle>
-                <CardDescription>
-                  Historical and predicted losses with {confidenceInterval}% confidence interval
-                </CardDescription>
-              </div>
-              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                Model: {modelSelection === 'model4' ? 'Fast Decay (17.9% more accurate)' : 'Traditional'}
+        <CardHeader className="pb-2">
+          <div className="flex justify-between items-center">
+            <div>
+              <CardTitle className="text-lg">Loss Forecasting</CardTitle>
+              <CardDescription>
+                Historical and predicted losses with {confidenceInterval}% confidence interval
+              </CardDescription>
+            </div>
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+              Model: {modelSelection === 'model4' ? 'Fast Decay (17.9% more accurate)' : 'Traditional'}
               </Badge>
             </div>
           </CardHeader>
@@ -286,33 +286,33 @@ export default function PredictionsPage() {
               <ul className="text-sm space-y-2">
                 <Link href="/threshold-management">
                   <li className="flex items-start cursor-pointer hover:bg-gray-100 p-1 rounded-md">
-                    <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                    </div>
-                    <div>
-                      <strong>Adjust reserve capital</strong>: Optimize capital allocation based on the {formatCurrency(potentialSavings)} potential savings identified
-                    </div>
-                  </li>
+                  <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  </div>
+                  <div>
+                    <strong>Adjust reserve capital</strong>: Optimize capital allocation based on the {formatCurrency(potentialSavings)} potential savings identified
+                  </div>
+                </li>
                 </Link>
                 <Link href="/risk-categories">
                   <li className="flex items-start cursor-pointer hover:bg-gray-100 p-1 rounded-md">
-                    <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                    </div>
-                    <div>
-                      <strong>Focus on high-impact risk categories</strong>: Prioritize mitigation for Fire (+8.5%) and Water (+12.3%) damage losses
-                    </div>
-                  </li>
+                  <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  </div>
+                  <div>
+                    <strong>Focus on high-impact risk categories</strong>: Prioritize mitigation for Fire (+8.5%) and Water (+12.3%) damage losses
+                  </div>
+                </li>
                 </Link>
                 <Link href="/settings">
                   <li className="flex items-start cursor-pointer hover:bg-gray-100 p-1 rounded-md">
-                    <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                    </div>
-                    <div>
-                      <strong>Adjust premium structure</strong>: Use Model4's enhanced accuracy to refine risk-based pricing
-                    </div>
-                  </li>
+                  <div className="bg-green-100 text-green-700 p-1 rounded-full mt-0.5 mr-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  </div>
+                  <div>
+                    <strong>Adjust premium structure</strong>: Use Model4's enhanced accuracy to refine risk-based pricing
+                  </div>
+                </li>
                 </Link>
               </ul>
             </div>
@@ -320,10 +320,10 @@ export default function PredictionsPage() {
         </CardContent>
         <CardFooter className="border-t p-4 flex justify-end">
           <Link href="/business-insights">
-            <Button variant="outline" size="sm" className="mr-2">
-              <BarChart className="mr-2 h-4 w-4" />
-              View Full Report
-            </Button>
+          <Button variant="outline" size="sm" className="mr-2">
+            <BarChart className="mr-2 h-4 w-4" />
+            View Full Report
+          </Button>
           </Link>
           <Link href="/model-metrics">
             <Button size="sm">
@@ -333,7 +333,7 @@ export default function PredictionsPage() {
           </Link>
         </CardFooter>
       </Card>
-    </div>
+            </div>
   )
 }
 

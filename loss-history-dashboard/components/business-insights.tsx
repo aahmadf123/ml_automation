@@ -24,6 +24,64 @@ import dynamic from 'next/dynamic';
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, ExclamationCircleIcon, CheckCircleIcon, SparklesIcon } from "@heroicons/react/24/outline";
 
+// ==================== Type Definitions ====================
+
+interface HistoricalDataPoint {
+  year: number;
+  actual: number | null;
+  predicted: number | null;
+  ratio: number | null;
+}
+
+interface ProjectedDataPoint {
+  date: Date;
+  value: number;
+}
+
+interface DecileDataPoint {
+  decile: number;
+  predicted: number;
+  actual: number;
+}
+
+interface PremiumData {
+  decile: number;
+  actual2023: number;
+  predicted2024: number;
+  predicted2025: number;
+  predicted2026: number;
+  risk: string;
+  pricingStatus: string;
+  riskReduction: {
+    potential: number;
+    savings: number;
+    action: string;
+  };
+  peerComparison: {
+    position: string;
+    averagePremium: number;
+  };
+  riskTrend: string;
+  optimizationImpact: {
+    revenue: string;
+    retention: string;
+  };
+  recommendation: string;
+}
+
+interface RiskTransition {
+  source: string;
+  target: string;
+  value: number;
+  count: number;
+}
+
+interface ConfidenceInterval {
+  [year: number]: [number, number];
+}
+
+// ==================== Dynamic Imports ====================
+
 // Dynamically import Plotly to avoid SSR issues
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
 
@@ -33,176 +91,7 @@ const TooltipDynamic = dynamic(() => import('recharts').then(mod => mod.Tooltip)
 const Layer = dynamic(() => import('recharts').then(mod => mod.Layer), { ssr: false });
 const Rectangle = dynamic(() => import('recharts').then(mod => mod.Rectangle), { ssr: false });
 
-// Regions and products for filters
-const regions = ["Northeast", "Southeast", "Midwest", "Southwest", "West"];
-const products = ["Auto", "Home", "Commercial", "Life", "Health"];
-
-// Sample historical and projected data
-const historicalLossData = [
-  { year: 2018, actual: 12500000, predicted: null, ratio: null },
-  { year: 2019, actual: 14200000, predicted: null, ratio: null },
-  { year: 2020, actual: 13800000, predicted: null, ratio: null },
-  { year: 2021, actual: 15400000, predicted: 15100000, ratio: 1.02 },
-  { year: 2022, actual: 16700000, predicted: 16200000, ratio: 1.03 },
-  { year: 2023, actual: 17900000, predicted: 17500000, ratio: 1.02 },
-  { year: 2024, actual: 18700000, predicted: 18900000, ratio: 0.99 },
-  { year: 2025, actual: null, predicted: 19800000, ratio: null },
-  { year: 2026, actual: null, predicted: 20700000, ratio: null },
-  { year: 2027, actual: null, predicted: 21800000, ratio: null },
-];
-
-// Confidence interval data (95% confidence)
-const confidenceIntervals = {
-  2025: [0.92, 1.08],
-  2026: [0.89, 1.14],
-  2027: [0.85, 1.22]
-};
-
-// Sample historical and projected data
-const historicalLossData = [
-  { year: 2018, actual: 12500000, predicted: null, ratio: null },
-  { year: 2019, actual: 14200000, predicted: null, ratio: null },
-  { year: 2020, actual: 13800000, predicted: null, ratio: null },
-  { year: 2021, actual: 15400000, predicted: 15100000, ratio: 1.02 },
-  { year: 2022, actual: 16700000, predicted: 16200000, ratio: 1.03 },
-  { year: 2023, actual: 17900000, predicted: 17500000, ratio: 1.02 },
-  { year: 2024, actual: 18700000, predicted: 18900000, ratio: 0.99 },
-  { year: 2025, actual: null, predicted: 19800000, ratio: null },
-  { year: 2026, actual: null, predicted: 20700000, ratio: null },
-  { year: 2027, actual: null, predicted: 21800000, ratio: null },
-];
-
-// Confidence interval data (95% confidence)
-const confidenceIntervals = {
-  2025: [0.92, 1.08],
-  2026: [0.89, 1.14],
-  2027: [0.85, 1.22]
-};
-
-// Sample historical and projected data
-const historicalLossData = [
-  { year: 2018, actual: 12500000, predicted: null, ratio: null },
-  { year: 2019, actual: 14200000, predicted: null, ratio: null },
-  { year: 2020, actual: 13800000, predicted: null, ratio: null },
-  { year: 2021, actual: 15400000, predicted: 15100000, ratio: 1.02 },
-  { year: 2022, actual: 16700000, predicted: 16200000, ratio: 1.03 },
-  { year: 2023, actual: 17900000, predicted: 17500000, ratio: 1.02 },
-  { year: 2024, actual: 18700000, predicted: 18900000, ratio: 0.99 },
-  { year: 2025, actual: null, predicted: 19800000, ratio: null },
-  { year: 2026, actual: null, predicted: 20700000, ratio: null },
-  { year: 2027, actual: null, predicted: 21800000, ratio: null },
-];
-
-// Confidence interval data (95% confidence)
-const confidenceIntervals = {
-  2025: [0.92, 1.08],
-  2026: [0.89, 1.14],
-  2027: [0.85, 1.22]
-};
-    optimizationImpact: { revenue: "+1.8%", retention: "-0.2%" },
-    recommendation: "Implement customer education program to reduce preventable claims"
-  },
-  { 
-    decile: 4, 
-    actual2023: 210, 
-    predicted2024: 215, 
-    predicted2025: 222, 
-    predicted2026: 231, 
-    risk: "Low-Medium",
-    pricingStatus: "optimal",
-    riskReduction: { potential: 15, savings: 32000, action: "Conduct property inspections" },
-    peerComparison: { position: "average", averagePremium: 228 },
-    riskTrend: "worsening",
-    optimizationImpact: { revenue: "+3.2%", retention: "-0.8%" },
-    recommendation: "Offer risk assessment services to reduce potential claims"
-  },
-  {
-    decile: 5, 
-    actual2023: 256, 
-    predicted2024: 262, 
-    predicted2025: 278, 
-    predicted2026: 288, 
-    risk: "Medium",
-    pricingStatus: "underpriced",
-    riskReduction: { potential: 18, savings: 48000, action: "Implement risk mitigation technologies" },
-    peerComparison: { position: "bottom40", averagePremium: 305 },
-    riskTrend: "worsening",
-    optimizationImpact: { revenue: "+6.5%", retention: "-1.2%" },
-    recommendation: "Increase premiums by 6-8% and offer risk mitigation incentives"
-  },
-  {
-    decile: 6, 
-    actual2023: 320, 
-    predicted2024: 318, 
-    predicted2025: 335, 
-    predicted2026: 352, 
-    risk: "Medium",
-    pricingStatus: "optimal",
-    riskReduction: { potential: 22, savings: 65000, action: "Require safety equipment upgrades" },
-    peerComparison: { position: "average", averagePremium: 347 },
-    riskTrend: "improving",
-    optimizationImpact: { revenue: "+4.1%", retention: "-0.9%" },
-    recommendation: "Target for safety equipment upgrades with premium discounts"
-  },
-  {
-    decile: 7, 
-    actual2023: 387, 
-    predicted2024: 395, 
-    predicted2025: 412, 
-    predicted2026: 428, 
-    risk: "Medium-High",
-    pricingStatus: "underpriced",
-    riskReduction: { potential: 25, savings: 92000, action: "Implement comprehensive risk management" },
-    peerCom
-  { source: "Medium-High", target: "Medium", value: 8, count: 1600 },
-  { source: "Medium-High", target: "Medium-High", value: 62, count: 12400 },
-  { source: "Medium-High", target: "High", value: 30, count: 6000 },
-  { source: "High", target: "Medium-High", value: 7, count: 1400 },
-  { source: "High", target: "High", value: 63, count: 12600 },
-  { source: "High", target: "Very High", value: 30, count: 6000 },
-  { source: "Very High", target: "High", value: 5, count: 1000 },
-  { source: "Very High", target: "Very High", value: 70, count: 14000 },
-  { source: "Very High", target: "Extreme", value: 25, count: 5000 },
-  { source: "Extreme", target: "Very High", value: 3, count: 600 },
-  { source: "Extreme", target: "Extreme", value: 97, count: 19400 },
-];
-
-// Calculate loss accuracy
-const lossAccuracy = historicalLossData
-  .filter(d => d.actual && d.predicted)
-  .map(d => Math.abs(1 - d.ratio || 0))
-  .reduce((sum, val, _, arr) => sum + val / arr.length, 0);
-
-const lossAccuracyFormatted = (100 - lossAccuracy * 100).toFixed(1) + '%';
-
-// Helper function for formatting currency
-const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(value);
-};
-
-// Format currency in millions for axis labels
-const formatMillions = (value: number) => {
-  return `$${(value
-
-// Component for visualization of historical vs projected losses
-const HistoricalVsProjectedLosses = () => {
-  const [forecastYears, setForecastYears] = useState<number>(3);
-  const [showConfidenceInterval, setShowConfidenceInterval] = useState<boolean>(true);
-  const [compareToBaseline, setCompareToBaseline] = useState<boolean>(true);
-  const [date, setDate] = useState<Date | undefined>(new Date());
-
-// Calculate loss accuracy
-const lossAccuracy = historicalLossData
-  .filter(d => d.actual && d.predicted)
-  .map(d => Math.abs(1 - d.ratio || 0))
-  .reduce((sum, val, _, arr) => sum + val / arr.length, 0);
-
-const lossAccuracyFormatted = (100 - lossAccuracy * 100).toFixed(1) + '%';
+// ==================== Utility Functions ====================
 
 // Helper function for formatting currency
 const formatCurrency = (value: number) => {
@@ -219,12 +108,31 @@ const formatMillions = (value: number) => {
   return `$${(value / 1000000).toFixed(0)}M`;
 };
 
+// Color mapping based on risk
+const getRiskColor = (risk: string) => {
+  const riskColors = {
+    "Very Low": "#1d4ed8", // Blue
+    "Low": "#3b82f6", 
+    "Low-Medium": "#38bdf8",
+    "Medium": "#a3e635", // Green
+    "Medium-High": "#facc15", // Yellow
+    "High": "#f97316", // Orange
+    "Very High": "#ef4444", // Red
+    "Extreme": "#b91c1c"
+  };
+  return riskColors[risk] || "#888888";
+};
+
 // Function to generate mock data when the API fails
-const generateMockData = (setHistoricalData, setProjectedData, setDecileData) => {
+const generateMockData = (
+  setHistoricalData: React.Dispatch<React.SetStateAction<ProjectedDataPoint[]>>,
+  setProjectedData: React.Dispatch<React.SetStateAction<ProjectedDataPoint[]>>,
+  setDecileData: React.Dispatch<React.SetStateAction<DecileDataPoint[]>>
+) => {
   // Generate sample data for testing
   setHistoricalData(historicalLossData.slice(0, 7).map(d => ({
     date: new Date(d.year, 0),
-    value: d.actual
+    value: d.actual || 0
   })));
   setProjectedData(historicalLossData.slice(7).map(d => ({
     date: new Date(d.year, 0),
@@ -237,82 +145,42 @@ const generateMockData = (setHistoricalData, setProjectedData, setDecileData) =>
   })));
 };
 
-// Component for visualization of historical vs projected losses
-const HistoricalVsProjectedLosses: React.FC = () => {
-  const [forecastYears, setForecastYears] = useState<number>(3);
-  const [showConfidenceInterval, setShowConfidenceInterval] = useState<boolean>(true);
-  const [compareToBaseline, setCompareToBaseline] = useState<boolean>(true);
-  const [date, setDate] = useState<Date | undefined>(new Date());
+// Helper function to aggregate data points
+function aggregateData(data: Array<{ date: Date; value: number }>, periodMonths: number) {
+  const aggregated: Array<{ date: Date; value: number }> = [];
   
-  // Baseline is a simple linear projection without ML
-  const baselineProjection = [
-    { year: 2025, predicted: 19200000 },
-    { year: 2026, predicted: 19800000 },
-    { year: 2027, predicted: 20400000 },
-  ];
+  for (let i = 0; i < data.length; i += periodMonths) {
+    const chunk = data.slice(i, i + periodMonths);
+    if (chunk.length > 0) {
+      // Use the last date in the period
+      const periodDate = chunk[chunk.length - 1].date;
+      // Sum the values
+      const periodValue = chunk.reduce((sum, point) => sum + point.value, 0);
+      
+      aggregated.push({
+        date: new Date(periodDate),
+        value: periodValue
+      });
+    }
+  }
   
-  // Custom tooltip for the chart
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload || !payload.length) return null;
-    
-    return (
-      <div className="bg-background border rounded-lg shadow-lg p-3 text-sm">
-        <h3 className="font-medium">{label}</h3>
-        {payload.map((item: any, index: number) => {
-          if (item.value === null) return null;
-          
-          return (
-            <div key={index} className="flex items-center mt-1">
-              <div 
-                className="w-3 h-3 rounded-full mr-2" 
-                style={{ backgroundColor: item.color }}
-              ></div>
-              <span className="font-medium">{item.name}:</span>
-              <span className="ml-2">{formatCurrency(item.value)}</span>
-            </div>
-          );
-        })}
-        
-        {payload[0]?.payload.ratio && (
-          <div className="mt-1 pt-1 border-t">
-            <span className="font-medium">Accuracy Ratio:</span>
-            <span className="ml-2">{(payload[0].payload.ratio * 100).toFixed(1)}%</span>
-          </div>
-        )}
-        
-        {payload[0]?.payload.year >= 2025 && showConfidenceInterval && (
-          <div className="mt-1 pt-1 border-t">
-            <span className="font-medium">95% Confidence Interval:</span>
-            <div className="ml-2">
-              {formatCurrency(payload[0].payload.predicted * confidenceIntervals[payload[0].payload.year][0])} - {formatCurrency(payload[0].payload.predicted * confidenceIntervals[payload[0].payload.year][1])}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-  
-  // Create visible data based on selected forecast years
-  const visibleData = historicalLossData.filter(d => d.year <= 2024 || d.year <= 2024 
-    "predicted2025": "2025 Prediction",
-    "predicted2026": "2026 Prediction"
-  };
-out ML
-  const baselineProjection = [
-    { year: 2025, predicted: 19200000 },
-    { year: 2026, predicted: 19800000 },
-    { year: 2027, predicted: 20400000 },
-  ];
-      maximumFractionDigits: 0
-    }).format(value);
-  };
-  
-  // Format currency in millions for axis labels
-  const formatMillions = (value: number) => {
-    return `$${(value / 1000000).toFixed(0)}M`;
-  };
-  
-  // Custom tooltip for the chart
+  return aggregated;
+}
+
+// ==================== Constants and Data ====================
+
+// Regions and products for filters
+const regions = ["Northeast", "Southeast", "Midwest", "Southwest", "West"];
+const products = ["Auto", "Home", "Commercial", "Life", "Health"];
+
+// Year labels for Premium predictions
+const yearLabels = {
+  "predicted2024": "2024 Prediction",
+  "predicted2025": "2025 Prediction",
+  "predicted2026": "2026 Prediction"
+};
+
+//
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || !payload.length) return null;
     
@@ -518,88 +386,83 @@ out ML
 
   // Create visible data based on selected forecast years
   const visibleData = historicalLossData.filter(d => d.year <= 2024 || d.year <= 2024 + forecastYears);
+  
+// Sample historical and projected data
+const historicalLossData = [
+  { year: 2018, actual: 12500000, predicted: null, ratio: null },
+  { year: 2019, actual: 14200000, predicted: null, ratio: null },
+  { year: 2020, actual: 13800000, predicted: null, ratio: null },
+  { year: 2021, actual: 15400000, predicted: 15100000, ratio: 1.02 },
+  { year: 2022, actual: 16700000, predicted: 16200000, ratio: 1.03 },
+  { year: 2023, actual: 17900000, predicted: 17500000, ratio: 1.02 },
+  { year: 2024, actual: 18700000, predicted: 18900000, ratio: 0.99 },
+  { year: 2025, actual: null, predicted: 19800000, ratio: null },
+  { year: 2026, actual: null, predicted: 20700000, ratio: null },
+  { year: 2027, actual: null, predicted: 21800000, ratio: null },
+];
 
-  return (
-    <Card className="w-full">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-xl font-semibold">Historical vs. Projected Losses</CardTitle>
-            <CardDescription>
-              Actual loss history compared with ML model projections
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant={"outline"}
-                  className="w-[240px] justify-start text-left font-normal"
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {date ? format(date, "PPP") : <span>Pick a date</span>}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  selected={date}
-                  onSelect={setDate}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="icon">
-                    <Printer className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Print Report</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="icon">
-                    <Download className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Download Data</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="flex-col space-y-8">
-          <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
-            <div className="flex gap-4 flex-wrap">
-              <div>
-                <span className="text-sm font-medium mr-2">Forecast Years:</span>
-                <Select 
-                  value={forecastYears.toString()} 
-                  onValueChange={(val) => setForecastYears(parseInt(val))}
-                >
-                  <SelectTrigger className="w-24">
-                    <SelectValue placeholder="Years" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 Year</SelectItem>
-                    <SelectItem value="2">2 Years</SelectItem>
-                    <SelectItem value="3">3 Years</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="show-confidence"
+// Confidence interval data (95% confidence)
+const confidenceIntervals = {
+  2025: [0.92, 1.08],
+  2026: [0.89, 1.14],
+  2027: [0.85, 1.22]
+};
+
+// Sample risk transitions data
+const riskTransitionData = [
+  { source: "Medium-High", target: "Medium", value: 8, count: 1600 },
+  { source: "Medium-High", target: "Medium-High", value: 62, count: 12400 },
+  { source: "Medium-High", target: "High", value: 30, count: 6000 },
+  { source: "High", target: "Medium-High", value: 7, count: 1400 },
+  { source: "High", target: "High", value: 63, count: 12600 },
+  { source: "High", target: "Very High", value: 30, count: 6000 },
+  { source: "Very High", target: "High", value: 5, count: 1000 },
+  { source: "Very High", target: "Very High", value: 70, count: 14000 },
+  { source: "Very High", target: "Extreme", value: 25, count: 5000 },
+  { source: "Extreme", target: "Very High", value: 3, count: 600 },
+  { source: "Extreme", target: "Extreme", value: 97, count: 19400 },
+];
+
+// Sample pure premium by decile data
+const purePremiumByDecile = [
+  { 
+    decile: 1, 
+    actual2023: 142, 
+    predicted2024: 145, 
+    predicted2025: 150, 
+    predicted2026: 155, 
+    risk: "Very Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 8, savings: 12000, action: "Maintain current approach" },
+    peerComparison: { position: "top20", averagePremium: 152 },
+    riskTrend: "stable",
+    optimizationImpact: { revenue: "+0.8%", retention: "+0.5%" },
+    recommendation: "No change needed; risk is well-managed"
+  },
+  { 
+    decile: 2, 
+    actual2023: 165, 
+    predicted2024: 168, 
+    predicted2025: 174, 
+    predicted2026: 182, 
+    risk: "Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 10, savings: 18000, action: "Basic risk awareness program" },
+    peerComparison: { position: "top30", averagePremium: 174 },
+    riskTrend: "stable",
+    optimizationImpact: { revenue: "+1.2%", retention: "+0.2%" },
+    recommendation: "Implement quarterly risk assessment for high-value accounts"
+  },
+  { 
+    decile: 3, 
+    actual2023: 188, 
+    predicted2024: 192, 
+    predicted2025: 200, 
+    predicted2026: 206, 
+    risk: "Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 12, savings: 25000, action: "Customer education" },
+    peerComparison: { position:
                   checked={showConfidenceInterval}
                   onChange={() => setShowConfidenceInterval(!showConfidenceInterval)}
                   className="mr-2"
@@ -989,184 +852,143 @@ out ML
         </CardFooter>
       </Card>
     );
-};
-
-// Function to generate mock data when the API fails
-const generateMockData = (setHistoricalData, setProjectedData, setDecileData) => {
-  // Generate sample data for testing
-  setHistoricalData(historicalLossData.slice(0, 7).map(d => ({
-    date: new Date(d.year, 0),
-    value: d.actual
-  })));
-  setProjectedData(historicalLossData.slice(7).map(d => ({
-    date: new Date(d.year, 0),
-    value: d.predicted || 0
-  })));
-  setDecileData(purePremiumByDecile.map(d => ({
-    decile: d.decile,
-    predicted: d.predicted2024,
-    actual: d.actual2023
-  })));
-};
-
-export default function BusinessInsights() {
-  // Filter state
-  const [lineView, setLineView] = useState<"monthly" | "quarterly" | "annual">("monthly")
-  const [dateRange, setDateRange] = useState<"1y" | "3y" | "5y" | "10y">("3y")
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date())
-  const [selectedRegion, setSelectedRegion] = useState<string>("Northeast")
-  const [selectedProduct, setSelectedProduct] = useState<string>("Auto")
-
-  // Chart data state
-  const [historicalData, setHistoricalData] = useState<Array<{ date: Date; value: number }>>([])
-  const [projectedData, setProjectedData] = useState<Array<{ date: Date; value: number }>>([])
-  const [confidenceInterval, setConfidenceInterval] = useState<Array<{ date: Date; lower: number; upper: number }>>([])
-  const [decileData, setDecileData] = useState<Array<{ decile: number; predicted: number; actual: number }>>([])
-  
-  // Loading and error states
-  const [isLoading, setIsLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string | null>(null)
-
-  // Fetch data from the API
-  useEffect(() => {
-    async function fetchProjectionsData() {
-      setIsLoading(true);
-      setError(null);
-      
-      try {
-        // Construct the API URL with filters
-        const apiUrl = `/api/projections?region=${selectedRegion}&product=${selectedProduct}`;
-        console.log(`Fetching projections data from: ${apiUrl}`);
-        
-        const response = await fetch(apiUrl);
-        
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || `API returned status ${response.status}`);
-        }
-        
-        const result = await response.json();
-        
-        // Process the API response
-        if (result && result.success && result.data) {
-          const data = result.data;
-          
-          // Check if we have the expected data structure
-          if (data.historical_data && data.projected_data && data.decile_data) {
-            // Access the nested data for the selected region and product
-            const historical = data.historical_data[selectedRegion]?.[selectedProduct] || [];
-            const projected = data.projected_data[selectedRegion]?.[selectedProduct] || [];
-            const deciles = data.decile_data[selectedRegion]?.[selectedProduct] || [];
-            
-            // Check if we actually have data to display
-            if (historical.length === 0 && projected.length === 0) {
-              console.warn(`No data found for ${selectedRegion}/${selectedProduct}`);
-              throw new Error(`No data available for ${selectedRegion} - ${selectedProduct}`);
-            }
-            
-            // Convert historical data
-            const processedHistorical = historical.map((item: any) => ({
-              date: parseISO(item.date),
-              value: item.value
-            }));
-            
-            // Convert projected data
-            const processedProjected = projected.map((item: any) => ({
-              date: parseISO(item.date),
-              value: item.value
-            }));
-            
-            // Convert confidence interval data
-            const processedConfidence = projected.map((item: any) => ({
-              date: parseISO(item.date),
-              lower: item.lower,
-              upper: item.upper
-            }));
-            
-            // Convert decile data
-            const processedDeciles = deciles.map((item: any) => ({
-              decile: item.decile,
-              predicted: item.predicted,
-              actual: item.actual
-            }));
-            
-            // Store the processed data in state
-            setHistoricalData(processedHistorical);
-            setProjectedData(processedProjected);
-            setConfidenceInterval(processedConfidence);
-            setDecileData(processedDeciles);
-            
-            console.log("Data processed successfully");
-          } else {
-            // Handle the case where the expected data structure is not present
-            console.warn("Unexpected data structure in API response:", data);
-            throw new Error("The data format from the API was not as expected");
-          }
-        } else {
-          // Handle unsuccessful API response
-          console.warn("API response was not successful:", result);
-          throw new Error(result.error || "Failed to retrieve projections data");
-        }
-      } catch (err) {
-        console.error("Error fetching projections data:", err);
-        setError(err instanceof Error ? err.message : "An error occurred while fetching data");
-        
-        // Fall back to generating mock data
-        generateMockData(setHistoricalData, setProjectedData, setDecileData);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    
-    // Call the fetch function
-    fetchProjectionsData();
-  }, [dateRange, lineView, selectedRegion, selectedProduct]);
-  
-  // Helper function to aggregate data points
-  function aggregateData(data: Array<{ date: Date; value: number }>, periodMonths: number) {
-    const aggregated: Array<{ date: Date; value: number }> = []
-    
-    for (let i = 0; i < data.length; i += periodMonths) {
-      const chunk = data.slice(i, i + periodMonths)
-      if (chunk.length > 0) {
-        // Use the last date in the period
-        const periodDate = chunk[chunk.length - 1].date
-        // Sum the values
-        const periodValue = chunk.reduce((sum, point) => sum + point.value, 0)
-        
-        aggregated.push({
-          date: new Date(periodDate),
-          value: periodValue
-        })
-      }
-    }
-    
-    return aggregated
-  }
-
-  return (
-    <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Business Insights</h2>
-          <p className="text-muted-foreground">
-            Analytics and historical/projected performance metrics
-          </p>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={selectedRegion} onValueChange={setSelectedRegion}>
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="Region" />
-            </SelectTrigger>
-            <SelectContent>
-              {regions.map(region => (
-                <SelectItem key={region} value={region}>{region}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Select value={selectedProduct} onValueChange={setSelectedProduct}>
+// Sample pure premium by decile data
+const purePremiumByDecile = [
+  { 
+    decile: 1, 
+    actual2023: 142, 
+    predicted2024: 145, 
+    predicted2025: 150, 
+    predicted2026: 155, 
+    risk: "Very Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 8, savings: 12000, action: "Maintain current approach" },
+    peerComparison: { position: "top20", averagePremium: 152 },
+    riskTrend: "stable",
+    optimizationImpact: { revenue: "+0.8%", retention: "+0.5%" },
+    recommendation: "No change needed; risk is well-managed"
+  },
+  { 
+    decile: 2, 
+    actual2023: 165, 
+    predicted2024: 168, 
+    predicted2025: 174, 
+    predicted2026: 182, 
+    risk: "Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 10, savings: 18000, action: "Basic risk awareness program" },
+    peerComparison: { position: "top30", averagePremium: 174 },
+    riskTrend: "stable",
+    optimizationImpact: { revenue: "+1.2%", retention: "+0.2%" },
+    recommendation: "Implement quarterly risk assessment for high-value accounts"
+  },
+  { 
+    decile: 3, 
+    actual2023: 188, 
+    predicted2024: 192, 
+    predicted2025: 200, 
+    predicted2026: 206, 
+    risk: "Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 12, savings: 25000, action: "Customer education" },
+    peerComparison: { position: "average", averagePremium: 195 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+1.8%", retention: "-0.2%" },
+    recommendation: "Implement customer education program to reduce preventable claims"
+  },
+  { 
+    decile: 4, 
+    actual2023: 210, 
+    predicted2024: 215, 
+    predicted2025: 222, 
+    predicted2026: 231, 
+    risk: "Low-Medium",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 15, savings: 32000, action: "Conduct property inspections" },
+    peerComparison: { position: "average", averagePremium: 228 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+3.2%", retention: "-0.8%" },
+    recommendation: "Offer risk assessment services to reduce potential claims"
+  },
+  {
+    decile: 5, 
+    actual2023: 256, 
+    predicted2024: 262, 
+    predicted2025: 278, 
+    predicted2026: 288, 
+    risk: "Medium",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 18, savings: 48000, action: "Implement risk mitigation technologies" },
+    peerComparison: { position: "bottom40", averagePremium: 305 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+6.5%", retention: "-1.2%" },
+    recommendation: "Increase premiums by 6-8% and offer risk mitigation incentives"
+  },
+  {
+    decile: 6, 
+    actual2023: 320, 
+    predicted2024: 318, 
+    predicted2025: 335, 
+    predicted2026: 352, 
+    risk: "Medium",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 22, savings: 65000, action: "Require safety equipment upgrades" },
+    peerComparison: { position: "average", averagePremium: 347 },
+    riskTrend: "improving",
+    optimizationImpact: { revenue: "+4.1%", retention: "-0.9%" },
+    recommendation: "Target for safety equipment upgrades with premium discounts"
+  },
+  {
+    decile: 7, 
+    actual2023: 387, 
+    predicted2024: 395, 
+    predicted2025: 412, 
+    predicted2026: 428, 
+    risk: "Medium-High",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 25, savings: 92000, action: "Implement comprehensive risk management" },
+    peerComparison: { position: "bottom30", averagePremium: 412 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+7.8%", retention: "-2.5%" },
+    recommendation: "Increase premiums 8-10% with tailored risk management program"
+  },
+  {
+    decile: 8, 
+    actual2023: 452, 
+    predicted2024: 465, 
+    predicted2025: 488, 
+    predicted2026: 515, 
+    risk: "High",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 35, savings: 120000, action: "Enhanced loss control measures" },
+    peerComparison: { position: "bottom20", averagePremium: 495 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+9.2%", retention: "-3.8%" },
+    recommendation: "Implement mandatory loss control and increase premiums by 10-15%"
+  },
+  {
+    decile: 9, 
+    actual2023: 558, 
+    predicted2024: 575, 
+    predicted2025: 610, 
+    predicted2026: 645, 
+    risk: "Very High",
+    pricingStatus: "severely underpriced",
+    riskReduction: { potential: 45, savings: 180000, action: "Mandatory risk mitigation" },
+    peerComparison: { position: "bottom10", averagePremium: 625 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+15.5%", retention: "-8.2%" },
+    recommendation: "Significant premium increase with customized risk management plan"
+  },
+  {
+    decile: 10, 
+    actual2023: 842, 
+    predicted2024: 880, 
+    predicted2025: 945, 
+    predicted2026: 1025, 
+    risk: "Extreme",
+    pricingStatus: "severely underpriced",
+    riskReduction: { potential: 60, savings: 350000, action
             <SelectTrigger className="w-[150px]">
               <SelectValue placeholder="Product" />
             </SelectTrigger>
@@ -1302,27 +1124,6 @@ export default function BusinessInsights() {
                               <th className="text-right p-2">Actual</th>
                               <th className="text-right p-2">Difference</th>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {decileData.map((item, index) => (
-                              <tr key={index} className="border-b">
-                                <td className="p-2">{item.decile}</td>
-                                <td className="text-right p-2">{formatCurrency(item.predicted)}</td>
-                                <td className="text-right p-2">{formatCurrency(item.actual)}</td>
-                                <td className="text-right p-2">
-                                  {(((item.actual / item.predicted) - 1) * 100).toFixed(1)}%
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            </TabsContent>
                 <label htmlFor="compare-baseline" className="text-sm font-medium">
                   Compare to Baseline
                 </label>
-} 
