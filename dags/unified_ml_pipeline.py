@@ -814,6 +814,7 @@ def check_for_drift(**context):
 @task.branch
 def branch_on_drift(**context):
     """Branch based on drift detection results"""
+    # Extract the TaskInstance from the context
     ti = context['ti']
     decision = ti.xcom_pull(task_ids='check_for_drift_task', key='drift_decision')
     
@@ -2319,9 +2320,7 @@ with dag:
     )
     
     # Branch based on drift using TaskFlow API
-    branch_task = branch_on_drift.override(task_id="branch_on_drift_task")(
-        **{'ti': None}  # TaskFlow API doesn't need us to pass the ti
-    )
+    branch_task = branch_on_drift.override(task_id="branch_on_drift_task")()
     
     # Healing task for when drift is detected
     drift_healing_task = PythonOperator(

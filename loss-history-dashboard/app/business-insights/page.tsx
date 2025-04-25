@@ -3,8 +3,9 @@
 import { DashboardHeader } from "@/components/dashboard-header"
 import { DashboardSidebar } from "@/components/dashboard-sidebar"
 import BusinessInsights from "@/components/business-insights"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ArrowDown, ArrowUp, DollarSign, PieChart, TrendingUp, Users } from "lucide-react"
+import { DollarSign, PieChart, TrendingUp, Users } from "lucide-react"
+import { SummaryCard } from "@/components/ui/summary-card"
+import { ROIVisualization } from "@/components/roi-visualization"
 
 export default function BusinessInsightsPage() {
   return (
@@ -14,74 +15,47 @@ export default function BusinessInsightsPage() {
         <DashboardSidebar />
         <main className="flex w-full flex-col overflow-hidden p-4 md:p-6">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Estimated Annual Savings
-                </CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">$2.4M</div>
-                <p className="text-xs text-muted-foreground">
-                  <span className="text-green-500 flex items-center gap-1">
-                    <ArrowUp className="h-3 w-3" /> 18.2%
-                  </span>{" "}
-                  from last quarter
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Loss Ratio Improvement
-                </CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">3.4%</div>
-                <p className="text-xs text-muted-foreground">
-                  <span className="text-green-500 flex items-center gap-1">
-                    <ArrowUp className="h-3 w-3" /> 0.8%
-                  </span>{" "}
-                  from last quarter
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Pricing Accuracy
-                </CardTitle>
-                <PieChart className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">94.7%</div>
-                <p className="text-xs text-muted-foreground">
-                  <span className="text-green-500 flex items-center gap-1">
-                    <ArrowUp className="h-3 w-3" /> 2.3%
-                  </span>{" "}
-                  from last quarter
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Customer Retention
-                </CardTitle>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">89.2%</div>
-                <p className="text-xs text-muted-foreground">
-                  <span className="text-red-500 flex items-center gap-1">
-                    <ArrowDown className="h-3 w-3" /> 1.1%
-                  </span>{" "}
-                  from last quarter
-                </p>
-              </CardContent>
-            </Card>
+            <SummaryCard
+              title="Total Projected Savings"
+              value="$2.4M"
+              icon={DollarSign}
+              trend="positive"
+              changeValue="18.2%"
+              tooltipText="Annual cost savings achieved through ML predictions compared to traditional methods."
+              changeText="from last quarter"
+              suffix=" annually"
+            />
+            <SummaryCard
+              title="Loss Ratio Improvement"
+              value="3.4"
+              suffix="%"
+              icon={TrendingUp}
+              trend="positive"
+              changeValue="0.8%"
+              tooltipText="Reduction in the loss ratio through better predictive modeling and risk assessment."
+            />
+            <SummaryCard
+              title="Pricing Accuracy"
+              value="94.7"
+              suffix="%"
+              icon={PieChart}
+              trend="positive"
+              changeValue="2.3%"
+              tooltipText="Accuracy of premium pricing models compared to actual losses."
+            />
+            <SummaryCard
+              title="Customer Retention"
+              value="89.2"
+              suffix="%"
+              icon={Users}
+              trend="negative"
+              changeValue="1.1%"
+              tooltipText="Percentage of customers retained year-over-year after implementing ML-based pricing."
+            />
+          </div>
+          
+          <div className="mb-8">
+            <ROIVisualization />
           </div>
           
           <BusinessInsights />

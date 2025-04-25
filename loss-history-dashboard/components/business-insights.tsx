@@ -21,9 +21,17 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar"
 import { format, subMonths, subYears, addMonths, parseISO } from "date-fns"
 import dynamic from 'next/dynamic'
+import { motion, AnimatePresence } from "framer-motion"
+import { ArrowTrendingUpIcon, ArrowTrendingDownIcon, ExclamationCircleIcon, CheckCircleIcon, SparklesIcon } from "@heroicons/react/24/outline"
 
 // Dynamically import Plotly to avoid SSR issues
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
+
+// Dynamically import Recharts Sankey component
+const Sankey = dynamic(() => import('recharts').then(mod => mod.Sankey), { ssr: false })
+const Tooltip = dynamic(() => import('recharts').then(mod => mod.Tooltip), { ssr: false })
+const Layer = dynamic(() => import('recharts').then(mod => mod.Layer), { ssr: false })
+const Rectangle = dynamic(() => import('recharts').then(mod => mod.Rectangle), { ssr: false })
 
 // Regions and products for filters
 const regions = ["Northeast", "Southeast", "Midwest", "Southwest", "West"]
@@ -45,16 +53,172 @@ const historicalLossData = [
 
 // Sample pure premium by decile data
 const purePremiumByDecile = [
-  { decile: 1, actual2023: 120, predicted2024: 118, predicted2025: 125, predicted2026: 129, risk: "Very Low" },
-  { decile: 2, actual2023: 145, predicted2024: 147, predicted2025: 152, predicted2026: 156, risk: "Low" },
-  { decile: 3, actual2023: 178, predicted2024: 175, predicted2025: 183, predicted2026: 188, risk: "Low" },
-  { decile: 4, actual2023: 210, predicted2024: 215, predicted2025: 222, predicted2026: 231, risk: "Low-Medium" },
-  { decile: 5, actual2023: 256, predicted2024: 262, predicted2025: 278, predicted2026: 288, risk: "Medium" },
-  { decile: 6, actual2023: 320, predicted2024: 318, predicted2025: 335, predicted2026: 352, risk: "Medium" },
-  { decile: 7, actual2023: 387, predicted2024: 395, predicted2025: 412, predicted2026: 428, risk: "Medium-High" },
-  { decile: 8, actual2023: 475, predicted2024: 483, predicted2025: 510, predicted2026: 535, risk: "High" },
-  { decile: 9, actual2023: 612, predicted2024: 625, predicted2025: 655, predicted2026: 688, risk: "Very High" },
-  { decile: 10, actual2023: 890, predicted2024: 905, predicted2025: 965, predicted2026: 1020, risk: "Extreme" },
+  { 
+    decile: 1, 
+    actual2023: 120, 
+    predicted2024: 118, 
+    predicted2025: 125, 
+    predicted2026: 129, 
+    risk: "Very Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 5, savings: 6000, action: "Maintain current risk controls" },
+    peerComparison: { position: "top10", averagePremium: 135 },
+    riskTrend: "stable",
+    optimizationImpact: { revenue: 0, retention: "+2.1%" },
+    recommendation: "Maintain current pricing strategy to ensure market competitiveness"
+  },
+  { 
+    decile: 2, 
+    actual2023: 145, 
+    predicted2024: 147, 
+    predicted2025: 152, 
+    predicted2026: 156, 
+    risk: "Low",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 8, savings: 12000, action: "Implement basic risk assessment tools" },
+    peerComparison: { position: "top20", averagePremium: 162 },
+    riskTrend: "improving",
+    optimizationImpact: { revenue: "+4.2%", retention: "-0.5%" },
+    recommendation: "Consider modest premium increases (4-6%) while maintaining retention"
+  },
+  { 
+    decile: 3, 
+    actual2023: 178, 
+    predicted2024: 175, 
+    predicted2025: 183, 
+    predicted2026: 188, 
+    risk: "Low",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 10, savings: 18000, action: "Enhance policyholder education" },
+    peerComparison: { position: "average", averagePremium: 184 },
+    riskTrend: "stable",
+    optimizationImpact: { revenue: "+1.8%", retention: "-0.2%" },
+    recommendation: "Implement customer education program to reduce preventable claims"
+  },
+  { 
+    decile: 4, 
+    actual2023: 210, 
+    predicted2024: 215, 
+    predicted2025: 222, 
+    predicted2026: 231, 
+    risk: "Low-Medium",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 15, savings: 32000, action: "Conduct property inspections" },
+    peerComparison: { position: "average", averagePremium: 228 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+3.2%", retention: "-0.8%" },
+    recommendation: "Offer risk assessment services to reduce potential claims"
+  },
+  { 
+    decile: 5, 
+    actual2023: 256, 
+    predicted2024: 262, 
+    predicted2025: 278, 
+    predicted2026: 288, 
+    risk: "Medium",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 18, savings: 48000, action: "Implement risk mitigation technologies" },
+    peerComparison: { position: "bottom40", averagePremium: 305 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+6.5%", retention: "-1.2%" },
+    recommendation: "Increase premiums by 6-8% and offer risk mitigation incentives"
+  },
+  { 
+    decile: 6, 
+    actual2023: 320, 
+    predicted2024: 318, 
+    predicted2025: 335, 
+    predicted2026: 352, 
+    risk: "Medium",
+    pricingStatus: "optimal",
+    riskReduction: { potential: 22, savings: 65000, action: "Require safety equipment upgrades" },
+    peerComparison: { position: "average", averagePremium: 347 },
+    riskTrend: "improving",
+    optimizationImpact: { revenue: "+4.1%", retention: "-0.9%" },
+    recommendation: "Target for safety equipment upgrades with premium discounts"
+  },
+  { 
+    decile: 7, 
+    actual2023: 387, 
+    predicted2024: 395, 
+    predicted2025: 412, 
+    predicted2026: 428, 
+    risk: "Medium-High",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 25, savings: 92000, action: "Implement comprehensive risk management" },
+    peerComparison: { position: "bottom30", averagePremium: 462 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+8.3%", retention: "-2.1%" },
+    recommendation: "Premium adjustment needed (8-10%) with mandatory risk controls"
+  },
+  { 
+    decile: 8, 
+    actual2023: 475, 
+    predicted2024: 483, 
+    predicted2025: 510, 
+    predicted2026: 535, 
+    risk: "High",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 30, savings: 145000, action: "Require full risk assessment and controls" },
+    peerComparison: { position: "bottom20", averagePremium: 580 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+9.2%", retention: "-3.5%" },
+    recommendation: "Significant premium increase (10-15%) with mandatory risk mitigation"
+  },
+  { 
+    decile: 9, 
+    actual2023: 612, 
+    predicted2024: 625, 
+    predicted2025: 655, 
+    predicted2026: 688, 
+    risk: "Very High",
+    pricingStatus: "significantly underpriced",
+    riskReduction: { potential: 35, savings: 220000, action: "Comprehensive risk management required" },
+    peerComparison: { position: "bottom10", averagePremium: 745 },
+    riskTrend: "rapidly worsening",
+    optimizationImpact: { revenue: "+14.6%", retention: "-8.2%" },
+    recommendation: "Major pricing correction (15-20%) with stringent underwriting criteria"
+  },
+  { 
+    decile: 10, 
+    actual2023: 890, 
+    predicted2024: 905, 
+    predicted2025: 965, 
+    predicted2026: 1020, 
+    risk: "Extreme",
+    pricingStatus: "significantly underpriced",
+    riskReduction: { potential: 40, savings: 380000, action: "Consider policy restrictions or specialized coverage" },
+    peerComparison: { position: "bottom5", averagePremium: 1180 },
+    riskTrend: "rapidly worsening",
+    optimizationImpact: { revenue: "+18.5%", retention: "-12.4%" },
+    recommendation: "Aggressive pricing correction (20%+) or consider non-renewal for highest risks"
+  },
+];
+
+// Customer risk transition data for flow diagrams
+const riskTransitionData = [
+  { source: "Very Low", target: "Very Low", value: 85, count: 8500 },
+  { source: "Very Low", target: "Low", value: 15, count: 1500 },
+  { source: "Low", target: "Very Low", value: 10, count: 2000 },
+  { source: "Low", target: "Low", value: 75, count: 15000 },
+  { source: "Low", target: "Low-Medium", value: 15, count: 3000 },
+  { source: "Low-Medium", target: "Low", value: 12, count: 2400 },
+  { source: "Low-Medium", target: "Low-Medium", value: 68, count: 13600 },
+  { source: "Low-Medium", target: "Medium", value: 20, count: 4000 },
+  { source: "Medium", target: "Low-Medium", value: 10, count: 2000 },
+  { source: "Medium", target: "Medium", value: 65, count: 13000 },
+  { source: "Medium", target: "Medium-High", value: 25, count: 5000 },
+  { source: "Medium-High", target: "Medium", value: 8, count: 1600 },
+  { source: "Medium-High", target: "Medium-High", value: 62, count: 12400 },
+  { source: "Medium-High", target: "High", value: 30, count: 6000 },
+  { source: "High", target: "Medium-High", value: 7, count: 1400 },
+  { source: "High", target: "High", value: 63, count: 12600 },
+  { source: "High", target: "Very High", value: 30, count: 6000 },
+  { source: "Very High", target: "High", value: 5, count: 1000 },
+  { source: "Very High", target: "Very High", value: 70, count: 14000 },
+  { source: "Very High", target: "Extreme", value: 25, count: 5000 },
+  { source: "Extreme", target: "Very High", value: 3, count: 600 },
+  { source: "Extreme", target: "Extreme", value: 97, count: 19400 },
 ];
 
 // Calculate some useful statistics for the dashboard
@@ -353,18 +517,6 @@ const HistoricalVsProjectedLosses = () => {
   );
 };
 
-// Component for Pure Premium Prediction by Decile
-const PurePremiumByDecile = () => {
-  const [selectedYear, setSelectedYear] = useState<string>("predicted2026");
-  const [showActual, setShowActual] = useState<boolean>(true);
-  const [sortBy, setSortBy] = useState<string>("decile");
-  
-  const yearLabels = {
-    "actual2023": "2023 Actual",
-    "predicted2024": "2024 Prediction",
-    "predicted2025": "2025 Prediction",
-    "predicted2026": "2026 Prediction"
-  };
   
   // Sort the data based on selected criteria
   const sortedData = [...purePremiumByDecile].sort((a, b) => {
