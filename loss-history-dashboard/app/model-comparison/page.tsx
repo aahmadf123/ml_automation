@@ -1,3 +1,120 @@
+"use client";
+
+import { DashboardHeader } from "@/components/dashboard-header";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GitCompare, Download, BarChart, LineChart } from "lucide-react";
+
+export default function ModelComparisonPage() {
+  return (
+    <div className="flex min-h-screen flex-col">
+      <DashboardHeader title="Model Comparison" />
+      <div className="container flex-1 items-start md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10">
+        <DashboardSidebar />
+        <main className="flex w-full flex-col overflow-hidden p-4 md:p-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Model Comparison Dashboard</CardTitle>
+                  <CardDescription>
+                    Compare models side-by-side with business impact
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export
+                  </Button>
+                  <Button size="sm">
+                    <GitCompare className="h-4 w-4 mr-2" />
+                    Compare Models
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="performance">
+                <TabsList>
+                  <TabsTrigger value="performance">Performance Metrics</TabsTrigger>
+                  <TabsTrigger value="feature-importance">Feature Importance</TabsTrigger>
+                  <TabsTrigger value="business-impact">Business Impact</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="performance" className="pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Model Performance Metrics</CardTitle>
+                        <CardDescription>
+                          Key metrics comparison across models
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="h-80 flex items-center justify-center">
+                          <p className="text-muted-foreground">Performance metrics chart will be displayed here</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Error Distribution</CardTitle>
+                        <CardDescription>
+                          Comparison of error distributions
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="h-80 flex items-center justify-center">
+                          <p className="text-muted-foreground">Error distribution chart will be displayed here</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="feature-importance" className="pt-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Feature Importance Comparison</CardTitle>
+                      <CardDescription>
+                        Compare feature importance across models
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-80 flex items-center justify-center">
+                        <p className="text-muted-foreground">Feature importance comparison will be displayed here</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+                
+                <TabsContent value="business-impact" className="pt-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Business Impact Analysis</CardTitle>
+                      <CardDescription>
+                        Compare business metrics and ROI
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-80 flex items-center justify-center">
+                        <p className="text-muted-foreground">Business impact analysis will be displayed here</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    </div>
+  );
+}
+
 "use client"
 
 import React from 'react'

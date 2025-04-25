@@ -1,53 +1,54 @@
 import { NextResponse } from 'next/server'
-import { IntegrationsService } from '@/lib/services/integrations'
+import { ClearMLService } from '@/lib/services/clearml'
 
 export async function GET() {
   try {
-    const service = new IntegrationsService();
+    const service = new ClearMLService();
     await service.initialize();
     
-    // Get experiments first
-    const experiments = await service.getExperiments();
-    if (!experiments || experiments.length === 0) {
+    // Get projects (equivalent to MLflow experiments)
+    const projects = await service.getProjects();
+    if (!projects || projects.length === 0) {
       return NextResponse.json(
-        { error: 'No experiments found' },
+        { error: 'No projects found' },
         { status: 404 }
       );
     }
     
-    // Use first experiment by default (can be parameterized later)
-    const experimentId = experiments[0].experiment_id;
+    // Use first project by default (can be parameterized later)
+    const projectId = projects[0].id;
     
-    // Get the latest runs
-    const runs = await service.getRuns(experimentId);
-    if (!runs || runs.length === 0) {
+    // Get the latest completed task from this project
+    // We'll filter for training tasks (adapt the pattern as needed)
+    const latestTask = await service.getLatestTask(projectId, 'train');
+    
+    if (!latestTask) {
       return NextResponse.json(
-        { error: 'No runs found for this experiment' },
+        { error: 'No completed tasks found for this project' },
         { status: 404 }
       );
     }
     
-    // Sort runs by start_time (descending) to get the most recent
-    const sortedRuns = runs.sort((a, b) => 
-      new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
-    );
-    
-    // Get the latest run and its metrics
-    const latestRun = sortedRuns[0];
+    // Get metrics for this task
+    const metrics = await service.getTaskMetrics(latestTask.id);
     
     return NextResponse.json({
-      run_id: latestRun.run_id,
-      start_time: latestRun.start_time,
-      end_time: latestRun.end_time,
-      status: latestRun.status,
-      metrics: latestRun.metrics,
-      params: latestRun.params
+      run_id: latestTask.id,
+      start_time: latestTask.started,
+      end_time: latestTask.completed,
+      status: service.mapTaskStatus(latestTask.status),
+      metrics: metrics,
+      params: latestTask.hyperparams || {},
+      task_name: latestTask.name,
+      project_id: projectId,
+      project_name: latestTask.project_name,
+      web_url: service.getTaskWebUrl(latestTask.id)
     });
   } catch (error) {
-    console.error('Error fetching metrics:', error);
+    console.error('Error fetching metrics from ClearML:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch metrics' },
+      { error: 'Failed to fetch metrics from ClearML' },
       { status: 500 }
     );
   }
-} 
+}

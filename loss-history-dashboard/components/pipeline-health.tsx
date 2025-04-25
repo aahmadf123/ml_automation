@@ -1,6 +1,45 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Progress } from "@/components/ui/progress"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { CheckCircle, Clock, ExternalLink, RefreshCw, AlertTriangle, XCircle, Activity, Play } from "lucide-react"
+
+interface PipelineNode {
+  id: string
+  name: string
+  task_id?: string
+  status: string
+  started?: string
+  completed?: string
+  job_id?: string
+}
+
+interface Pipeline {
+  id: string
+  name: string
+  project_id: string
+  status: string
+  created: string
+  started?: string
+  completed?: string
+  nodes: PipelineNode[]
+  web_url?: string
+}
+
+export function PipelineHealth() {
+  const [loading, setLoading] = useState(true)
+  const
+
+"use client"
+
+import { useEffect, useState } from "react"
 import { CheckCircle, Clock, AlertTriangle, XCircle, Play, Pause, RefreshCw, Eye, Search } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"

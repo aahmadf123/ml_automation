@@ -1,3 +1,199 @@
+"use client";
+
+import { useState } from "react";
+import { DashboardHeader } from "@/components/dashboard-header";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { TrendingUp, Download, RefreshCw, AlertCircle, BarChart, PieChart, LineChart } from "lucide-react";
+
+export default function PredictionsPage() {
+  return (
+    <div className="flex min-h-screen flex-col">
+      <DashboardHeader title="Loss Predictions" />
+      <div className="container flex-1 items-start md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10">
+        <DashboardSidebar />
+        <main className="flex w-full flex-col overflow-hidden p-4 md:p-6">
+          <Card className="mb-6">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Loss Prediction Analytics</CardTitle>
+                  <CardDescription>
+                    Forecast potential losses with 95% confidence intervals
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm">
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh
+                  </Button>
+                  <Button variant="outline" size="sm">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-xs text-muted-foreground mb-2">Predicted Loss Ratio</div>
+                    <div className="text-2xl font-bold">67.8%</div>
+                    <div className="text-xs text-green-600 mt-1">▼ 2.3% from last period</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-xs text-muted-foreground mb-2">Loss Trend</div>
+                    <div className="text-2xl font-bold">Decreasing</div>
+                    <div className="flex items-center text-xs text-green-600 mt-1">
+                      <TrendingUp className="h-3 w-3 mr-1 rotate-180" />
+                      Improved outlook
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-xs text-muted-foreground mb-2">Confidence Level</div>
+                    <div className="text-2xl font-bold">95%</div>
+                    <div className="text-xs text-blue-600 mt-1">±3.2% margin of error</div>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              <Tabs defaultValue="projections">
+                <TabsList>
+                  <TabsTrigger value="projections">Loss Projections</TabsTrigger>
+                  <TabsTrigger value="segments">Segment Analysis</TabsTrigger>
+                  <TabsTrigger value="scenarios">What-If Scenarios</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="projections" className="pt-4">
+                  <div className="grid grid-cols-1 gap-6">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Projected Losses by Quarter</CardTitle>
+                        <CardDescription>
+                          Forecast with 95% confidence intervals
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="h-80 flex items-center justify-center">
+                          <p className="text-muted-foreground">Loss projection chart will be displayed here</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="segments" className="pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Loss Ratio by Segment</CardTitle>
+                        <CardDescription>
+                          Analysis of predicted loss ratios across business segments
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="h-80 flex items-center justify-center">
+                          <p className="text-muted-foreground">Segment comparison chart will be displayed here</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Segment Distribution</CardTitle>
+                        <CardDescription>
+                          Breakdown of business segments by premium volume
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="h-80 flex items-center justify-center">
+                          <p className="text-muted-foreground">Segment distribution chart will be displayed here</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="scenarios" className="pt-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>What-If Scenario Analysis</CardTitle>
+                      <CardDescription>
+                        Explore different scenario outcomes by adjusting key parameters
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="h-80 flex items-center justify-center">
+                        <p className="text-muted-foreground">Scenario analysis tool will be displayed here</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle>Risk Factors</CardTitle>
+              <CardDescription>
+                Key factors influencing loss predictions
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border rounded-md p-4">
+                  <h3 className="text-sm font-medium mb-2">Top Positive Factors</h3>
+                  <ul className="space-y-2">
+                    <li className="flex items-center text-sm">
+                      <div className="h-2 w-2 rounded-full bg-green-500 mr-2"></div>
+                      Improved underwriting guidelines
+                    </li>
+                    <li className="flex items-center text-sm">
+                      <div className="h-2 w-2 rounded-full bg-green-500 mr-2"></div>
+                      Favorable weather patterns
+                    </li>
+                    <li className="flex items-center text-sm">
+                      <div className="h-2 w-2 rounded-full bg-green-500 mr-2"></div>
+                      Enhanced risk scoring model
+                    </li>
+                  </ul>
+                </div>
+                
+                <div className="border rounded-md p-4">
+                  <h3 className="text-sm font-medium mb-2">Top Risk Factors</h3>
+                  <ul className="space-y-2">
+                    <li className="flex items-center text-sm">
+                      <div className="h-2 w-2 rounded-full bg-red-500 mr-2"></div>
+                      Increased catastrophe frequency
+                    </li>
+                    <li className="flex items-center text-sm">
+                      <div className="h-2 w-2 rounded-full bg-red-500 mr-2"></div>
+                      Rising repair costs
+                    </li>
+                    <li className="flex items-center text-sm">
+                      <div className="h-2 w-2 rounded-full bg-red-500 mr-2"></div>
+                      Higher litigation rates
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    </div>
+  );
+}
+
 "use client"
 
 import { useState } from "react"

@@ -1,9 +1,3 @@
-import { NextResponse } from 'next/server'
-import { IntegrationsService } from '@/lib/services/integrations'
-
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
     const metric = searchParams.get('metric') || 'rmse';
     const optimizeFor = searchParams.get('optimize') || 'min'; // 'min' or 'max'
     

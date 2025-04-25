@@ -1,226 +1,101 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ExternalLink, RefreshCw, Download, AlertTriangle } from "lucide-react"
-import { DashboardLayout } from "@/components/dashboard-layout"
-import { ModelPerformance } from "@/components/model-performance"
-import { ShapSummaryPlot } from "@/components/shap-summary-plot"
-import { FeatureImportance } from "@/components/feature-importance"
-import { ErrorBoundary } from "@/components/error-boundary"
-import { LoadingSpinner } from "@/components/loading-spinner"
-import { RealTimeMetrics } from "@/components/real-time-metrics"
-import { useWebSocket } from "@/lib/websocket"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
-const availableModels = [
-  { id: "model1", name: "Loss Prediction Model" },
-  { id: "model2", name: "Claim Amount Prediction" },
-  { id: "model3", name: "Fraud Detection Model" },
-  { id: "model4", name: "Risk Scoring Model" },
-  { id: "model5", name: "Customer Churn Model" },
-]
+import { DashboardHeader } from "@/components/dashboard-header";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Download, BarChart, LineChart, RefreshCw } from "lucide-react";
 
 export default function ModelMetricsPage() {
-  const [isLoading, setIsLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState("overview")
-  const [selectedModel, setSelectedModel] = useState(availableModels[0].id)
-  const [alerts, setAlerts] = useState<any[]>([])
-  const { connected, lastMessage } = useWebSocket()
-
-  useEffect(() => {
-    if (lastMessage?.type === "alert" && lastMessage.data.modelId === selectedModel) {
-      setAlerts(prev => [lastMessage.data, ...prev].slice(0, 5))
-    }
-  }, [lastMessage, selectedModel])
-
-  const handleRefresh = async () => {
-    setIsLoading(true)
-    try {
-      // Add your refresh logic here
-      await new Promise(resolve => setTimeout(resolve, 1000))
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const actions = (
-    <>
-      <Select value={selectedModel} onValueChange={setSelectedModel}>
-        <SelectTrigger className="w-[200px]">
-          <SelectValue placeholder="Select model" />
-        </SelectTrigger>
-        <SelectContent>
-          {availableModels.map(model => (
-            <SelectItem key={model.id} value={model.id}>
-              {model.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <Button variant="outline" onClick={handleRefresh} disabled={isLoading}>
-        <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-        Refresh
-      </Button>
-      <Button variant="outline">
-        <Download className="h-4 w-4 mr-2" />
-        Export
-      </Button>
-      <Button variant="outline">
-        <ExternalLink className="h-4 w-4 mr-2" />
-        Open in MLflow
-      </Button>
-    </>
-  )
-
   return (
-    <DashboardLayout
-      title="Model Metrics"
-      description="Track and analyze the performance of your machine learning models"
-      actions={actions}
-    >
-      <ErrorBoundary>
-        {alerts.length > 0 && (
-          <div className="space-y-2">
-            {alerts.map((alert, index) => (
-              <Alert key={index} variant={alert.severity === "high" ? "destructive" : "default"}>
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>{alert.title}</AlertTitle>
-                <AlertDescription>{alert.message}</AlertDescription>
-              </Alert>
-            ))}
-          </div>
-        )}
+    <div className="flex min-h-screen flex-col">
+      <DashboardHeader title="Model Metrics" />
+      <div className="container flex-1 items-start md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10">
+        <DashboardSidebar />
+        <main className="flex w-full flex-col overflow-hidden p-4 md:p-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Model Metrics Dashboard</CardTitle>
+                  <CardDescription>
+                    Performance metrics across all models
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm">
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh
+                  </Button>
+                  <Button variant="outline" size="sm">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="traditional">
+                <TabsList>
+                  <TabsTrigger value="traditional">Traditional Model</TabsTrigger>
+                  <TabsTrigger value="enhanced">Enhanced Model</TabsTrigger>
+                  <TabsTrigger value="all">All Models</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="traditional" className="pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-xs text-muted-foreground mb-2">RMSE</div>
+                        <div className="text-2xl font-bold">0.0632</div>
+                        <div className="text-xs text-green-600 mt-1">▼ 12% from baseline</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-xs text-muted-foreground mb-2">MAE</div>
+                        <div className="text-2xl font-bold">0.0487</div>
+                        <div className="text-xs text-green-600 mt-1">▼ 8% from baseline</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-xs text-muted-foreground mb-2">R² Score</div>
+                        <div className="text-2xl font-bold">0.9512</div>
+                        <div className="text-xs text-green-600 mt-1">▲ 6% from baseline</div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Performance Over Time</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="h-80 flex items-center justify-center">
+                          <p className="text-muted-foreground">Performance time series will be displayed here</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Error Distribution</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="h-80 flex items-center justify-center">
+                          <p className="text-muted-foreground">Error distribution chart will be displayed here</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="enhanced" className="pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <Card>
+                      <CardContent className="p-4">
+                        <div className="text-xs text-muted-foreground mb-2
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
-            <TabsTrigger value="explainability">Explainability</TabsTrigger>
-            <TabsTrigger value="drift">Drift Analysis</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="overview" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <RealTimeMetrics
-                title="Model Performance"
-                description="Real-time performance metrics"
-                metricKey="performance"
-                unit="%"
-                color="#2563eb"
-              />
-
-              <RealTimeMetrics
-                title="Memory Usage"
-                description="Model memory consumption"
-                metricKey="memory"
-                unit="MB"
-                color="#16a34a"
-              />
-
-              <RealTimeMetrics
-                title="Inference Time"
-                description="Average inference time"
-                metricKey="inference_time"
-                unit="ms"
-                color="#dc2626"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Feature Importance</CardTitle>
-                  <CardDescription>Top contributing features</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ErrorBoundary>
-                    <FeatureImportance modelId={selectedModel} />
-                  </ErrorBoundary>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>SHAP Summary</CardTitle>
-                  <CardDescription>Feature impact analysis</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ErrorBoundary>
-                    <ShapSummaryPlot modelId={selectedModel} />
-                  </ErrorBoundary>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="performance" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Detailed Performance Metrics</CardTitle>
-                <CardDescription>Comprehensive model performance analysis</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ErrorBoundary>
-                  <ModelPerformance modelId={selectedModel} detailed />
-                </ErrorBoundary>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="explainability" className="space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>SHAP Analysis</CardTitle>
-                  <CardDescription>Detailed feature impact analysis</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ErrorBoundary>
-                    <ShapSummaryPlot modelId={selectedModel} detailed />
-                  </ErrorBoundary>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Feature Importance</CardTitle>
-                  <CardDescription>Detailed feature importance analysis</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ErrorBoundary>
-                    <FeatureImportance modelId={selectedModel} detailed />
-                  </ErrorBoundary>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="drift" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Drift Analysis</CardTitle>
-                <CardDescription>Model drift detection and analysis</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ErrorBoundary>
-                  <RealTimeMetrics
-                    title="Feature Drift"
-                    description="Real-time feature distribution drift"
-                    metricKey="feature_drift"
-                    unit="%"
-                    color="#9333ea"
-                  />
-                </ErrorBoundary>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      </ErrorBoundary>
-    </DashboardLayout>
-  )
-}
