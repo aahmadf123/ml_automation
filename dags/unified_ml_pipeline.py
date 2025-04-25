@@ -978,35 +978,109 @@ def train_models(**context):
             df = pd.read_parquet(data_path)
             logger.info(f"Loaded dataframe with shape {df.shape}")
             
-            # Check for target column and create if needed
-            if 'trgt' not in df.columns:
-                logger.info("'trgt' column not found, checking alternatives")
-                if 'pure_premium' in df.columns:
-                    # If pure_premium exists, rename it to trgt for consistency
-                    logger.info("Renaming 'pure_premium' to 'trgt' for consistency")
-                    df['trgt'] = df['pure_premium']
-                elif 'il_total' in df.columns and 'eey' in df.columns:
-                    # Calculate trgt as il_total / eey
-                    logger.info("Creating 'trgt' column from 'il_total' / 'eey'")
-                    df['trgt'] = df['il_total'] / df['eey']
-                    
-                    # Also create pure_premium since that's what should be used as the target
-                    logger.info("Creating 'pure_premium' column from 'il_total' / 'eey'")
-                    df['pure_premium'] = df['il_total'] / df['eey']
-                
-                # Create weight column if not present
-                if 'wt' not in df.columns and 'eey' in df.columns:
-                    logger.info("Creating 'wt' column from 'eey'")
-                    df['wt'] = df['eey']
-                    
-                # Save the updated dataframe
-                temp_path = os.path.join(os.path.dirname(data_path), f"model_ready_{os.path.basename(data_path)}")
-                logger.info(f"Saving model-ready dataframe to {temp_path}")
-                df.to_parquet(temp_path, index=False)
-                logger.info(f"Saved model-ready dataframe to {temp_path}")
-                data_path = temp_path
+            if df.empty:
+                # If the input dataframe is empty here, fail fast before calling training
+                logger.error(f"Input data frame at {data_path} is empty. Aborting model training.")
+                raise ValueError(f"Input data for model training is empty: {data_path}")
+
+            # Target column handling (now mostly delegated to training script)
+            target_col_name = 'pure_premium' # Standard target
+            if target_col_name not in df.columns:
+                logger.info(f"'{target_col_name}' column not found, checking alternatives or if calculation needed")
+                # Further checks/calculation attempts might happen here or be delegated
             
+            # Feature preparation (optional, can be delegated)
+            # Example: select features, handle types, etc.
+            # X = df.select_dtypes(include=np.number).drop(columns=[target_col_name], errors='ignore')
+            # y = df[target_col_name]
+            # logger.info(f"Prepared data shapes: X={X.shape}, y={y.shape}")
+            
+            # Save the prepared dataframe for the training task to use
+            model_ready_path = f"/tmp/model_ready_{os.path.basename(data_path)}"
+            try:
+                 logger.info(f"Saving model-ready dataframe to {model_ready_path}")
+                 df.to_parquet(model_ready_path, index=False)
+                 logger.info(f"Saved model-ready dataframe to {model_ready_path}")
+            except Exception as save_err:
+                 logger.error(f"Failed to save model-ready parquet file: {save_err}")
+                 # Decide if this is critical - maybe proceed if df is in memory?
+                 # For now, let's raise to indicate a problem
+                 raise IOError(f"Failed to save intermediate model-ready data: {save_err}")
+
             logger.info(f"Dataframe ready for evaluation with shape {df.shape}")
+
+            # Call the training script function
+            parallel = context['params'].get('parallel_training', True)
+            max_workers = context['params'].get('max_workers', 3)
+            weight_col = context['params'].get('weight_column', 'eey') # Default to eey
+            
+            logger.info(f"Parallel loading: {parallel}, Max workers: {max_workers}")
+            logger.info(f"Loading pretrained models (Model1 and Model4) from S3")
+
+            # Wrap the call to handle potential direct exceptions or non-dict returns
+            training_results = None
+            try:
+                training_results = training.train_multiple_models(
+                    processed_path=model_ready_path, # Use the prepared path
+                    parallel=parallel,
+                    max_workers=max_workers,
+                    target_column=target_col_name, # Pass the standard target name
+                    weight_column=weight_col
+                )
+            except Exception as train_exec_err:
+                 logger.error(f"Direct exception during train_multiple_models call: {train_exec_err}", exc_info=True)
+                 # Create a standard error result structure if the function failed completely
+                 training_results = {
+                     "model1": {"status": "error", "message": f"Training script failed: {train_exec_err}"},
+                     "model4": {"status": "error", "message": f"Training script failed: {train_exec_err}"}
+                 }
+
+            logger.info(f"Loading completed with results for {len(training_results) if isinstance(training_results, dict) else 0} models")
+            
+            # Ensure results is always a dictionary for consistent checking
+            if not isinstance(training_results, dict):
+                logger.error(f"Training script returned an unexpected format: {type(training_results)}. Value: {training_results}")
+                # Convert unexpected result into a standard error dictionary
+                error_msg = f"Invalid result format from training: {type(training_results)}"
+                training_results = {
+                     "model1": {"status": "error", "message": error_msg},
+                     "model4": {"status": "error", "message": error_msg}
+                 }
+
+            # Check results - use .get() for safer access
+            completed = sum(1 for r in training_results.values() if isinstance(r, dict) and r.get('status') == 'completed')
+            total_runs = len(training_results)
+            failed = total_runs - completed
+            
+            logger.info(f"Training completed with {completed} successful models out of {total_runs}. Failed: {failed}")
+            
+            if completed == 0:
+                logger.error("No models completed training successfully.")
+                # Collect error messages
+                error_messages = []
+                for model_id, result in training_results.items():
+                    if isinstance(result, dict):
+                         # Ensure message is a string
+                         msg = result.get('message', result.get('error', 'Unknown error'))
+                         error_messages.append(f"{model_id}: {str(msg)}") 
+                    else:
+                         # This case should be less likely now, but good to keep
+                         error_messages.append(f"{model_id}: Invalid result format ({type(result)})")
+                combined_error = "; ".join(error_messages)
+                raise ValueError(f"Model training failed for all models. Errors: {combined_error}")
+
+            # Store results in XCom
+            context['ti'].xcom_push(key='training_results', value=training_results)
+                
+            # Send summary notification (Commented out)
+            # ...
+                    
+            return training_results
+
+        except FileNotFoundError as fnf_err:
+            logger.error(f"Error loading data for training: {str(fnf_err)}")
+            raise
+        
         except Exception as e:
             error_msg = f"Error preparing data for evaluation: {str(e)}"
             logger.error(error_msg)
