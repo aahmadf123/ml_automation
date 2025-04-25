@@ -37,8 +37,8 @@ interface HeroSectionProps {
 }
 
 export function HeroSection({
-  title = "Model Comparison Dashboard",
-  description = "Compare the traditional model with 48 attributes to our enhanced fast decay model with significantly improved predictive power.",
+  title = "Model Performance & Health Dashboard",
+  description = "Monitor the performance, health and business impact of your production models with comprehensive analytics and interactive visualizations.",
   metrics,
   primaryActionLabel = "View Detailed Comparison",
   primaryActionHref = "/model-comparison",

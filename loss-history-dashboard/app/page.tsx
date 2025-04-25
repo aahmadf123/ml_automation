@@ -31,6 +31,7 @@ import type { DateRange } from "react-day-picker"
 import { motion } from "framer-motion"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MetricCard } from "@/components/ui/metric-card"
+import { BusinessImpactProjections } from "@/components/business-impact-projections"
 
 export default function Home() {
   const [mounted, setMounted] = useState(false)
@@ -270,6 +271,11 @@ export default function Home() {
         
         {/* Enhanced Quick Stats */}
         <QuickStats />
+        
+        {/* Business Impact Projections */}
+        <div className="mb-6">
+          <BusinessImpactProjections />
+        </div>
         
         {/* Model Comparison Showcase */}
         <ModelComparisonShowcase />

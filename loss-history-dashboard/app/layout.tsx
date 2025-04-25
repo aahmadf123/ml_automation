@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <div className="min-h-screen overflow-hidden">
             <DashboardSidebar />
-            <main className="flex-1 w-full">{children}</main>
+            <main className="flex-1 w-full lg:ml-64">{children}</main>
           </div>
           <Toaster />
         </ThemeProvider>
@@ -24,5 +24,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 
 export const metadata = {
-      generator: 'v0.dev'
+      title: 'Model Performance & Health Dashboard',
+      description: 'Monitor your production models with comprehensive analytics and interactive visualizations'
     };

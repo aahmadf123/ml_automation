@@ -10,9 +10,9 @@ interface DashboardHeaderProps {
   title?: string
 }
 
-export function DashboardHeader({ title = "Dashboard" }: DashboardHeaderProps) {
+export function DashboardHeader({ title = "" }: DashboardHeaderProps) {
   return (
-    <header className="sticky top-0 z-50 flex h-16 items-center justify-between border-b bg-background px-4 md:px-6 lg:pl-64">
+    <header className="sticky top-0 z-[100] flex h-16 items-center justify-between border-b bg-background px-4 md:px-6 lg:pl-64">
       <div className="flex items-center gap-2 md:mr-auto">
         <Link href="/" className="flex items-center gap-2 md:hidden">
           <span className="text-xl font-bold">Loss History Agent</span>
@@ -20,7 +20,7 @@ export function DashboardHeader({ title = "Dashboard" }: DashboardHeaderProps) {
             Live
           </Badge>
         </Link>
-        <h1 className="hidden text-xl font-bold md:block">{title}</h1>
+        {title && <h1 className="hidden text-xl font-bold md:block">{title}</h1>}
       </div>
 
       <div className="flex items-center gap-4">

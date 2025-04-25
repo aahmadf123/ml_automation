@@ -248,16 +248,16 @@ export function DashboardSidebar() {
   ]
 
   return (
-    <div className="fixed inset-y-0 left-0 z-50 hidden w-64 border-r bg-background lg:block">
+    <aside className="fixed top-0 left-0 z-[90] hidden h-screen w-64 border-r bg-background lg:block">
+      <div className="flex h-16 items-center border-b px-6">
+        <Link href="/" className="flex items-center gap-2 font-bold">
+          <span className="text-xl">Loss History Agent</span>
+          <Badge variant="outline" className="bg-green-500 text-white">
+            Live
+          </Badge>
+        </Link>
+      </div>
       <div className="flex h-full flex-col">
-        <div className="flex h-14 items-center border-b px-4">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="text-lg font-bold">Loss History Agent</span>
-            <Badge variant="outline" className="bg-green-500 text-white border-green-500">
-              Live
-            </Badge>
-          </Link>
-        </div>
         <div className="flex-1 overflow-auto py-2">
           <nav className="grid items-start px-2 text-sm font-medium">
             {navGroups.map((group) => (
@@ -301,6 +301,6 @@ export function DashboardSidebar() {
           </nav>
         </div>
       </div>
-    </div>
+    </aside>
   )
 }
