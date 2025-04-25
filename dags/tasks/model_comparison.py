@@ -468,3 +468,159 @@ def generate_comparison_report(
                 report += f"{name.replace('_', ' ').title()}: {location}\n"
     
     return report 
+
+
+@task(multiple_outputs=True)
+def compare_with_production_models(
+    new_model_results: Dict[str, Dict[str, Any]],
+    production_model_ids: List[str] = ["Model1", "Model4"],
+    s3_bucket: Optional[str] = None,
+    s3_prefix: Optional[str] = None,
+    notify_slack: bool = False,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Compare new models with production models and raise a question if the new model performs better
+    
+    Args:
+        new_model_results: Dictionary of new model results, keyed by model_id
+        production_model_ids: List of production model IDs to compare against
+        s3_bucket: S3 bucket to store comparison results (optional)
+        s3_prefix: S3 prefix for comparison results (optional)
+        notify_slack: Whether to send Slack notification with results
+        
+    Returns:
+        Dictionary with comparison results and report paths
+    """
+    if not new_model_results:
+        logger.warning("No new model results provided for comparison")
+        raise AirflowSkipException("No new model results to compare")
+    
+    # Load production model results from MLflow
+    production_model_results = {}
+    for model_id in production_model_ids:
+        try:
+            runs = mlflow.search_runs(
+                filter_string=f"tags.model_id = '{model_id}'",
+                order_by=["start_time DESC"],
+                max_results=1
+            )
+            if not runs.empty:
+                run = runs.iloc[0]
+                metrics = {col.replace("metrics.", ""): run[col] for col in run.index if col.startswith("metrics.")}
+                production_model_results[model_id] = {
+                    "model_id": model_id,
+                    "run_id": run["run_id"],
+                    "metrics": metrics,
+                    "status": "completed"
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get production model results for {model_id}: {str(e)}")
+    
+    if not production_model_results:
+        logger.warning("No production model results found")
+        raise AirflowSkipException("No production model results to compare")
+    
+    # Combine new and production model results
+    combined_results = {**new_model_results, **production_model_results}
+    
+    # Compare models
+    logger.info(f"Comparing new models with production models")
+    comparison_results = metrics.compare_models(
+        model_results=combined_results,
+        task_type="regression"
+    )
+    
+    # Save comparison results to JSON
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = kwargs.get("run_id", timestamp)
+    output_dir = f"/tmp/model_comparison_{run_id}"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    comparison_json_path = os.path.join(output_dir, "comparison_results.json")
+    with open(comparison_json_path, 'w') as f:
+        json.dump(comparison_results, f, indent=2)
+    
+    # Create comparison plots
+    logger.info("Generating comparison plots")
+    plot_paths = metrics.create_comparison_plots(
+        model_results=combined_results,
+        output_dir=output_dir,
+        task_type="regression"
+    )
+    
+    # Create summary report with key findings
+    best_model = comparison_results.get("overall_best", {}).get("model_id")
+    best_by_metric = comparison_results.get("best_by_metric", {})
+    
+    summary = {
+        "timestamp": timestamp,
+        "run_id": run_id,
+        "num_models_compared": len(combined_results),
+        "overall_best_model": best_model,
+        "best_by_metric": best_by_metric,
+        "generated_plots": list(plot_paths.keys()),
+        "comparison_data_file": comparison_json_path,
+    }
+    
+    # Save summary to JSON
+    summary_path = os.path.join(output_dir, "comparison_summary.json")
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    # Upload to S3 if configured
+    s3_locations = {}
+    if s3_bucket:
+        bucket = s3_bucket or DEFAULT_RESULTS_BUCKET
+        prefix = s3_prefix or f"{DEFAULT_REPORTS_PREFIX}/{run_id}"
+        
+        # Upload summary
+        summary_s3_key = f"{prefix}/comparison_summary.json"
+        s3_utils.upload_to_s3(summary_path, bucket, summary_s3_key)
+        s3_locations["summary"] = f"s3://{bucket}/{summary_s3_key}"
+        
+        # Upload plots
+        for plot_name, plot_path in plot_paths.items():
+            plot_filename = os.path.basename(plot_path)
+            plot_s3_key = f"{prefix}/{plot_filename}"
+            s3_utils.upload_to_s3(plot_path, bucket, plot_s3_key)
+            s3_locations[plot_name] = f"s3://{bucket}/{plot_s3_key}"
+        
+        # Upload comparison results
+        comparison_s3_key = f"{prefix}/comparison_results.json"
+        s3_utils.upload_to_s3(comparison_json_path, bucket, comparison_s3_key)
+        s3_locations["comparison_results"] = f"s3://{bucket}/{comparison_s3_key}"
+    
+    # Send notification if configured
+    if notify_slack and best_model:
+        try:
+            webhook_url = Variable.get("slack_webhook_url", default_var=None)
+            if webhook_url:
+                message = f"Model Comparison Results\n"
+                message += f"Best overall model: {best_model}\n"
+                message += f"Models compared: {len(combined_results)}\n"
+                
+                if s3_locations:
+                    message += f"Full report: {s3_locations.get('summary')}"
+                
+                notifications.send_slack_notification(webhook_url, message)
+                logger.info("Slack notification sent with comparison results")
+        except Exception as e:
+            logger.error(f"Failed to send Slack notification: {str(e)}")
+    
+    # Raise a question if the new model performs better than the production models
+    if best_model in new_model_results:
+        logger.info(f"New model {best_model} performs better than production models")
+        # Here you can add logic to raise a question or notify a human for approval
+    
+    # Return results
+    return {
+        "status": "success",
+        "comparison_performed": True,
+        "best_model": best_model,
+        "output_dir": output_dir,
+        "summary_path": summary_path,
+        "plot_paths": plot_paths,
+        "s3_locations": s3_locations,
+        "model_results": combined_results
+    }

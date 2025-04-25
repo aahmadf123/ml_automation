@@ -61,6 +61,7 @@ try:
     import tasks.training as training
     import tasks.model_explainability as model_explainability
     import tasks.hitl as hitl  # Import the new Human-in-the-Loop module
+    import tasks.model_comparison as model_comparison  # Import model comparison module
 except ImportError as e:
     # Log the import error but continue - the specific module will fail at runtime if used
     logger.error(f"Error importing module: {str(e)}")
@@ -98,6 +99,8 @@ except ImportError as e:
         model_explainability = EmptyModule()
     if 'hitl' not in locals():
         hitl = EmptyModule()
+    if 'model_comparison' not in locals():
+        model_comparison = EmptyModule()
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -2326,7 +2329,8 @@ def deploy_model(**context):
                 version = versions[0]  # Take the first matching version
                 
                 # If the model is already in production, this is a replacement
-                if version.current_stage == "Production":
+                if (version.current_stage == "Production" and 
+                    (version.name == "Model1" or version.name == "Model4")):
                     deployment_mode = "production_replacement"
                 elif version.current_stage == "Staging":
                     deployment_mode = "staging_to_production"
@@ -2490,12 +2494,20 @@ with dag:
         trigger_rule='all_success',  # Only run if validation approval was given
     )
     
+    # Compare models task
+    compare_models_task = PythonOperator(
+        task_id='compare_models_task',
+        python_callable=model_comparison.compare_models,
+        provide_context=True,
+        trigger_rule='all_success',  # Only run if training was successful
+    )
+    
     # Wait for model approval task
     wait_for_model_approval_task = PythonOperator(
         task_id='wait_for_model_approval_task',
         python_callable=wait_for_model_approval,
         provide_context=True,
-        trigger_rule='all_success',  # Only run if training was successful
+        trigger_rule='all_success',  # Only run if model comparison was successful
     )
     
     # Deploy model task
@@ -2507,4 +2519,4 @@ with dag:
     )
     
     # Define task dependencies
-    import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> wait_for_model_approval_task >> deploy_model_task
+    import_data_task >> preprocess_data_task >> validate_data_task >> wait_for_data_validation_task >> train_models_task >> compare_models_task >> wait_for_model_approval_task >> deploy_model_task

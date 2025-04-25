@@ -530,4 +530,151 @@ def decide_retuning(**context) -> Dict[str, Any]:
         return {
             "status": "skipped",
             "reason": "No models need retuning"
-        } 
+        }
+
+def raise_question_if_better(new_model_metrics: Dict[str, float], production_model_metrics: Dict[str, float]) -> bool:
+    """
+    Raise a question if the new model performs better than the production model.
+    
+    Args:
+        new_model_metrics: Metrics of the new model
+        production_model_metrics: Metrics of the production model
+        
+    Returns:
+        bool: True if the new model performs better, False otherwise
+    """
+    # Define the primary metric for comparison
+    primary_metric = "rmse"
+    
+    new_model_performance = new_model_metrics.get(primary_metric)
+    production_model_performance = production_model_metrics.get(primary_metric)
+    
+    if new_model_performance is None or production_model_performance is None:
+        logger.warning("Primary metric not found in one of the models")
+        return False
+    
+    # For RMSE, lower is better
+    if new_model_performance < production_model_performance:
+        # Raise a question to the human-in-the-loop
+        question = f"New model with RMSE {new_model_performance} performs better than production model with RMSE {production_model_performance}. Should we make the new model the production model?"
+        logger.info(question)
+        
+        # Send the question to Slack
+        try:
+            slack_post(question, channel="#model-tuning")
+        except Exception as e:
+            logger.warning(f"Failed to send Slack notification: {str(e)}")
+        
+        return True
+    
+    return False
+
+def handle_human_in_the_loop(new_model_metrics: Dict[str, float], production_model_metrics: Dict[str, float]) -> None:
+    """
+    Handle the human-in-the-loop part by raising a question if the new model performs better.
+    
+    Args:
+        new_model_metrics: Metrics of the new model
+        production_model_metrics: Metrics of the production model
+    """
+    if raise_question_if_better(new_model_metrics, production_model_metrics):
+        logger.info("Question raised to human-in-the-loop for model promotion decision")
+    else:
+        logger.info("New model does not perform better than production model, no question raised")
+
+def decide_retuning_with_hitl(**context) -> Dict[str, Any]:
+    """
+    Airflow task to decide if retuning is needed based on metrics, requests, and human-in-the-loop.
+    
+    Args:
+        context: Airflow task context
+        
+    Returns:
+        Dict with decision details
+    """
+    # Get DAG run ID from context
+    dag_run = context.get('dag_run')
+    if not dag_run:
+        raise ValueError("No DAG run information in context")
+    
+    run_id = dag_run.run_id
+    
+    # Get training and evaluation results
+    ti = context.get('ti')
+    training_results = ti.xcom_pull(task_ids='train_models', key='training_results')
+    
+    if not training_results or not isinstance(training_results, dict):
+        logger.warning("No valid training results found")
+        return {"status": "skipped", "reason": "No valid training results found"}
+    
+    # Check each model for retuning needs
+    retuning_candidates = []
+    
+    for model_id, result in training_results.items():
+        if result.get('status') != 'completed':
+            continue
+            
+        metrics = result.get('metrics', {})
+        if not metrics:
+            continue
+            
+        # Check if this model needs retuning
+        needs_retuning = check_needs_retuning(
+            model_id=model_id,
+            current_metrics=metrics,
+            context=context
+        )
+        
+        if needs_retuning:
+            retuning_candidates.append({
+                "model_id": model_id,
+                "metrics": metrics,
+                "reason": "Performance improvement or manual request"
+            })
+    
+    # If we have candidates, prepare retuning
+    if retuning_candidates:
+        logger.info(f"Found {len(retuning_candidates)} models that need retuning")
+        
+        # For now, just pick the first candidate
+        candidate = retuning_candidates[0]
+        model_id = candidate["model_id"]
+        
+        # Trigger retuning DAG
+        result = trigger_retuning(
+            dag_id="model_hyperparameter_tuning",  # This should match your tuning DAG ID
+            run_id=run_id,
+            model_id=model_id,
+            context=context
+        )
+        
+        # Store the retuning decision in XCom
+        context['ti'].xcom_push(key='retuning_decision', value={
+            "needs_retuning": True,
+            "candidates": retuning_candidates,
+            "selected": model_id,
+            "trigger_result": result
+        })
+        
+        # Handle human-in-the-loop part
+        production_model_metrics = {}  # Retrieve production model metrics from MLflow or other source
+        handle_human_in_the_loop(candidate["metrics"], production_model_metrics)
+        
+        return {
+            "status": "retuning",
+            "model_id": model_id,
+            "trigger_result": result
+        }
+    else:
+        logger.info("No models need retuning")
+        
+        # Store the retuning decision in XCom
+        context['ti'].xcom_push(key='retuning_decision', value={
+            "needs_retuning": False,
+            "reason": "No candidates for retuning"
+        })
+        
+        return {
+            "status": "skipped",
+            "reason": "No models need retuning"
+        }

@@ -19,7 +19,8 @@ class ModelEvaluation:
                        model: object, 
                        X_test: pd.DataFrame, 
                        y_test: pd.Series,
-                       run_id: str = None) -> Dict:
+                       run_id: str = None,
+                       production_model: bool = False) -> Dict:
         """
         Evaluate model performance and log metrics to MLflow.
         
@@ -28,6 +29,7 @@ class ModelEvaluation:
             X_test: Test feature data
             y_test: Test target data
             run_id: MLflow run ID (optional)
+            production_model: Boolean indicating if this is a production model
             
         Returns:
             Dict of evaluation metrics
@@ -105,6 +107,10 @@ class ModelEvaluation:
                     
                     # Log additional metadata
                     mlflow.log_metric("test_samples", len(X_test))
+                    
+                    # Log if this is a production model
+                    if production_model:
+                        mlflow.set_tag("production_model", "true")
                     
                 logger.info(f"Logged evaluation metrics to MLflow run {run_id}")
             except Exception as e:
