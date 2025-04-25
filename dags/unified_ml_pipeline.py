@@ -658,7 +658,7 @@ def process_data(**context):
                     except ImportError:
                         logger.warning("Could not import tasks.preprocessing, attempting direct load of file")
                         import sys
-                        import os
+                        # Don't re-import os - it's already imported at the top level
                         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                         preprocessing = importlib.import_module('preprocessing')
                     

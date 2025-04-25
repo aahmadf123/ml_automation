@@ -79,47 +79,26 @@ const confidenceIntervals = {
   2027: [0.85, 1.22]
 };
 
-// Sample pure premium by decile data
-const purePremiumByDecile = [
-  { 
-    decile: 1, 
-    actual2023: 120, 
-    predicted2024: 118, 
-    predicted2025: 125, 
-    predicted2026: 129, 
-    risk: "Very Low",
-    pricingStatus: "optimal",
-    riskReduction: { potential: 5, savings: 6000, action: "Maintain current risk controls" },
-    peerComparison: { position: "top10", averagePremium: 135 },
-    riskTrend: "stable",
-    optimizationImpact: { revenue: 0, retention: "+2.1%" },
-    recommendation: "Maintain current pricing strategy to ensure market competitiveness"
-  },
-  { 
-    decile: 2, 
-    actual2023: 145, 
-    predicted2024: 147, 
-    predicted2025: 152, 
-    predicted2026: 156, 
-    risk: "Low",
-    pricingStatus: "underpriced",
-    riskReduction: { potential: 8, savings: 12000, action: "Implement basic risk assessment tools" },
-    peerComparison: { position: "top20", averagePremium: 162 },
-    riskTrend: "improving",
-    optimizationImpact: { revenue: "+4.2%", retention: "-0.5%" },
-    recommendation: "Consider modest premium increases (4-6%) while maintaining retention"
-  },
-  { 
-    decile: 3, 
-    actual2023: 178, 
-    predicted2024: 175, 
-    predicted2025: 183, 
-    predicted2026: 188, 
-    risk: "Low",
-    pricingStatus: "optimal",
-    riskReduction: { potential: 10, savings: 18000, action: "Enhance policyholder education" },
-    peerComparison: { position: "average", averagePremium: 184 },
-    riskTrend: "stable",
+// Sample historical and projected data
+const historicalLossData = [
+  { year: 2018, actual: 12500000, predicted: null, ratio: null },
+  { year: 2019, actual: 14200000, predicted: null, ratio: null },
+  { year: 2020, actual: 13800000, predicted: null, ratio: null },
+  { year: 2021, actual: 15400000, predicted: 15100000, ratio: 1.02 },
+  { year: 2022, actual: 16700000, predicted: 16200000, ratio: 1.03 },
+  { year: 2023, actual: 17900000, predicted: 17500000, ratio: 1.02 },
+  { year: 2024, actual: 18700000, predicted: 18900000, ratio: 0.99 },
+  { year: 2025, actual: null, predicted: 19800000, ratio: null },
+  { year: 2026, actual: null, predicted: 20700000, ratio: null },
+  { year: 2027, actual: null, predicted: 21800000, ratio: null },
+];
+
+// Confidence interval data (95% confidence)
+const confidenceIntervals = {
+  2025: [0.92, 1.08],
+  2026: [0.89, 1.14],
+  2027: [0.85, 1.22]
+};
     optimizationImpact: { revenue: "+1.8%", retention: "-0.2%" },
     recommendation: "Implement customer education program to reduce preventable claims"
   },
@@ -137,6 +116,27 @@ const purePremiumByDecile = [
     optimizationImpact: { revenue: "+3.2%", retention: "-0.8%" },
     recommendation: "Offer risk assessment services to reduce potential claims"
   },
+  {
+    decile: 5, 
+    actual2023: 256, 
+    predicted2024: 262, 
+    predicted2025: 278, 
+    predicted2026: 288, 
+    risk: "Medium",
+    pricingStatus: "underpriced",
+    riskReduction: { potential: 18, savings: 48000, action: "Implement risk mitigation technologies" },
+    peerComparison: { position: "bottom40", averagePremium: 305 },
+    riskTrend: "worsening",
+    optimizationImpact: { revenue: "+6.5%", retention: "-1.2%" },
+    recommendation: "Increase premiums by 6-8% and offer risk mitigation incentives"
+  },
+  {
+    decile: 6, 
+    actual2023: 320, 
+    predicted2024: 318, 
+    predicted2025: 335, 
+    predicted2026: 352, 
+    risk: "Medium",
     pricingStatus: "optimal",
     riskReduction: { potential: 22, savings: 65000, action: "Require safety equipment upgrades" },
     peerComparison: { position: "average", averagePremium: 347 },
@@ -144,7 +144,7 @@ const purePremiumByDecile = [
     optimizationImpact: { revenue: "+4.1%", retention: "-0.9%" },
     recommendation: "Target for safety equipment upgrades with premium discounts"
   },
-  { 
+  {
     decile: 7, 
     actual2023: 387, 
     predicted2024: 395, 
@@ -153,68 +153,7 @@ const purePremiumByDecile = [
     risk: "Medium-High",
     pricingStatus: "underpriced",
     riskReduction: { potential: 25, savings: 92000, action: "Implement comprehensive risk management" },
-    peerComparison: { position: "bottom30", averagePremium: 462 },
-    riskTrend: "worsening",
-    optimizationImpact: { revenue: "+8.3%", retention: "-2.1%" },
-    recommendation: "Premium adjustment needed (8-10%) with mandatory risk controls"
-  },
-  { 
-    decile: 8, 
-    actual2023: 475, 
-    predicted2024: 483, 
-    predicted2025: 510, 
-    predicted2026: 535, 
-    risk: "High",
-    pricingStatus: "underpriced",
-    riskReduction: { potential: 30, savings: 145000, action: "Require full risk assessment and controls" },
-    peerComparison: { position: "bottom20", averagePremium: 580 },
-    riskTrend: "worsening",
-    optimizationImpact: { revenue: "+9.2%", retention: "-3.5%" },
-    recommendation: "Significant premium increase (10-15%) with mandatory risk mitigation"
-  },
-  { 
-    decile: 9, 
-    actual2023: 612, 
-    predicted2024: 625, 
-    predicted2025: 655, 
-    predicted2026: 688, 
-    risk: "Very High",
-    pricingStatus: "significantly underpriced",
-    riskReduction: { potential: 35, savings: 220000, action: "Comprehensive risk management required" },
-    peerComparison: { position: "bottom10", averagePremium: 745 },
-    riskTrend: "rapidly worsening",
-    optimizationImpact: { revenue: "+14.6%", retention: "-8.2%" },
-    recommendation: "Major pricing correction (15-20%) with stringent underwriting criteria"
-  },
-  { 
-    decile: 10, 
-    actual2023: 890, 
-    predicted2024: 905, 
-    predicted2025: 965, 
-    predicted2026: 1020, 
-    risk: "Extreme",
-    pricingStatus: "significantly underpriced",
-    riskReduction: { potential: 40, savings: 380000, action: "Consider policy restrictions or specialized coverage" },
-    peerComparison: { position: "bottom5", averagePremium: 1180 },
-    riskTrend: "rapidly worsening",
-    optimizationImpact: { revenue: "+18.5%", retention: "-12.4%" },
-    recommendation: "Aggressive pricing correction (20%+) or consider non-renewal for highest risks"
-  },
-];
-
-// Customer risk transition data for flow diagrams
-const riskTransitionData = [
-  { source: "Very Low", target: "Very Low", value: 85, count: 8500 },
-  { source: "Very Low", target: "Low", value: 15, count: 1500 },
-  { source: "Low", target: "Very Low", value: 10, count: 2000 },
-  { source: "Low", target: "Low", value: 75, count: 15000 },
-  { source: "Low", target: "Low-Medium", value: 15, count: 3000 },
-  { source: "Low-Medium", target: "Low", value: 12, count: 2400 },
-  { source: "Low-Medium", target: "Low-Medium", value: 68, count: 13600 },
-  { source: "Low-Medium", target: "Medium", value: 20, count: 4000 },
-  { source: "Medium", target: "Low-Medium", value: 10, count: 2000 },
-  { source: "Medium", target: "Medium", value: 65, count: 13000 },
-  { source: "Medium", target: "Medium-High", value: 25, count: 5000 },
+    peerCom
   { source: "Medium-High", target: "Medium", value: 8, count: 1600 },
   { source: "Medium-High", target: "Medium-High", value: 62, count: 12400 },
   { source: "Medium-High", target: "High", value: 30, count: 6000 },
@@ -228,13 +167,27 @@ const riskTransitionData = [
   { source: "Extreme", target: "Extreme", value: 97, count: 19400 },
 ];
 
-  { source: "Medium", target: "Medium", value: 65, count: 13000 },
-  { source: "Medium", target: "Medium-High", value: 25, count: 5000 },
-  { source: "Medium-High", target: "Medium", value: 8, count: 1600 },
-  { source: "Medium-High", target: "Medium-High", value: 62, count: 12400 },
-  { source: "Medium-High", target: "High", value: 30, count: 6000 },
-  { source: "High", target: "Medium-High", value: 7, count: 1400 },
-  { source: "High", target: "High", value: 63, count
+// Calculate loss accuracy
+const lossAccuracy = historicalLossData
+  .filter(d => d.actual && d.predicted)
+  .map(d => Math.abs(1 - d.ratio || 0))
+  .reduce((sum, val, _, arr) => sum + val / arr.length, 0);
+
+const lossAccuracyFormatted = (100 - lossAccuracy * 100).toFixed(1) + '%';
+
+// Helper function for formatting currency
+const formatCurrency = (value: number) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(value);
+};
+
+// Format currency in millions for axis labels
+const formatMillions = (value: number) => {
+  return `$${(value
 
 // Component for visualization of historical vs projected losses
 const HistoricalVsProjectedLosses = () => {
@@ -243,15 +196,104 @@ const HistoricalVsProjectedLosses = () => {
   const [compareToBaseline, setCompareToBaseline] = useState<boolean>(true);
   const [date, setDate] = useState<Date | undefined>(new Date());
 
-// Component for Pure Premium Prediction by Decile
-const PurePremiumByDecile: React.FC = () => {
-  const [selectedYear, setSelectedYear] = useState<string>("predicted2026");
-  const [showActual, setShowActual] = useState<boolean>(true);
-  const [sortBy, setSortBy] = useState<string>("decile");
+// Calculate loss accuracy
+const lossAccuracy = historicalLossData
+  .filter(d => d.actual && d.predicted)
+  .map(d => Math.abs(1 - d.ratio || 0))
+  .reduce((sum, val, _, arr) => sum + val / arr.length, 0);
+
+const lossAccuracyFormatted = (100 - lossAccuracy * 100).toFixed(1) + '%';
+
+// Helper function for formatting currency
+const formatCurrency = (value: number) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(value);
+};
+
+// Format currency in millions for axis labels
+const formatMillions = (value: number) => {
+  return `$${(value / 1000000).toFixed(0)}M`;
+};
+
+// Function to generate mock data when the API fails
+const generateMockData = (setHistoricalData, setProjectedData, setDecileData) => {
+  // Generate sample data for testing
+  setHistoricalData(historicalLossData.slice(0, 7).map(d => ({
+    date: new Date(d.year, 0),
+    value: d.actual
+  })));
+  setProjectedData(historicalLossData.slice(7).map(d => ({
+    date: new Date(d.year, 0),
+    value: d.predicted || 0
+  })));
+  setDecileData(purePremiumByDecile.map(d => ({
+    decile: d.decile,
+    predicted: d.predicted2024,
+    actual: d.actual2023
+  })));
+};
+
+// Component for visualization of historical vs projected losses
+const HistoricalVsProjectedLosses: React.FC = () => {
+  const [forecastYears, setForecastYears] = useState<number>(3);
+  const [showConfidenceInterval, setShowConfidenceInterval] = useState<boolean>(true);
+  const [compareToBaseline, setCompareToBaseline] = useState<boolean>(true);
+  const [date, setDate] = useState<Date | undefined>(new Date());
   
-  const yearLabels = {
-    "actual2023": "2023 Actual",
-    "predicted2024": "2024 Prediction",
+  // Baseline is a simple linear projection without ML
+  const baselineProjection = [
+    { year: 2025, predicted: 19200000 },
+    { year: 2026, predicted: 19800000 },
+    { year: 2027, predicted: 20400000 },
+  ];
+  
+  // Custom tooltip for the chart
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload || !payload.length) return null;
+    
+    return (
+      <div className="bg-background border rounded-lg shadow-lg p-3 text-sm">
+        <h3 className="font-medium">{label}</h3>
+        {payload.map((item: any, index: number) => {
+          if (item.value === null) return null;
+          
+          return (
+            <div key={index} className="flex items-center mt-1">
+              <div 
+                className="w-3 h-3 rounded-full mr-2" 
+                style={{ backgroundColor: item.color }}
+              ></div>
+              <span className="font-medium">{item.name}:</span>
+              <span className="ml-2">{formatCurrency(item.value)}</span>
+            </div>
+          );
+        })}
+        
+        {payload[0]?.payload.ratio && (
+          <div className="mt-1 pt-1 border-t">
+            <span className="font-medium">Accuracy Ratio:</span>
+            <span className="ml-2">{(payload[0].payload.ratio * 100).toFixed(1)}%</span>
+          </div>
+        )}
+        
+        {payload[0]?.payload.year >= 2025 && showConfidenceInterval && (
+          <div className="mt-1 pt-1 border-t">
+            <span className="font-medium">95% Confidence Interval:</span>
+            <div className="ml-2">
+              {formatCurrency(payload[0].payload.predicted * confidenceIntervals[payload[0].payload.year][0])} - {formatCurrency(payload[0].payload.predicted * confidenceIntervals[payload[0].payload.year][1])}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+  
+  // Create visible data based on selected forecast years
+  const visibleData = historicalLossData.filter(d => d.year <= 2024 || d.year <= 2024 
     "predicted2025": "2025 Prediction",
     "predicted2026": "2026 Prediction"
   };
